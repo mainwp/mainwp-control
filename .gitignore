@@ -4,7 +4,10 @@ node_modules/
 # Build output
 dist/
 /lib/
-build/
+/build/
+
+# Claude Code
+.claude/
 
 # oclif
 oclif.manifest.json
