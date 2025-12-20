@@ -152,12 +152,25 @@ describe('BatchManager', () => {
     });
 
     it('times out and returns partial result', async () => {
-      // Always return running status
-      mockPost.mockImplementation(() =>
-        Promise.resolve({
-          data: { job_id: 'job_123', status: 'running', progress: 50 },
-        })
-      );
+      // Simulate a job that accumulates partial results over multiple polls
+      // but never completes before the timeout expires
+      let callCount = 0;
+      mockPost.mockImplementation(() => {
+        callCount++;
+        return Promise.resolve({
+          data: {
+            job_id: 'job_123',
+            status: 'running',
+            progress: callCount * 20,
+            total: 10,
+            processed: callCount * 2,
+            results: Array.from({ length: callCount * 2 }, (_, i) => ({
+              id: i + 1,
+              completed: true,
+            })),
+          },
+        });
+      });
 
       const statuses: JobStatus[] = [];
       const generator = manager.watchJob('job_123', {
@@ -179,6 +192,14 @@ describe('BatchManager', () => {
       expect(result.timedOut).toBe(true);
       expect(result.status.status).toBe('partial');
       expect(statuses.length).toBeGreaterThan(0);
+
+      // Verify partial results are properly surfaced
+      expect(result.status.results).toBeDefined();
+      expect(Array.isArray(result.status.results)).toBe(true);
+      expect(result.status.results!.length).toBeGreaterThan(0);
+      expect(result.status.processed).toBeGreaterThan(0);
+      expect(result.status.total).toBe(10);
+      expect(result.status.results![0]).toHaveProperty('id');
     });
 
     it('handles abort signal', async () => {
