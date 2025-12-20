@@ -11,7 +11,7 @@ import { getProfileStore, type Profile } from '../config/profile-store.js';
 import { getKeychain } from '../config/keychain.js';
 import { createHttpClient } from '../core/http-client.js';
 import { formatSuccess, formatWarning } from '../output/formatter.js';
-import { AuthError } from '../utils/errors.js';
+import { AuthError, InputError } from '../utils/errors.js';
 
 export default class Login extends BaseCommand {
   static description = 'Authenticate with a MainWP Dashboard';
@@ -151,7 +151,7 @@ export default class Login extends BaseCommand {
       output: process.stdout,
     });
 
-    return new Promise((resolve) => {
+    return new Promise((resolve, reject) => {
       if (hidden && process.stdin.isTTY) {
         // For hidden input, we need to handle it differently
         process.stdout.write(message);
@@ -175,7 +175,11 @@ export default class Login extends BaseCommand {
             resolve(input);
           } else if (charCode === 3) {
             // Ctrl+C
-            process.exit(1);
+            stdin.setRawMode(false);
+            stdin.pause();
+            stdin.removeListener('data', onData);
+            rl.close();
+            reject(new InputError('Login cancelled by user'));
           } else if (charCode === 127) {
             // Backspace
             if (input.length > 0) {

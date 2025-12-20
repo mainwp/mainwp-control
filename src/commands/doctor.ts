@@ -20,6 +20,7 @@ import {
   PROVIDER_ENV_VARS,
   getProviderConfigFromEnv,
 } from '../chat/providers/provider.js';
+import { ExitCode } from '../utils/exit-codes.js';
 
 /**
  * Check result
@@ -102,7 +103,7 @@ export default class DoctorCommand extends BaseCommand {
 
     // Exit with error if not ready
     if (!report.ready) {
-      this.exit(1);
+      this.exit(ExitCode.INPUT_ERROR);
     }
   }
 

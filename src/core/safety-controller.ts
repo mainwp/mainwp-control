@@ -10,7 +10,7 @@
  */
 
 import type { Ability, AbilityAnnotations, ExecutionResult } from './abilities-executor.js';
-import { MutualExclusionError, InputError } from '../utils/errors.js';
+import { MutualExclusionError, ConfirmationRequiredError } from '../utils/errors.js';
 
 /**
  * Preview result from dry_run execution
@@ -107,13 +107,8 @@ export class SafetyController {
     // RULE 1: Destructive abilities require explicit flag
     if (classification.requiresSafetyFlow) {
       if (dryRun !== true && confirm !== true) {
-        throw new InputError(
-          `Destructive ability "${ability.name}" requires --dry-run (preview) or --confirm (execute).`,
-          {
-            code: 'mainwp_confirmation_required',
-            ability: ability.name,
-            hint: 'Use --dry-run to preview changes, then --confirm to execute.',
-          }
+        throw new ConfirmationRequiredError(
+          `Destructive ability "${ability.name}" requires --dry-run (preview) or --confirm (execute).`
         );
       }
     }
