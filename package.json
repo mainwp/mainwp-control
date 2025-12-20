@@ -1,0 +1,82 @@
+{
+  "name": "mainwpctl",
+  "version": "1.0.0",
+  "description": "AI-first command-line interface for managing MainWP Dashboards",
+  "type": "module",
+  "exports": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "bin": {
+    "mainwpctl": "./bin/run.js"
+  },
+  "files": [
+    "bin",
+    "dist",
+    "oclif.manifest.json"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "clean": "rm -rf dist",
+    "lint": "eslint src --ext .ts",
+    "postpack": "rm -f oclif.manifest.json",
+    "prepack": "npm run clean && npm run build && oclif manifest",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit",
+    "pack": "oclif pack tarballs",
+    "pack:macos": "oclif pack macos",
+    "pack:win": "oclif pack win",
+    "pack:deb": "oclif pack deb"
+  },
+  "oclif": {
+    "bin": "mainwpctl",
+    "dirname": "mainwpctl",
+    "commands": "./dist/commands",
+    "default": "chat",
+    "plugins": [
+      "@oclif/plugin-help"
+    ],
+    "topicSeparator": " ",
+    "macos": {
+      "identifier": "com.mainwp.mainwpctl"
+    },
+    "update": {
+      "s3": {
+        "bucket": "mainwpctl-releases"
+      }
+    }
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "keywords": [
+    "mainwp",
+    "wordpress",
+    "cli",
+    "management"
+  ],
+  "license": "GPL-3.0-or-later",
+  "homepage": "https://github.com/mainwp/mainwpctl",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/mainwp/mainwpctl.git"
+  },
+  "bugs": {
+    "url": "https://github.com/mainwp/mainwpctl/issues"
+  },
+  "dependencies": {
+    "@oclif/core": "^4.0.0",
+    "@oclif/plugin-help": "^6.0.0",
+    "ajv": "^8.17.0",
+    "keytar": "^7.9.0"
+  },
+  "devDependencies": {
+    "@oclif/test": "^4.0.0",
+    "@types/node": "^20.0.0",
+    "eslint": "^8.57.0",
+    "@typescript-eslint/eslint-plugin": "^7.0.0",
+    "@typescript-eslint/parser": "^7.0.0",
+    "oclif": "^4.0.0",
+    "typescript": "^5.4.0",
+    "vitest": "^1.6.0"
+  }
+}
