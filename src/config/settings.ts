@@ -21,6 +21,12 @@ export interface Settings {
 
   /** Enable debug output */
   debug?: boolean;
+
+  /** Maximum messages to keep in chat context (default: 20, 0 = unlimited) */
+  chatContextMessages?: number;
+
+  /** Maximum estimated tokens in chat context (reserved for future use) */
+  chatContextTokens?: number;
 }
 
 /**

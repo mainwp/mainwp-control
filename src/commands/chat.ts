@@ -95,6 +95,10 @@ export default class ChatCommand extends BaseCommand {
       command: '<%= config.bin %> --model gpt-4o',
       description: 'Use specific model',
     },
+    {
+      command: '<%= config.bin %> --max-context-messages 50',
+      description: 'Use larger context window for complex workflows',
+    },
   ];
 
   static override flags = {
@@ -117,6 +121,9 @@ export default class ChatCommand extends BaseCommand {
     'max-turns': Flags.integer({
       description: 'Maximum tool calls per turn',
       default: 3,
+    }),
+    'max-context-messages': Flags.integer({
+      description: 'Maximum messages to keep in context (default: 20, 0 = unlimited)',
     }),
   };
 
@@ -184,6 +191,13 @@ export default class ChatCommand extends BaseCommand {
 
     if (flags.model) {
       engineOptions.model = flags.model;
+    }
+
+    // Handle context window configuration
+    // 0 = unlimited (no truncation), positive number = that limit, undefined = use default (20)
+    const maxContextMessages = flags['max-context-messages'];
+    if (maxContextMessages !== undefined) {
+      engineOptions.maxContextMessages = maxContextMessages;
     }
 
     this.chatEngine = createChatEngine(engineOptions);

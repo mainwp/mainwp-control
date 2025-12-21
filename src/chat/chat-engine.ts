@@ -70,6 +70,10 @@ export interface ChatEngineOptions {
   temperature?: number;
   /** System prompt config */
   promptConfig?: Partial<SystemPromptConfig>;
+  /** Maximum messages to keep in context (excluding system prompt). undefined = no limit */
+  maxContextMessages?: number;
+  /** Maximum estimated tokens in context. Reserved for future use. */
+  maxContextTokens?: number;
 }
 
 /**
@@ -86,6 +90,10 @@ interface PendingPreview {
  *
  * SAFETY: All execution flows through SafetyController and AbilitiesExecutor.
  * ChatEngine never bypasses safety checks.
+ *
+ * Context window management: The engine maintains a sliding window of messages
+ * to prevent unbounded memory growth. The system prompt is always preserved,
+ * and message coherence (user-assistant pairs, tool call-result pairs) is maintained.
  */
 export class ChatEngine {
   private readonly provider: LLMProvider;
@@ -96,6 +104,7 @@ export class ChatEngine {
   private readonly model: string | undefined;
   private readonly temperature: number | undefined;
   private readonly promptConfig: SystemPromptConfig;
+  private readonly maxContextMessages: number | undefined;
 
   private messages: Message[] = [];
   private abilities: Ability[] = [];
@@ -111,12 +120,36 @@ export class ChatEngine {
     this.maxParseRetries = options.maxParseRetries ?? 2;
     this.model = options.model;
     this.temperature = options.temperature;
-    this.promptConfig = {
+
+    // Build prompt config, handling optional properties correctly
+    const mergedPromptConfig: SystemPromptConfig = {
       ...defaultPromptConfig,
       ...options.promptConfig,
       maxToolCalls: options.maxToolCallsPerTurn ?? defaultPromptConfig.maxToolCalls,
       maxParseRetries: options.maxParseRetries ?? defaultPromptConfig.maxParseRetries,
     };
+
+    // Context window configuration: resolve from options, promptConfig, or default
+    // This ensures the default limit (20) is applied unless explicitly overridden
+    const resolvedContextMessages =
+      options.maxContextMessages ??
+      options.promptConfig?.maxContextMessages ??
+      defaultPromptConfig.maxContextMessages;
+
+    this.maxContextMessages = resolvedContextMessages;
+
+    // Sync the resolved value into promptConfig for system prompt generation
+    if (resolvedContextMessages !== undefined) {
+      mergedPromptConfig.maxContextMessages = resolvedContextMessages;
+    }
+
+    // Handle optional token limit (reserved for future use)
+    const contextTokens = options.maxContextTokens ?? options.promptConfig?.maxContextTokens;
+    if (contextTokens !== undefined) {
+      mergedPromptConfig.maxContextTokens = contextTokens;
+    }
+
+    this.promptConfig = mergedPromptConfig;
   }
 
   /**
@@ -158,8 +191,17 @@ export class ChatEngine {
     // Add user message
     this.messages.push({ role: 'user', content: userMessage });
 
+    // Truncate BEFORE LLM call to ensure the LLM sees a bounded context
+    // This prevents sending unbounded history to the provider
+    this.truncateHistory();
+
     // Process with LLM
-    return this.processLLMResponse();
+    const responses = await this.processLLMResponse();
+
+    // Truncate again after processing for storage (handles messages added during tool calling)
+    this.truncateHistory();
+
+    return responses;
   }
 
   /**
@@ -192,6 +234,9 @@ export class ChatEngine {
         }),
       });
 
+      // Truncate after preview resolution (safe boundary)
+      this.truncateHistory();
+
       return [
         {
           type: 'message',
@@ -220,6 +265,9 @@ export class ChatEngine {
       toolName: preview.ability.name,
     };
     this.messages.push(toolResultMsg);
+
+    // Truncate after preview resolution (safe boundary)
+    this.truncateHistory();
 
     return [
       {
@@ -331,6 +379,11 @@ export class ChatEngine {
           toolCallId: toolResponse.id ?? `call_${toolCallCount}`,
           toolName: toolResponse.tool,
         });
+
+        // Truncate between tool-call iterations to enforce context limit
+        // This ensures each provider.chat call receives a bounded history
+        // Note: truncateHistory() already skips when pendingPreview is set
+        this.truncateHistory();
       } else if (toolResult.type === 'error') {
         this.messages.push({
           role: 'tool',
@@ -480,6 +533,154 @@ export class ChatEngine {
       }
     }
     this.pendingPreview = null;
+  }
+
+  /**
+   * Get message count (excluding system prompt)
+   */
+  private getMessageCount(): number {
+    return this.messages.length - 1;
+  }
+
+  /**
+   * Estimate tokens for a set of messages using character count as a rough proxy.
+   * Uses character_count / 4 as a heuristic (common approximation for English text).
+   *
+   * NOTE: This is a rough estimate. Actual token counts from LLMResponse.usage
+   * are more accurate when available.
+   *
+   * @param messages - Messages to estimate tokens for
+   * @returns Estimated token count
+   */
+  private estimateTokens(messages: Message[]): number {
+    let totalChars = 0;
+    for (const msg of messages) {
+      if (typeof msg.content === 'string') {
+        totalChars += msg.content.length;
+      }
+    }
+    // Character count / 4 is a common heuristic for English text tokenization
+    return Math.ceil(totalChars / 4);
+  }
+
+  /**
+   * Check if context truncation should occur based on message count limits.
+   * Token-based limits are reserved for future implementation.
+   *
+   * @returns true if truncation should occur, false if:
+   *   - maxContextMessages is undefined (no limit)
+   *   - maxContextMessages is 0 (explicit unlimited)
+   *   - message count is within limit
+   */
+  private shouldTruncate(): boolean {
+    if (this.maxContextMessages === undefined || this.maxContextMessages === 0) {
+      return false; // No limit configured or explicitly unlimited
+    }
+    return this.getMessageCount() > this.maxContextMessages;
+  }
+
+  /**
+   * Find the index where truncation should start, respecting message boundaries.
+   * This ensures we keep complete user-assistant exchanges and tool call-result pairs.
+   *
+   * @returns Index in the messages array where truncation should start (exclusive of system prompt)
+   */
+  private findTruncationPoint(): number {
+    if (this.maxContextMessages === undefined || this.maxContextMessages <= 0) {
+      return 1; // Keep only system prompt
+    }
+
+    // Calculate how many messages to keep (plus 1 for system prompt)
+    const targetLength = this.maxContextMessages + 1;
+
+    if (this.messages.length <= targetLength) {
+      return this.messages.length; // No truncation needed
+    }
+
+    // Start from where we'd ideally cut
+    const idealTruncationIndex = this.messages.length - this.maxContextMessages;
+
+    // Ensure we don't cut the system prompt
+    let truncationIndex = Math.max(1, idealTruncationIndex);
+
+    // Walk forward to find a safe boundary (start of a user message)
+    // This ensures we don't split:
+    // - user message + assistant response
+    // - tool call + tool result
+    // - retry prompts from their original failed attempt
+    const maxSearchIndex = this.messages.length;
+    while (truncationIndex < maxSearchIndex) {
+      const msg = this.messages[truncationIndex];
+      // Safe to cut at the start of a user message
+      if (msg && msg.role === 'user') {
+        break;
+      }
+      truncationIndex++;
+    }
+
+    // Fallback: if no user boundary found, keep at least maxContextMessages
+    // This ensures we don't drop all messages when the limit is very small
+    if (truncationIndex >= this.messages.length) {
+      truncationIndex = Math.max(1, idealTruncationIndex);
+    }
+
+    return truncationIndex;
+  }
+
+  /**
+   * Truncate message history using a sliding window approach.
+   * Preserves:
+   * - System prompt (always first message)
+   * - Messages since pending preview (if any)
+   * - Most recent N messages where N = maxContextMessages
+   * - Complete message exchanges (user-assistant, tool call-result pairs)
+   */
+  private truncateHistory(): void {
+    if (!this.shouldTruncate()) {
+      return;
+    }
+
+    // Safety: Never truncate if there's a pending preview
+    // This preserves context for the approval decision
+    if (this.pendingPreview !== null) {
+      return;
+    }
+
+    const systemPrompt = this.messages[0];
+    if (!systemPrompt) {
+      return;
+    }
+
+    const truncationIndex = this.findTruncationPoint();
+    const messagesBefore = this.messages.length;
+
+    // Keep system prompt + messages from truncation point onwards
+    this.messages = [systemPrompt, ...this.messages.slice(truncationIndex)];
+
+    // Debug logging (only if significant truncation occurred)
+    const messagesRemoved = messagesBefore - this.messages.length;
+    if (messagesRemoved > 0 && process.env['DEBUG']) {
+      console.debug(
+        `[ChatEngine] Truncated ${messagesRemoved} messages (${messagesBefore - 1} -> ${this.messages.length - 1})`
+      );
+    }
+  }
+
+  /**
+   * Get context window statistics for monitoring.
+   *
+   * @returns Object with current message count, max limit, and estimated tokens
+   */
+  getContextStats(): {
+    messageCount: number;
+    maxMessages: number | undefined;
+    estimatedTokens: number;
+  } {
+    return {
+      messageCount: this.getMessageCount(),
+      maxMessages: this.maxContextMessages,
+      estimatedTokens: this.estimateTokens(this.messages),
+    };
   }
 
   /**

@@ -220,6 +220,10 @@ export interface SystemPromptConfig {
   maxParseRetries: number;
   /** Whether to include detailed schemas */
   includeSchemas: boolean;
+  /** Maximum messages to keep in context (excluding system prompt). undefined = no limit */
+  maxContextMessages?: number;
+  /** Maximum estimated tokens in context. Reserved for future use. */
+  maxContextTokens?: number;
 }
 
 /**
@@ -229,6 +233,7 @@ export const defaultConfig: SystemPromptConfig = {
   maxToolCalls: 3,
   maxParseRetries: 2,
   includeSchemas: false,
+  maxContextMessages: 20,
 };
 
 /**
@@ -248,6 +253,11 @@ export function buildConfiguredPrompt(
   prompt += `\n## Constraints\n`;
   prompt += `- Maximum tool calls per turn: ${mergedConfig.maxToolCalls}\n`;
   prompt += `- If you need more tool calls, explain and ask to continue\n`;
+
+  // Add context window constraints (omit if 0/unlimited to avoid misleading text)
+  if (mergedConfig.maxContextMessages !== undefined && mergedConfig.maxContextMessages > 0) {
+    prompt += `- Context window: ${mergedConfig.maxContextMessages} messages (older messages may be truncated)\n`;
+  }
 
   return prompt;
 }

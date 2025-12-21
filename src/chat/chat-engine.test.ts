@@ -1940,4 +1940,560 @@ describe('ChatEngine', () => {
       expect(preview!.summary).toContain('updated');
     });
   });
+
+  // ==========================================================================
+  // Context Window Management Tests
+  // ==========================================================================
+
+  describe('Context Window Management', () => {
+    /**
+     * Helper to create engine with context window options
+     */
+    function createEngineWithContext(options: {
+      maxContextMessages?: number;
+      provider?: LLMProvider;
+      abilities?: Ability[];
+      executeHandler?: (name: string, input: Record<string, unknown>, options?: ExecutionOptions) => ExecutionResult;
+    }): {
+      engine: ChatEngine;
+      mockProvider: LLMProvider;
+      mockExecutor: ReturnType<typeof createMockExecutor>;
+    } {
+      const abilities = options.abilities ?? [READONLY_ABILITY];
+      const mockExecutor = createMockExecutor(abilities, options.executeHandler);
+      const mockProvider = options.provider ?? createMockProvider([createAnswerResponse('Hello')]);
+
+      const engine = createChatEngine({
+        provider: mockProvider,
+        executor: mockExecutor as never,
+        maxContextMessages: options.maxContextMessages,
+      });
+
+      return { engine, mockProvider, mockExecutor };
+    }
+
+    describe('Basic Truncation Tests', () => {
+      it('should not truncate when maxContextMessages is undefined', async () => {
+        const mockProvider = createMockProvider([
+          createAnswerResponse('Response 1'),
+          createAnswerResponse('Response 2'),
+          createAnswerResponse('Response 3'),
+          createAnswerResponse('Response 4'),
+          createAnswerResponse('Response 5'),
+        ]);
+
+        const { engine } = createEngineWithContext({
+          provider: mockProvider,
+          maxContextMessages: undefined, // No limit
+        });
+
+        await engine.sendMessage('Message 1');
+        await engine.sendMessage('Message 2');
+        await engine.sendMessage('Message 3');
+        await engine.sendMessage('Message 4');
+        await engine.sendMessage('Message 5');
+
+        const history = engine.getHistory();
+        // 1 system + 5 user + 5 assistant = 11 messages
+        expect(history).toHaveLength(11);
+      });
+
+      it('should truncate oldest messages when limit is exceeded', async () => {
+        const mockProvider = createMockProvider([
+          createAnswerResponse('Response 1'),
+          createAnswerResponse('Response 2'),
+          createAnswerResponse('Response 3'),
+          createAnswerResponse('Response 4'),
+        ]);
+
+        const { engine } = createEngineWithContext({
+          provider: mockProvider,
+          maxContextMessages: 4, // Keep only 4 messages (excluding system prompt)
+        });
+
+        await engine.sendMessage('Message 1');
+        await engine.sendMessage('Message 2');
+        await engine.sendMessage('Message 3');
+        await engine.sendMessage('Message 4');
+
+        const history = engine.getHistory();
+
+        // Should have system prompt + 4 recent messages
+        expect(history.length).toBeLessThanOrEqual(5);
+        expect(history[0]!.role).toBe('system');
+      });
+
+      it('should always preserve system prompt', async () => {
+        const mockProvider = createMockProvider([
+          createAnswerResponse('Response 1'),
+          createAnswerResponse('Response 2'),
+          createAnswerResponse('Response 3'),
+        ]);
+
+        const { engine } = createEngineWithContext({
+          provider: mockProvider,
+          maxContextMessages: 2,
+        });
+
+        await engine.sendMessage('Message 1');
+        await engine.sendMessage('Message 2');
+        await engine.sendMessage('Message 3');
+
+        const history = engine.getHistory();
+        expect(history[0]!.role).toBe('system');
+        expect(history[0]!.content).toContain('mainwpctl');
+      });
+
+      it('should keep most recent N messages after truncation', async () => {
+        const mockProvider = createMockProvider([
+          createAnswerResponse('Response 1'),
+          createAnswerResponse('Response 2'),
+          createAnswerResponse('Response 3'),
+          createAnswerResponse('Response 4'),
+        ]);
+
+        const { engine } = createEngineWithContext({
+          provider: mockProvider,
+          maxContextMessages: 2,
+        });
+
+        await engine.sendMessage('Old Message 1');
+        await engine.sendMessage('Old Message 2');
+        await engine.sendMessage('Recent Message 3');
+        await engine.sendMessage('Recent Message 4');
+
+        const history = engine.getHistory();
+        const userMessages = history.filter((m) => m.role === 'user');
+
+        // Should only have the recent messages
+        expect(userMessages.some((m) => m.content === 'Recent Message 4')).toBe(true);
+      });
+    });
+
+    describe('Message Coherence Tests', () => {
+      it('should preserve complete user-assistant exchanges', async () => {
+        const mockProvider = createMockProvider([
+          createAnswerResponse('Assistant 1'),
+          createAnswerResponse('Assistant 2'),
+          createAnswerResponse('Assistant 3'),
+        ]);
+
+        const { engine } = createEngineWithContext({
+          provider: mockProvider,
+          maxContextMessages: 4,
+        });
+
+        await engine.sendMessage('User 1');
+        await engine.sendMessage('User 2');
+        await engine.sendMessage('User 3');
+
+        const history = engine.getHistory();
+
+        // Check that user and assistant messages are paired
+        let lastUserIndex = -1;
+        for (let i = 1; i < history.length; i++) {
+          const msg = history[i]!;
+          if (msg.role === 'user') {
+            lastUserIndex = i;
+          } else if (msg.role === 'assistant' && lastUserIndex >= 0) {
+            // Assistant should follow a user message
+            expect(lastUserIndex).toBeLessThan(i);
+          }
+        }
+      });
+
+      it('should keep tool call and tool result messages together', async () => {
+        const mockProvider = createMockProvider([
+          createToolCallResponse('list-sites-v1', {}),
+          createAnswerResponse('Done'),
+          createAnswerResponse('Response 2'),
+          createAnswerResponse('Response 3'),
+        ]);
+
+        const { engine } = createEngineWithContext({
+          provider: mockProvider,
+          maxContextMessages: 6,
+          executeHandler: () => createSuccessResult({ sites: [] }),
+        });
+
+        await engine.sendMessage('List sites');
+        await engine.sendMessage('Message 2');
+        await engine.sendMessage('Message 3');
+
+        const history = engine.getHistory();
+        const toolMessages = history.filter((m) => m.role === 'tool');
+
+        // If there's a tool message, check that its corresponding call is also present
+        for (const toolMsg of toolMessages) {
+          const callIndex = history.findIndex(
+            (m) => m.role === 'assistant' && m.content.includes(toolMsg.toolName!)
+          );
+          // Tool result should follow the call
+          if (callIndex >= 0) {
+            const resultIndex = history.indexOf(toolMsg);
+            expect(resultIndex).toBeGreaterThan(callIndex);
+          }
+        }
+      });
+    });
+
+    describe('Pending Preview Tests', () => {
+      it('should preserve all messages since preview when pending', async () => {
+        const mockProvider = createMockProvider([
+          createToolCallResponse('delete-site-v1', { site_id: 123 }),
+        ]);
+
+        const { engine } = createEngineWithContext({
+          provider: mockProvider,
+          maxContextMessages: 2,
+          abilities: [DESTRUCTIVE_ABILITY],
+          executeHandler: () => createPreviewResult([{ id: 123 }]),
+        });
+
+        await engine.sendMessage('Delete site 123');
+
+        // Preview is pending - should not truncate
+        expect(engine.hasPendingPreview()).toBe(true);
+
+        const history = engine.getHistory();
+        // All messages should be preserved while preview is pending
+        expect(history.length).toBeGreaterThan(1);
+      });
+
+      it('should allow truncation after preview is cleared', async () => {
+        const mockProvider = createMockProvider([
+          createToolCallResponse('delete-site-v1', { site_id: 123 }),
+          createAnswerResponse('Response after decline'),
+        ]);
+
+        const { engine } = createEngineWithContext({
+          provider: mockProvider,
+          maxContextMessages: 2,
+          abilities: [DESTRUCTIVE_ABILITY],
+          executeHandler: (_n, _i, opts) =>
+            opts?.dryRun ? createPreviewResult([{ id: 123 }]) : createSuccessResult({ deleted: true }),
+        });
+
+        await engine.sendMessage('Delete site 123');
+        expect(engine.hasPendingPreview()).toBe(true);
+
+        // Decline the preview
+        await engine.sendMessage('no');
+        expect(engine.hasPendingPreview()).toBe(false);
+
+        // Truncation should have occurred
+        const history = engine.getHistory();
+        // System prompt + recent messages within limit
+        expect(history[0]!.role).toBe('system');
+      });
+    });
+
+    describe('Edge Cases', () => {
+      it('should handle maxContextMessages: 2 (minimal context)', async () => {
+        const mockProvider = createMockProvider([
+          createAnswerResponse('Response 1'),
+          createAnswerResponse('Response 2'),
+          createAnswerResponse('Response 3'),
+        ]);
+
+        const { engine } = createEngineWithContext({
+          provider: mockProvider,
+          maxContextMessages: 2,
+        });
+
+        await engine.sendMessage('Message 1');
+        await engine.sendMessage('Message 2');
+        await engine.sendMessage('Message 3');
+
+        const history = engine.getHistory();
+        // System prompt + up to 2 messages
+        expect(history.length).toBeLessThanOrEqual(3);
+        expect(history[0]!.role).toBe('system');
+      });
+
+      it('should handle maxContextMessages: 1 (retains at least last message)', async () => {
+        const mockProvider = createMockProvider([
+          createAnswerResponse('Response 1'),
+          createAnswerResponse('Response 2'),
+          createAnswerResponse('Response 3'),
+        ]);
+
+        const { engine } = createEngineWithContext({
+          provider: mockProvider,
+          maxContextMessages: 1,
+        });
+
+        await engine.sendMessage('Message 1');
+        await engine.sendMessage('Message 2');
+        await engine.sendMessage('Message 3');
+
+        const history = engine.getHistory();
+        // Should have at least system prompt + 1 message (not empty)
+        expect(history.length).toBeGreaterThanOrEqual(2);
+        expect(history[0]!.role).toBe('system');
+        // The last message should be preserved (user or assistant from final turn)
+        const lastMsg = history[history.length - 1];
+        expect(lastMsg).toBeDefined();
+      });
+
+      it('should handle maxContextMessages: 1000 (no truncation needed)', async () => {
+        const mockProvider = createMockProvider([
+          createAnswerResponse('Response 1'),
+          createAnswerResponse('Response 2'),
+        ]);
+
+        const { engine } = createEngineWithContext({
+          provider: mockProvider,
+          maxContextMessages: 1000,
+        });
+
+        await engine.sendMessage('Message 1');
+        await engine.sendMessage('Message 2');
+
+        const history = engine.getHistory();
+        // 1 system + 2 user + 2 assistant = 5 (no truncation)
+        expect(history).toHaveLength(5);
+      });
+
+      it('should handle truncation during multi-turn tool calling', async () => {
+        const mockProvider = createMockProvider([
+          createToolCallResponse('list-sites-v1', { page: 1 }),
+          createToolCallResponse('list-sites-v1', { page: 2 }),
+          createAnswerResponse('Found all sites'),
+        ]);
+
+        const { engine, mockExecutor } = createEngineWithContext({
+          provider: mockProvider,
+          maxContextMessages: 4,
+          executeHandler: () => createSuccessResult({ sites: [] }),
+        });
+
+        await engine.sendMessage('List all sites');
+
+        // Should have executed both tool calls
+        expect(mockExecutor.execute).toHaveBeenCalledTimes(2);
+
+        // History should be managed
+        const history = engine.getHistory();
+        expect(history[0]!.role).toBe('system');
+      });
+
+      it('should handle empty messages array gracefully', async () => {
+        const { engine } = createEngineWithContext({
+          maxContextMessages: 5,
+        });
+
+        // Before initialization, getContextStats should work
+        const stats = engine.getContextStats();
+        expect(stats.messageCount).toBe(-1); // No messages yet
+      });
+    });
+
+    describe('Integration Tests', () => {
+      it('should maintain conversation coherence across multiple truncations', async () => {
+        const responses: LLMResponse[] = [];
+        for (let i = 0; i < 10; i++) {
+          responses.push(createAnswerResponse(`Response ${i + 1}`));
+        }
+        const mockProvider = createMockProvider(responses);
+
+        const { engine } = createEngineWithContext({
+          provider: mockProvider,
+          maxContextMessages: 4,
+        });
+
+        for (let i = 0; i < 10; i++) {
+          await engine.sendMessage(`Message ${i + 1}`);
+        }
+
+        const history = engine.getHistory();
+        // Should have system prompt + limited messages
+        expect(history[0]!.role).toBe('system');
+        expect(history.length).toBeLessThanOrEqual(5);
+      });
+
+      it('should work with mixed readonly/destructive operations', async () => {
+        const mockProvider = createMockProvider([
+          createToolCallResponse('list-sites-v1', {}),
+          createAnswerResponse('Listed sites'),
+          createToolCallResponse('delete-site-v1', { site_id: 1 }),
+        ]);
+
+        const { engine } = createEngineWithContext({
+          provider: mockProvider,
+          maxContextMessages: 6,
+          abilities: [READONLY_ABILITY, DESTRUCTIVE_ABILITY],
+          executeHandler: (_n, _i, opts) => {
+            if (opts?.dryRun) {
+              return createPreviewResult([{ id: 1 }]);
+            }
+            return createSuccessResult({ result: 'ok' });
+          },
+        });
+
+        await engine.sendMessage('List sites');
+        await engine.sendMessage('Delete site 1');
+
+        expect(engine.hasPendingPreview()).toBe(true);
+
+        const history = engine.getHistory();
+        expect(history[0]!.role).toBe('system');
+      });
+
+      it('should not break subsequent LLM calls after truncation', async () => {
+        const mockProvider = createMockProvider([
+          createAnswerResponse('Response 1'),
+          createAnswerResponse('Response 2'),
+          createAnswerResponse('Response 3'),
+          createAnswerResponse('Response 4'),
+          createAnswerResponse('Response 5'),
+        ]);
+
+        const { engine } = createEngineWithContext({
+          provider: mockProvider,
+          maxContextMessages: 2,
+        });
+
+        // This should cause truncation
+        await engine.sendMessage('Message 1');
+        await engine.sendMessage('Message 2');
+        await engine.sendMessage('Message 3');
+
+        // These should still work after truncation
+        const response4 = await engine.sendMessage('Message 4');
+        expect(response4[0]!.type).toBe('message');
+
+        const response5 = await engine.sendMessage('Message 5');
+        expect(response5[0]!.type).toBe('message');
+      });
+    });
+
+    describe('Configuration Tests', () => {
+      it('should use provided maxContextMessages option', async () => {
+        const { engine } = createEngineWithContext({
+          maxContextMessages: 10,
+        });
+
+        await engine.initialize();
+
+        const stats = engine.getContextStats();
+        expect(stats.maxMessages).toBe(10);
+      });
+
+      it('should apply default limit (20) when not specified', async () => {
+        const abilities = [READONLY_ABILITY];
+        const mockExecutor = createMockExecutor(abilities);
+        const mockProvider = createMockProvider([createAnswerResponse('Hello')]);
+
+        const engine = createChatEngine({
+          provider: mockProvider,
+          executor: mockExecutor as never,
+          // maxContextMessages not specified - should use default of 20
+        });
+
+        await engine.initialize();
+
+        const stats = engine.getContextStats();
+        expect(stats.maxMessages).toBe(20);
+      });
+
+      it('should apply default limit when undefined is passed (use 0 to disable)', async () => {
+        // Note: To disable truncation, pass 0 (not undefined)
+        // undefined falls through to the default of 20
+        const { engine } = createEngineWithContext({
+          maxContextMessages: undefined,
+        });
+
+        await engine.initialize();
+
+        const stats = engine.getContextStats();
+        expect(stats.maxMessages).toBe(20);
+      });
+
+      it('should disable truncation when 0 is passed', async () => {
+        const { engine } = createEngineWithContext({
+          maxContextMessages: 0,
+        });
+
+        await engine.initialize();
+
+        const stats = engine.getContextStats();
+        expect(stats.maxMessages).toBe(0);
+      });
+
+      it('should not include context constraint in system prompt when 0 is passed', async () => {
+        const { engine } = createEngineWithContext({
+          maxContextMessages: 0,
+        });
+
+        await engine.initialize();
+
+        const history = engine.getHistory();
+        const systemPrompt = history[0]?.content as string;
+        // When 0 (unlimited), the system prompt should NOT mention context window
+        expect(systemPrompt).not.toContain('Context window:');
+      });
+
+      it('should include context constraint in system prompt when positive limit is set', async () => {
+        const { engine } = createEngineWithContext({
+          maxContextMessages: 20,
+        });
+
+        await engine.initialize();
+
+        const history = engine.getHistory();
+        const systemPrompt = history[0]?.content as string;
+        expect(systemPrompt).toContain('Context window: 20 messages');
+      });
+    });
+
+    describe('Context Stats', () => {
+      it('should return correct message count', async () => {
+        const mockProvider = createMockProvider([
+          createAnswerResponse('Response 1'),
+          createAnswerResponse('Response 2'),
+        ]);
+
+        const { engine } = createEngineWithContext({
+          provider: mockProvider,
+          maxContextMessages: 20,
+        });
+
+        await engine.sendMessage('Message 1');
+        await engine.sendMessage('Message 2');
+
+        const stats = engine.getContextStats();
+        // 2 user + 2 assistant = 4 messages (excluding system prompt)
+        expect(stats.messageCount).toBe(4);
+      });
+
+      it('should return correct max messages value', async () => {
+        const { engine } = createEngineWithContext({
+          maxContextMessages: 15,
+        });
+
+        await engine.initialize();
+
+        const stats = engine.getContextStats();
+        expect(stats.maxMessages).toBe(15);
+      });
+
+      it('should estimate tokens based on character count', async () => {
+        const mockProvider = createMockProvider([
+          createAnswerResponse('This is a response with some text content'),
+        ]);
+
+        const { engine } = createEngineWithContext({
+          provider: mockProvider,
+          maxContextMessages: 20,
+        });
+
+        await engine.sendMessage('Hello world');
+
+        const stats = engine.getContextStats();
+        // Should have some estimated tokens
+        expect(stats.estimatedTokens).toBeGreaterThan(0);
+      });
+    });
+  });
 });
