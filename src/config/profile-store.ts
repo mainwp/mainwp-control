@@ -82,11 +82,88 @@ export class ProfileStore {
   private data: ProfilesFile | null = null;
 
   /**
+   * Validate a URL format and protocol
+   */
+  private validateUrl(url: string): void {
+    let parsed: URL;
+    try {
+      parsed = new URL(url);
+    } catch {
+      throw new ConfigError(`Invalid Dashboard URL format: ${url}`);
+    }
+
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+      throw new ConfigError(
+        `Invalid URL protocol: ${parsed.protocol}. Must be http or https`
+      );
+    }
+
+    if (parsed.protocol === 'http:') {
+      console.warn(
+        'WARNING: Profile uses HTTP instead of HTTPS. Credentials may be exposed.'
+      );
+    }
+  }
+
+  /**
+   * Validate a profile's required fields and URL format
+   */
+  private validateProfile(profile: Profile): void {
+    if (!profile.name || profile.name.trim().length === 0) {
+      throw new ConfigError('Profile validation failed: name is required');
+    }
+
+    if (!profile.dashboardUrl || profile.dashboardUrl.trim().length === 0) {
+      throw new ConfigError(
+        'Profile validation failed: dashboardUrl is required'
+      );
+    }
+
+    if (!profile.username || profile.username.trim().length === 0) {
+      throw new ConfigError('Profile validation failed: username is required');
+    }
+
+    if (!profile.createdAt || profile.createdAt.trim().length === 0) {
+      throw new ConfigError('Profile validation failed: createdAt is required');
+    }
+
+    this.validateUrl(profile.dashboardUrl);
+  }
+
+  /**
+   * Validate entire profiles file structure
+   */
+  private validateProfilesFile(data: ProfilesFile): void {
+    for (const profile of data.profiles) {
+      try {
+        this.validateProfile(profile);
+      } catch (error) {
+        throw new ConfigError(
+          `Invalid profile "${profile.name || 'unnamed'}": ${(error as Error).message}`
+        );
+      }
+    }
+
+    // Validate activeProfile references an existing profile
+    if (
+      data.activeProfile &&
+      !data.profiles.some((p) => p.name === data.activeProfile)
+    ) {
+      console.warn(
+        `WARNING: Active profile "${data.activeProfile}" not found in profiles list. Clearing.`
+      );
+      data.activeProfile = data.profiles[0]?.name;
+    }
+  }
+
+  /**
    * Ensure data is loaded
    */
   private async ensureLoaded(): Promise<ProfilesFile> {
     if (!this.data) {
-      this.data = await loadProfilesFile();
+      const data = await loadProfilesFile();
+      this.validateProfilesFile(data);
+      this.data = data;
     }
     return this.data;
   }
@@ -151,6 +228,9 @@ export class ProfileStore {
    * Save a profile (create or update)
    */
   async save(profile: Profile): Promise<void> {
+    // Validate profile before saving
+    this.validateProfile(profile);
+
     const data = await this.ensureLoaded();
 
     const existingIndex = data.profiles.findIndex((p) => p.name === profile.name);
@@ -206,7 +286,9 @@ export class ProfileStore {
    * Reload profiles from disk
    */
   async reload(): Promise<void> {
-    this.data = await loadProfilesFile();
+    const data = await loadProfilesFile();
+    this.validateProfilesFile(data);
+    this.data = data;
   }
 }
 
