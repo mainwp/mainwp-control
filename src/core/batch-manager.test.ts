@@ -306,18 +306,6 @@ describe('BatchManager', () => {
     });
   });
 
-  describe('cancelJob', () => {
-    it('throws not implemented error', async () => {
-      await expect(manager.cancelJob('job_123')).rejects.toThrow('Job cancellation is not currently supported');
-    });
-  });
-
-  describe('listJobs', () => {
-    it('throws not implemented error', async () => {
-      await expect(manager.listJobs()).rejects.toThrow('Job listing is not currently supported');
-    });
-  });
-
   describe('error parsing', () => {
     it('parses string errors', async () => {
       mockPost.mockResolvedValue({

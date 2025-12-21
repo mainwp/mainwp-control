@@ -237,32 +237,6 @@ export class BatchManager {
   }
 
   /**
-   * Cancel a batch job (if supported by the API)
-   */
-  async cancelJob(_jobId: string): Promise<boolean> {
-    // Note: This is a placeholder for future API support
-    // Currently, the MainWP API doesn't support job cancellation
-    throw new APIError(
-      'NOT_IMPLEMENTED',
-      'Job cancellation is not currently supported',
-      501
-    );
-  }
-
-  /**
-   * List active batch jobs (if supported by the API)
-   */
-  async listJobs(): Promise<JobStatus[]> {
-    // Note: This is a placeholder for future API support
-    // Currently, the MainWP API doesn't expose a job listing endpoint
-    throw new APIError(
-      'NOT_IMPLEMENTED',
-      'Job listing is not currently supported',
-      501
-    );
-  }
-
-  /**
    * Check if a status is terminal (job finished)
    */
   private isTerminalStatus(status: JobStatusType): boolean {

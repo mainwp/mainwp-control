@@ -14,7 +14,7 @@ import {
   SafetyController,
   createSafetyController,
 } from './safety-controller.js';
-import { MutualExclusionError, InputError } from '../utils/errors.js';
+import { MutualExclusionError, ConfirmationRequiredError } from '../utils/errors.js';
 import type { Ability } from './abilities-executor.js';
 
 /**
@@ -117,28 +117,28 @@ describe('Golden Test: Destructive Preview Requirement', () => {
    * From CHAT_PROMPT.md:
    * > Never skip preview. Never inject confirm.
    */
-  it('throws InputError with mainwp_confirmation_required for destructive ability without flags', () => {
+  it('throws ConfirmationRequiredError for destructive ability without flags', () => {
     const ability = createTestAbility('delete-site-v1', { destructive: true });
 
     expect(() => {
       controller.validateExecutionFlags(ability, undefined, undefined);
-    }).toThrow(InputError);
+    }).toThrow(ConfirmationRequiredError);
 
     try {
       controller.validateExecutionFlags(ability, undefined, undefined);
     } catch (error) {
-      expect(error).toBeInstanceOf(InputError);
-      const inputError = error as InputError;
-      expect(inputError.details).toHaveProperty('code', 'mainwp_confirmation_required');
+      expect(error).toBeInstanceOf(ConfirmationRequiredError);
+      const confirmError = error as ConfirmationRequiredError;
+      expect(confirmError.code).toBe('CONFIRMATION_REQUIRED');
     }
   });
 
-  it('throws InputError when both flags are false for destructive ability', () => {
+  it('throws ConfirmationRequiredError when both flags are false for destructive ability', () => {
     const ability = createTestAbility('delete-site-v1', { destructive: true });
 
     expect(() => {
       controller.validateExecutionFlags(ability, false, false);
-    }).toThrow(InputError);
+    }).toThrow(ConfirmationRequiredError);
   });
 
   it('allows dry_run=true for destructive abilities (preview mode)', () => {

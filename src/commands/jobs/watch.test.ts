@@ -33,8 +33,6 @@ describe('jobs watch command', () => {
       watchJob: mockWatchJob,
       getJobStatus: vi.fn(),
       resumeJob: vi.fn(),
-      cancelJob: vi.fn(),
-      listJobs: vi.fn(),
     } as never);
   });
 

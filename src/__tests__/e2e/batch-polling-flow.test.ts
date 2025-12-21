@@ -578,20 +578,6 @@ describe('E2E: Batch Operation → Polling Flow', () => {
   });
 
   // ==========================================================================
-  // Not Implemented Operations
-  // ==========================================================================
-
-  describe('Not Implemented Operations', () => {
-    it('cancelJob throws not implemented error', async () => {
-      await expect(manager.cancelJob('job_test')).rejects.toThrow('Job cancellation is not currently supported');
-    });
-
-    it('listJobs throws not implemented error', async () => {
-      await expect(manager.listJobs()).rejects.toThrow('Job listing is not currently supported');
-    });
-  });
-
-  // ==========================================================================
   // Golden Test: Timeout Surfaces Partial Results
   // ==========================================================================
 
