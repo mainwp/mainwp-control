@@ -39,6 +39,7 @@ import {
   type PreviewResult,
 } from '../core/safety-controller.js';
 import { abilityToTool } from './providers/provider.js';
+import { getAuditLogger } from '../utils/audit-logger.js';
 
 /**
  * Chat response types
@@ -247,6 +248,25 @@ export class ChatEngine {
         }),
       });
 
+      // Log audit entry for declined action (fire-and-forget)
+      try {
+        const auditLogger = getAuditLogger();
+        await auditLogger.logDestructiveAction({
+          abilityName: preview.ability.name,
+          preview: {
+            summary: preview.preview.summary,
+            affectedCount: preview.preview.affected.length,
+          },
+          userDecision: 'declined',
+          input: preview.input,
+        });
+      } catch (error) {
+        // Log audit errors to stderr but don't throw
+        console.error(
+          `[AuditLogger] Failed to log destructive action: ${error instanceof Error ? error.message : String(error)}`
+        );
+      }
+
       // Truncate after preview resolution (safe boundary)
       this.truncateHistory();
 
@@ -269,6 +289,32 @@ export class ChatEngine {
       preview.input,
       { confirm: true }
     );
+
+    // Log audit entry for approved and executed action (fire-and-forget)
+    try {
+      const auditLogger = getAuditLogger();
+      const executionResult: { success: boolean; error?: string } = {
+        success: result.success,
+      };
+      if (result.error?.message) {
+        executionResult.error = result.error.message;
+      }
+      await auditLogger.logDestructiveAction({
+        abilityName: preview.ability.name,
+        preview: {
+          summary: preview.preview.summary,
+          affectedCount: preview.preview.affected.length,
+        },
+        userDecision: 'approved',
+        execution: executionResult,
+        input: preview.input,
+      });
+    } catch (error) {
+      // Log audit errors to stderr but don't throw
+      console.error(
+        `[AuditLogger] Failed to log destructive action: ${error instanceof Error ? error.message : String(error)}`
+      );
+    }
 
     // Add result to context
     const toolResultMsg = {

@@ -21,6 +21,7 @@ import { getSafetyController, type PreviewResult } from '../../core/safety-contr
 import { getSchemaValidator } from '../../validation/schema-validator.js';
 import { getInputSanitizer } from '../../validation/input-sanitizer.js';
 import { promptForConfirmation, isInteractive } from '../../utils/prompt.js';
+import { getAuditLogger } from '../../utils/audit-logger.js';
 
 export default class AbilitiesRun extends BaseCommand {
   static description = 'Execute an ability';
@@ -175,8 +176,42 @@ export default class AbilitiesRun extends BaseCommand {
     input: Record<string, unknown>,
     force: boolean
   ): Promise<void> {
+    const executor = await this.getExecutor();
+    const safetyController = getSafetyController();
+    const auditLogger = getAuditLogger();
+
+    // Get preview data first for audit logging (gracefully handle failures)
+    let preview: PreviewResult | undefined;
+    try {
+      const ability = await executor.getAbility(abilityName);
+      const previewResult = await executor.execute(abilityName, input, { dryRun: true });
+      if (previewResult.success && ability) {
+        preview = safetyController.formatPreviewResult(ability, input, previewResult);
+      }
+    } catch {
+      // Preview failure is non-fatal - continue without preview data in audit
+    }
+
+    // Helper to build preview metadata for audit entries (spread-friendly)
+    const previewMeta = preview
+      ? { preview: { summary: preview.summary, affectedCount: preview.affected.length } }
+      : {};
+
     // In non-interactive mode, require --force or fail
     if (!isInteractive() && !force) {
+      // Log declined audit entry before throwing
+      try {
+        await auditLogger.logDestructiveAction({
+          abilityName,
+          ...previewMeta,
+          userDecision: 'declined',
+          input,
+        });
+      } catch (error) {
+        console.error(
+          `[AuditLogger] Failed to log destructive action: ${error instanceof Error ? error.message : String(error)}`
+        );
+      }
       throw new InputError(
         'Destructive operations require interactive confirmation or --force flag in non-interactive mode.'
       );
@@ -188,14 +223,51 @@ export default class AbilitiesRun extends BaseCommand {
         `Execute destructive ability "${abilityName}"?`
       );
       if (!confirmed) {
+        // Log declined audit entry
+        try {
+          await auditLogger.logDestructiveAction({
+            abilityName,
+            ...previewMeta,
+            userDecision: 'declined',
+            input,
+          });
+        } catch (error) {
+          console.error(
+            `[AuditLogger] Failed to log destructive action: ${error instanceof Error ? error.message : String(error)}`
+          );
+        }
         this.log(formatWarning('Operation cancelled by user.'));
         return;
       }
     }
 
-    const executor = await this.getExecutor();
+    // Execute with confirm
     const result = await executor.execute(abilityName, input, { confirm: true });
 
+    // Build execution result for audit
+    const executionResult: { success: boolean; error?: string } = {
+      success: result.success,
+    };
+    if (result.error?.message) {
+      executionResult.error = result.error.message;
+    }
+
+    // Log audit entry (fire-and-forget, covers both success and failure)
+    try {
+      await auditLogger.logDestructiveAction({
+        abilityName,
+        ...previewMeta,
+        userDecision: 'approved',
+        execution: executionResult,
+        input,
+      });
+    } catch (error) {
+      console.error(
+        `[AuditLogger] Failed to log destructive action: ${error instanceof Error ? error.message : String(error)}`
+      );
+    }
+
+    // Throw after audit logging if execution failed
     if (!result.success) {
       throw new InputError(result.error?.message ?? 'Execution failed', result.error);
     }
