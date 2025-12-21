@@ -85,7 +85,11 @@ export default class ChatCommand extends BaseCommand {
   static override examples = [
     {
       command: '<%= config.bin %>',
-      description: 'Start interactive chat',
+      description: 'Start interactive chat (streaming enabled by default)',
+    },
+    {
+      command: '<%= config.bin %> --no-stream',
+      description: 'Disable streaming for complete responses',
     },
     {
       command: '<%= config.bin %> --provider openai',
@@ -125,6 +129,11 @@ export default class ChatCommand extends BaseCommand {
     'max-context-messages': Flags.integer({
       description: 'Maximum messages to keep in context (default: 20, 0 = unlimited)',
     }),
+    stream: Flags.boolean({
+      description: 'Enable streaming responses (progressive output)',
+      default: true,
+      allowNo: true, // Allow --no-stream to disable
+    }),
   };
 
   static override args = {
@@ -136,6 +145,7 @@ export default class ChatCommand extends BaseCommand {
 
   private chatEngine: ChatEngine | null = null;
   private rl: readline.Interface | null = null;
+  private isStreaming = false;
 
   async run(): Promise<void> {
     const { args, flags } = await this.parse(ChatCommand);
@@ -182,12 +192,25 @@ export default class ChatCommand extends BaseCommand {
     // Get executor
     const executor = await this.getExecutor();
 
+    // Determine if streaming should be enabled
+    // Disable streaming for JSON output since we need clean JSON structure
+    this.isStreaming = flags.stream && !this.jsonOutput;
+
     // Create chat engine
     const engineOptions: Parameters<typeof createChatEngine>[0] = {
       provider,
       executor,
       maxToolCallsPerTurn: flags['max-turns'],
+      stream: this.isStreaming,
     };
+
+    // Add streaming callback if streaming is enabled
+    if (this.isStreaming) {
+      engineOptions.onStreamChunk = (content: string) => {
+        // Display content progressively without newline
+        process.stdout.write(content);
+      };
+    }
 
     if (flags.model) {
       engineOptions.model = flags.model;
@@ -228,10 +251,19 @@ export default class ChatCommand extends BaseCommand {
     const responses = await this.chatEngine!.sendMessage(message);
 
     for (const response of responses) {
+      // Add newline after streamed content (streaming doesn't include final newline)
+      if (this.isStreaming && response.type === 'message') {
+        this.log(''); // Blank line after streamed content
+      }
+
       if (this.jsonOutput) {
         this.log(JSON.stringify(response, null, 2));
       } else {
-        this.log(formatResponse(response));
+        // For streaming message responses, content already displayed via callback
+        // Skip duplicate display but still handle other response types
+        if (!(this.isStreaming && response.type === 'message')) {
+          this.log(formatResponse(response));
+        }
       }
 
       // If preview is pending, we can't continue in non-interactive
@@ -316,8 +348,16 @@ export default class ChatCommand extends BaseCommand {
           const responses = await this.chatEngine!.sendMessage(trimmed);
 
           for (const response of responses) {
+            // Add newline before response
             this.log('');
-            this.log(formatResponse(response));
+
+            // Handle streaming: content already displayed via callback
+            if (this.isStreaming && response.type === 'message') {
+              // Content was streamed, just add spacing
+              // No need to display again
+            } else {
+              this.log(formatResponse(response));
+            }
           }
 
           // Check for pending preview
@@ -356,6 +396,10 @@ export default class ChatCommand extends BaseCommand {
     this.log('  "List all sites"');
     this.log('  "Show me plugins with updates"');
     this.log('  "Delete site example.com" (will ask for confirmation)');
+    this.log('');
+    this.log('Streaming:');
+    this.log('  Responses stream by default for faster feedback.');
+    this.log('  Use --no-stream flag to wait for complete responses.');
     this.log('');
     this.log('Destructive actions will show a preview and require approval.');
     this.log('');

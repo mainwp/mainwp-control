@@ -13,9 +13,11 @@
 
 import type {
   LLMProvider,
+  LLMResponse,
   Message,
   ChatOptions,
   ToolDefinition,
+  StreamChunk,
 } from './providers/provider.js';
 import {
   buildConfiguredPrompt,
@@ -74,6 +76,10 @@ export interface ChatEngineOptions {
   maxContextMessages?: number;
   /** Maximum estimated tokens in context. Reserved for future use. */
   maxContextTokens?: number;
+  /** Whether to use streaming responses (default: false) */
+  stream?: boolean;
+  /** Callback for streaming content chunks (called as content arrives) */
+  onStreamChunk?: (content: string) => void;
 }
 
 /**
@@ -105,6 +111,8 @@ export class ChatEngine {
   private readonly temperature: number | undefined;
   private readonly promptConfig: SystemPromptConfig;
   private readonly maxContextMessages: number | undefined;
+  private readonly stream: boolean;
+  private readonly onStreamChunk?: (content: string) => void;
 
   private messages: Message[] = [];
   private abilities: Ability[] = [];
@@ -120,6 +128,11 @@ export class ChatEngine {
     this.maxParseRetries = options.maxParseRetries ?? 2;
     this.model = options.model;
     this.temperature = options.temperature;
+    this.stream = options.stream ?? false;
+    // Only assign if defined to satisfy exactOptionalPropertyTypes
+    if (options.onStreamChunk !== undefined) {
+      this.onStreamChunk = options.onStreamChunk;
+    }
 
     // Build prompt config, handling optional properties correctly
     const mergedPromptConfig: SystemPromptConfig = {
@@ -295,7 +308,14 @@ export class ChatEngine {
         tools: this.tools,
       };
 
-      const llmResponse = await this.provider.chat(this.messages, chatOptions);
+      // Get LLM response (streaming or non-streaming)
+      let llmResponse: LLMResponse;
+      if (this.stream && this.provider.chatStream && this.provider.capabilities.streaming) {
+        const stream = this.provider.chatStream(this.messages, chatOptions);
+        llmResponse = await this.accumulateStream(stream);
+      } else {
+        llmResponse = await this.provider.chat(this.messages, chatOptions);
+      }
 
       // Parse response
       const parseResult = parseResponse(llmResponse, {
@@ -492,6 +512,75 @@ export class ChatEngine {
         error: error instanceof Error ? error.message : String(error),
       };
     }
+  }
+
+  /**
+   * Accumulate streaming chunks into a complete LLM response.
+   * This method consumes an AsyncGenerator<StreamChunk> and reconstructs
+   * a complete LLMResponse compatible with the existing parseResponse() logic.
+   *
+   * @param stream - The streaming generator from the provider
+   * @returns A complete LLMResponse with accumulated content and tool calls
+   */
+  private async accumulateStream(
+    stream: AsyncGenerator<StreamChunk, void, undefined>
+  ): Promise<LLMResponse> {
+    let content = '';
+    // Providers yield complete tool calls (not deltas), so we collect them directly
+    const toolCalls: Array<{ id: string; name: string; arguments: Record<string, unknown> }> = [];
+
+    try {
+      for await (const chunk of stream) {
+        // Handle content chunks
+        if (chunk.content) {
+          content += chunk.content;
+          // Call callback for progressive display
+          if (this.onStreamChunk) {
+            this.onStreamChunk(chunk.content);
+          }
+        }
+
+        // Handle tool call chunks - providers yield each complete tool call as a separate chunk
+        // before the done chunk, so push each one immediately
+        if (chunk.toolCall && chunk.toolCall.id && chunk.toolCall.name) {
+          toolCalls.push({
+            id: chunk.toolCall.id,
+            name: chunk.toolCall.name,
+            arguments: chunk.toolCall.arguments ?? {},
+          });
+        }
+
+        // When done flag is set, we've collected all tool calls
+        if (chunk.done) {
+          break;
+        }
+      }
+    } catch (error) {
+      // If streaming fails mid-response, return what we have so far
+      if (content || toolCalls.length > 0) {
+        console.error(
+          `[ChatEngine] Stream interrupted: ${error instanceof Error ? error.message : String(error)}`
+        );
+        return {
+          content,
+          toolCalls: toolCalls.length > 0 ? toolCalls : undefined,
+          finishReason: 'error',
+          model: this.provider.getDefaultModel(),
+        };
+      }
+      // If no content accumulated, re-throw
+      throw error;
+    }
+
+    // Return accumulated LLMResponse
+    const parsedToolCalls = toolCalls;
+
+    return {
+      content,
+      toolCalls: parsedToolCalls.length > 0 ? parsedToolCalls : undefined,
+      finishReason: parsedToolCalls.length > 0 ? 'tool_calls' : 'stop',
+      model: this.provider.getDefaultModel(),
+    };
   }
 
   /**
