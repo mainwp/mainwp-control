@@ -163,6 +163,20 @@ All commands support these flags:
 | `--debug` | Show debug output |
 | `--help` | Show help |
 
+## Shell Completion
+
+Enable tab completion for commands, flags, and profile names:
+
+```bash
+# Bash - add to ~/.bashrc
+source /path/to/mainwpctl/scripts/completions/mainwpctl.bash
+
+# Zsh - add to ~/.zshrc
+source /path/to/mainwpctl/scripts/completions/mainwpctl.zsh
+```
+
+For detailed setup instructions, see [scripts/completions/README.md](scripts/completions/README.md).
+
 ## Safety Model
 
 `mainwpctl` enforces safety for destructive operations:
