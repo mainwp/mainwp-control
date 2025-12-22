@@ -22,6 +22,7 @@ import {
   getProviderConfigFromEnv,
   PROVIDER_ENV_VARS,
 } from '../../chat/providers/provider.js';
+import { maskPassword, maskApiKey } from '../../utils/format.js';
 
 /**
  * Configuration display structure
@@ -149,7 +150,7 @@ export default class ConfigShowCommand extends BaseCommand {
       let credentialsMasked: string | null = null;
 
       if (password) {
-        credentialsMasked = this.maskPassword(password);
+        credentialsMasked = maskPassword(password);
 
         // Determine source with correct priority
         // keychain.get() checks keychain first, then falls back to env
@@ -171,7 +172,7 @@ export default class ConfigShowCommand extends BaseCommand {
       } else if (envPassword) {
         // keychain.get returned nothing but env var is set
         // This handles edge cases where keychain lookup failed
-        credentialsMasked = this.maskPassword(envPassword);
+        credentialsMasked = maskPassword(envPassword);
         credentialsSource = 'environment';
       }
 
@@ -222,7 +223,7 @@ export default class ConfigShowCommand extends BaseCommand {
 
     return {
       name: detectedProvider,
-      apiKeyMasked: this.maskApiKey(config.apiKey),
+      apiKeyMasked: maskApiKey(config.apiKey),
       configured: true,
     };
   }
@@ -236,26 +237,6 @@ export default class ConfigShowCommand extends BaseCommand {
     } catch {
       return {};
     }
-  }
-
-  /**
-   * Mask password for display
-   */
-  private maskPassword(password: string): string {
-    if (password.length <= 8) {
-      return '****';
-    }
-    return password.substring(0, 4) + '...' + password.substring(password.length - 4);
-  }
-
-  /**
-   * Mask API key for display
-   */
-  private maskApiKey(apiKey: string): string {
-    if (apiKey.length <= 10) {
-      return '****';
-    }
-    return apiKey.substring(0, 6) + '...' + apiKey.substring(apiKey.length - 4);
   }
 
   /**

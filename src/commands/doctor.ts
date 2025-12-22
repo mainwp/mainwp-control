@@ -21,6 +21,7 @@ import {
   getProviderConfigFromEnv,
 } from '../chat/providers/provider.js';
 import { ExitCode } from '../utils/exit-codes.js';
+import { maskPassword, maskApiKey } from '../utils/format.js';
 
 /**
  * Check result
@@ -236,7 +237,7 @@ export default class DoctorCommand extends BaseCommand {
       }
 
       // Mask password for display
-      const masked = password.substring(0, 4) + '...' + password.substring(password.length - 4);
+      const masked = maskPassword(password);
 
       return {
         name: 'Credentials',
@@ -392,10 +393,7 @@ export default class DoctorCommand extends BaseCommand {
     }
 
     // Mask API key
-    const masked =
-      config.apiKey.substring(0, 6) +
-      '...' +
-      config.apiKey.substring(config.apiKey.length - 4);
+    const masked = maskApiKey(config.apiKey);
 
     return {
       name: 'LLM Provider',
