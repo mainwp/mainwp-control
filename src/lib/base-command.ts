@@ -10,6 +10,7 @@
 import { Command, Flags, Interfaces } from '@oclif/core';
 import { getProfileStore, type Profile } from '../config/profile-store.js';
 import { getKeychain } from '../config/keychain.js';
+import { loadSettings } from '../config/settings.js';
 import { createAbilitiesExecutor, type AbilitiesExecutor } from '../core/abilities-executor.js';
 import { ConfigError, AuthError } from '../utils/errors.js';
 import { successOutput, errorOutput } from '../output/json-envelope.js';
@@ -22,7 +23,8 @@ import { formatError } from '../output/formatter.js';
 export const commonFlags = {
   json: Flags.boolean({
     description: 'Output JSON (for scripting/CI)',
-    default: false,
+    // No default - allows distinguishing "not provided" from "explicitly false"
+    // Precedence: --json flag > settings.defaultJsonOutput > false
   }),
   profile: Flags.string({
     char: 'p',
@@ -78,7 +80,12 @@ export abstract class BaseCommand extends Command {
    * Call this at the start of each command's run() method.
    */
   protected async initCommon(flags: CommonFlags): Promise<void> {
-    this.jsonOutput = flags.json ?? false;
+    // Load settings from file
+    const settings = await loadSettings();
+
+    // Apply precedence: explicit flag > settings file > default (false)
+    // flags.json is undefined if not provided, boolean if provided
+    this.jsonOutput = flags.json ?? settings.defaultJsonOutput ?? false;
     this.debugMode = flags.debug ?? false;
 
     if (this.needsProfile()) {

@@ -10,6 +10,9 @@ import { homedir } from 'node:os';
  * Settings structure
  */
 export interface Settings {
+  /** Default output format (true = JSON, false = human-readable) */
+  defaultJsonOutput?: boolean;
+
   /** Default LLM provider */
   llmProvider?: string;
 

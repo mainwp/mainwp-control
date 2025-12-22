@@ -238,6 +238,49 @@ mainwpctl abilities run delete-site-v1 \
 | `MAINWP_LLM_PROVIDER` | Override auto-detected provider |
 | `MAINWP_LLM_MODEL` | Specify model to use |
 
+## Configuration File
+
+Settings can be configured in `~/.config/mainwpctl/settings.json`:
+
+```json
+{
+  "defaultJsonOutput": true,
+  "timeout": 30000,
+  "debug": false
+}
+```
+
+### Available Settings
+
+| Setting | Type | Description |
+|---------|------|-------------|
+| `defaultJsonOutput` | boolean | Default output format (`true` = JSON, `false` = human-readable) |
+| `llmProvider` | string | Default LLM provider for chat |
+| `timeout` | number | HTTP request timeout in milliseconds |
+| `skipSSLVerification` | boolean | Skip SSL verification (not recommended) |
+| `debug` | boolean | Enable debug output |
+| `chatContextMessages` | number | Max messages in chat context (default: 20) |
+
+### Default JSON Output
+
+Set JSON as the default output format for all commands:
+
+```json
+{
+  "defaultJsonOutput": true
+}
+```
+
+The `--json` flag always takes precedence over this setting:
+
+```bash
+# Uses JSON output (from settings)
+mainwpctl doctor
+
+# Uses human-readable output (flag overrides setting)
+mainwpctl doctor --json=false
+```
+
 ## CI/CD Integration
 
 `mainwpctl` is designed for CI pipelines:
