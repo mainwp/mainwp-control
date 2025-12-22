@@ -60,7 +60,11 @@ async function loadProfilesFile(): Promise<ProfilesFile> {
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
       return { profiles: [] };
     }
-    throw new ConfigError(`Failed to load profiles: ${(error as Error).message}`);
+    throw new ConfigError(
+      `Failed to load profiles: ${(error as Error).message}`,
+      undefined,
+      'Check file permissions for ~/.config/mainwpctl/profiles.json'
+    );
   }
 }
 
@@ -89,12 +93,18 @@ export class ProfileStore {
     try {
       parsed = new URL(url);
     } catch {
-      throw new ConfigError(`Invalid Dashboard URL format: ${url}`);
+      throw new ConfigError(
+        `Invalid Dashboard URL format: ${url}`,
+        undefined,
+        'URL must include protocol (http:// or https://) and hostname'
+      );
     }
 
     if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
       throw new ConfigError(
-        `Invalid URL protocol: ${parsed.protocol}. Must be http or https`
+        `Invalid URL protocol: ${parsed.protocol}. Must be http or https`,
+        undefined,
+        'Only HTTP and HTTPS protocols are supported'
       );
     }
 
@@ -109,22 +119,38 @@ export class ProfileStore {
    * Validate a profile's required fields and URL format
    */
   private validateProfile(profile: Profile): void {
+    const validationHint = 'Run `mainwpctl login` to create a valid profile';
+
     if (!profile.name || profile.name.trim().length === 0) {
-      throw new ConfigError('Profile validation failed: name is required');
+      throw new ConfigError(
+        'Profile validation failed: name is required',
+        undefined,
+        validationHint
+      );
     }
 
     if (!profile.dashboardUrl || profile.dashboardUrl.trim().length === 0) {
       throw new ConfigError(
-        'Profile validation failed: dashboardUrl is required'
+        'Profile validation failed: dashboardUrl is required',
+        undefined,
+        validationHint
       );
     }
 
     if (!profile.username || profile.username.trim().length === 0) {
-      throw new ConfigError('Profile validation failed: username is required');
+      throw new ConfigError(
+        'Profile validation failed: username is required',
+        undefined,
+        validationHint
+      );
     }
 
     if (!profile.createdAt || profile.createdAt.trim().length === 0) {
-      throw new ConfigError('Profile validation failed: createdAt is required');
+      throw new ConfigError(
+        'Profile validation failed: createdAt is required',
+        undefined,
+        validationHint
+      );
     }
 
     this.validateUrl(profile.dashboardUrl);
@@ -138,8 +164,12 @@ export class ProfileStore {
       try {
         this.validateProfile(profile);
       } catch (error) {
+        // Preserve hint from the original ConfigError when rewrapping
+        const hint = error instanceof ConfigError ? error.hint : undefined;
         throw new ConfigError(
-          `Invalid profile "${profile.name || 'unnamed'}": ${(error as Error).message}`
+          `Invalid profile "${profile.name || 'unnamed'}": ${(error as Error).message}`,
+          undefined,
+          hint
         );
       }
     }
@@ -206,7 +236,11 @@ export class ProfileStore {
 
     const profile = data.profiles.find((p) => p.name === name);
     if (!profile) {
-      throw new ConfigError(`Profile not found: ${name}`);
+      throw new ConfigError(
+        `Profile not found: ${name}`,
+        undefined,
+        'List available profiles with `mainwpctl profile list`'
+      );
     }
 
     data.activeProfile = name;
@@ -260,7 +294,11 @@ export class ProfileStore {
 
     const index = data.profiles.findIndex((p) => p.name === name);
     if (index < 0) {
-      throw new ConfigError(`Profile not found: ${name}`);
+      throw new ConfigError(
+        `Profile not found: ${name}`,
+        undefined,
+        'List available profiles with `mainwpctl profile list`'
+      );
     }
 
     data.profiles.splice(index, 1);

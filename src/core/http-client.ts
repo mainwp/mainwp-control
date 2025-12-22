@@ -154,7 +154,11 @@ export class HttpClient {
       // Check response size
       const contentLength = response.headers.get('content-length');
       if (contentLength && parseInt(contentLength, 10) > this.maxResponseSize) {
-        throw new NetworkError(`Response too large: ${contentLength} bytes`);
+        throw new NetworkError(
+          `Response too large: ${contentLength} bytes`,
+          undefined,
+          'Response is too large. Check the Dashboard logs or try a simpler query'
+        );
       }
 
       // Parse response
@@ -162,7 +166,11 @@ export class HttpClient {
 
       // Check size after reading
       if (text.length > this.maxResponseSize) {
-        throw new NetworkError(`Response too large: ${text.length} bytes`);
+        throw new NetworkError(
+          `Response too large: ${text.length} bytes`,
+          undefined,
+          'Response is too large. Check the Dashboard logs or try a simpler query'
+        );
       }
 
       let data: T;
@@ -226,20 +234,40 @@ export class HttpClient {
 
     switch (status) {
       case 401:
-        throw new AuthError('Authentication failed. Check your credentials.', sanitizedData);
+        throw new AuthError(
+          'Authentication failed. Check your credentials.',
+          sanitizedData,
+          'Run `mainwpctl login` to update your credentials'
+        );
       case 403:
-        throw new AuthError('Access denied. Insufficient permissions.', sanitizedData);
+        throw new AuthError(
+          'Access denied. Insufficient permissions.',
+          sanitizedData,
+          'Verify your user has the required permissions in WordPress'
+        );
       case 404:
         throw new APIError('NOT_FOUND', 'Resource not found', status, sanitizedData);
       case 422:
         throw new APIError('VALIDATION_ERROR', 'Validation failed', status, sanitizedData);
       case 429:
-        throw new APIError('RATE_LIMITED', 'Too many requests', status, sanitizedData);
+        throw new APIError(
+          'RATE_LIMITED',
+          'Too many requests',
+          status,
+          sanitizedData,
+          'Wait a few minutes before retrying'
+        );
       case 500:
       case 502:
       case 503:
       case 504:
-        throw new APIError('SERVER_ERROR', 'Server error', status, sanitizedData);
+        throw new APIError(
+          'SERVER_ERROR',
+          'Server error',
+          status,
+          sanitizedData,
+          'Check the Dashboard logs or try again later'
+        );
       default:
         throw new APIError('HTTP_ERROR', `HTTP ${status}`, status, sanitizedData);
     }
@@ -252,20 +280,36 @@ export class HttpClient {
     if (error instanceof Error) {
       // Check for abort/timeout
       if (error.name === 'AbortError') {
-        return new NetworkError('Request timed out');
+        return new NetworkError(
+          'Request timed out',
+          undefined,
+          'Increase timeout with --timeout flag or check network connection'
+        );
       }
 
       // Check for network errors
       if ('code' in error) {
         const code = (error as NodeJS.ErrnoException).code;
         if (code === 'ECONNREFUSED') {
-          return new NetworkError('Connection refused. Is the Dashboard running?');
+          return new NetworkError(
+            'Connection refused. Is the Dashboard running?',
+            undefined,
+            'Verify the Dashboard is running and the URL is correct'
+          );
         }
         if (code === 'ENOTFOUND') {
-          return new NetworkError('Host not found. Check the Dashboard URL.');
+          return new NetworkError(
+            'Host not found. Check the Dashboard URL.',
+            undefined,
+            'Check the Dashboard URL in your profile with `mainwpctl config show`'
+          );
         }
         if (code === 'CERT_HAS_EXPIRED' || code === 'UNABLE_TO_VERIFY_LEAF_SIGNATURE') {
-          return new TLSError('SSL certificate error. Use --skip-ssl-verify if needed.');
+          return new TLSError(
+            'SSL certificate error. Use --skip-ssl-verify if needed.',
+            undefined,
+            'Use --skip-ssl-verify flag if using self-signed certificates (not recommended for production)'
+          );
         }
       }
 

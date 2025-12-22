@@ -92,7 +92,8 @@ export class SchemaValidator {
       const errorMessages = result.errors.map((e) => `${e.path}: ${e.message}`).join('; ');
       throw new SchemaValidationError(
         `Invalid input for ability "${abilityName}": ${errorMessages}`,
-        result.errors
+        result.errors,
+        `Check the ability schema with \`mainwpctl abilities info ${abilityName}\` for required fields and types`
       );
     }
   }

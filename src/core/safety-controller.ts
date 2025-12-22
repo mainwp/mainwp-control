@@ -99,7 +99,10 @@ export class SafetyController {
   ): void {
     // RULE 2: Mutual exclusion check
     if (dryRun === true && confirm === true) {
-      throw new MutualExclusionError();
+      throw new MutualExclusionError(
+        'dry_run and confirm are mutually exclusive',
+        'Use either --dry-run (preview) or --confirm (execute), not both'
+      );
     }
 
     const classification = this.classify(ability);
@@ -108,7 +111,9 @@ export class SafetyController {
     if (classification.requiresSafetyFlow) {
       if (dryRun !== true && confirm !== true) {
         throw new ConfirmationRequiredError(
-          `Destructive ability "${ability.name}" requires --dry-run (preview) or --confirm (execute).`
+          `Destructive ability "${ability.name}" requires --dry-run (preview) or --confirm (execute).`,
+          undefined,
+          'Use --dry-run to preview changes or --confirm to execute'
         );
       }
     }

@@ -129,8 +129,9 @@ export class Keychain {
 
     if (!password) {
       throw new AuthError(
-        `No credentials found for profile "${profileName}". ` +
-          `Run \`mainwpctl login\` or set ${ENV_VAR}.`
+        `No credentials found for profile "${profileName}".`,
+        undefined,
+        `Run \`mainwpctl login\` or set ${ENV_VAR} environment variable`
       );
     }
 

@@ -15,7 +15,8 @@ export abstract class MainWPCTLError extends Error {
 
   constructor(
     message: string,
-    public readonly details?: unknown
+    public readonly details?: unknown,
+    public readonly hint?: string
   ) {
     super(message);
     this.name = this.constructor.name;
@@ -23,11 +24,15 @@ export abstract class MainWPCTLError extends Error {
   }
 
   toJSON(): Record<string, unknown> {
-    return {
+    const result: Record<string, unknown> = {
       code: this.code,
       message: this.message,
       details: this.details,
     };
+    if (this.hint) {
+      result.hint = this.hint;
+    }
+    return result;
   }
 }
 
@@ -38,8 +43,8 @@ export class InputError extends MainWPCTLError {
   readonly exitCode = ExitCode.INPUT_ERROR;
   readonly code = 'INPUT_ERROR';
 
-  constructor(message: string, details?: unknown) {
-    super(message, details);
+  constructor(message: string, details?: unknown, hint?: string) {
+    super(message, details, hint);
   }
 }
 
@@ -52,9 +57,10 @@ export class SchemaValidationError extends MainWPCTLError {
 
   constructor(
     message: string,
-    public readonly validationErrors: unknown[]
+    public readonly validationErrors: unknown[],
+    hint?: string
   ) {
-    super(message, { validationErrors });
+    super(message, { validationErrors }, hint);
   }
 }
 
@@ -65,8 +71,8 @@ export class AuthError extends MainWPCTLError {
   readonly exitCode = ExitCode.AUTH_ERROR;
   readonly code = 'AUTH_ERROR';
 
-  constructor(message: string, details?: unknown) {
-    super(message, details);
+  constructor(message: string, details?: unknown, hint?: string) {
+    super(message, details, hint);
   }
 }
 
@@ -77,8 +83,8 @@ export class ConfigError extends MainWPCTLError {
   readonly exitCode = ExitCode.AUTH_ERROR;
   readonly code = 'CONFIG_ERROR';
 
-  constructor(message: string, details?: unknown) {
-    super(message, details);
+  constructor(message: string, details?: unknown, hint?: string) {
+    super(message, details, hint);
   }
 }
 
@@ -91,9 +97,10 @@ export class NetworkError extends MainWPCTLError {
 
   constructor(
     message: string,
-    public readonly cause?: Error
+    public readonly cause?: Error,
+    hint?: string
   ) {
-    super(message, cause ? { cause: cause.message } : undefined);
+    super(message, cause ? { cause: cause.message } : undefined, hint);
   }
 }
 
@@ -104,8 +111,8 @@ export class TLSError extends MainWPCTLError {
   readonly exitCode = ExitCode.NETWORK_ERROR;
   readonly code = 'TLS_ERROR';
 
-  constructor(message: string, details?: unknown) {
-    super(message, details);
+  constructor(message: string, details?: unknown, hint?: string) {
+    super(message, details, hint);
   }
 }
 
@@ -120,9 +127,10 @@ export class APIError extends MainWPCTLError {
     code: string,
     message: string,
     public readonly statusCode?: number,
-    details?: unknown
+    details?: unknown,
+    hint?: string
   ) {
-    super(message, details);
+    super(message, details, hint);
     this.code = code;
   }
 }
@@ -136,9 +144,10 @@ export class ConfirmationRequiredError extends MainWPCTLError {
 
   constructor(
     message: string,
-    public readonly preview?: unknown
+    public readonly preview?: unknown,
+    hint?: string
   ) {
-    super(message, { preview });
+    super(message, { preview }, hint);
   }
 }
 
@@ -149,8 +158,11 @@ export class MutualExclusionError extends MainWPCTLError {
   readonly exitCode = ExitCode.INPUT_ERROR;
   readonly code = 'MUTUAL_EXCLUSION_ERROR';
 
-  constructor(message = 'dry_run and confirm are mutually exclusive') {
-    super(message);
+  constructor(
+    message = 'dry_run and confirm are mutually exclusive',
+    hint?: string
+  ) {
+    super(message, undefined, hint);
   }
 }
 
@@ -163,9 +175,10 @@ export class InternalError extends MainWPCTLError {
 
   constructor(
     message: string,
-    public readonly cause?: Error
+    public readonly cause?: Error,
+    hint?: string
   ) {
-    super(message, cause ? { cause: cause.message } : undefined);
+    super(message, cause ? { cause: cause.message } : undefined, hint);
   }
 }
 

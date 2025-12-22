@@ -101,7 +101,9 @@ export class ConfigManager {
 
     if (!url) {
       throw new ConfigError(
-        'Dashboard URL not configured. Run `mainwpctl login` or set MAINWP_URL.'
+        'Dashboard URL not configured.',
+        undefined,
+        'Run `mainwpctl login` or set MAINWP_URL environment variable'
       );
     }
 
@@ -116,7 +118,9 @@ export class ConfigManager {
 
     if (!username) {
       throw new ConfigError(
-        'Username not configured. Run `mainwpctl login` or set MAINWP_USERNAME.'
+        'Username not configured.',
+        undefined,
+        'Run `mainwpctl login` or set MAINWP_USERNAME environment variable'
       );
     }
 
@@ -228,7 +232,11 @@ export class ConfigManager {
       const parsed = new URL(url);
 
       if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
-        throw new ConfigError(`Invalid URL protocol: ${parsed.protocol}`);
+        throw new ConfigError(
+          `Invalid URL protocol: ${parsed.protocol}`,
+          undefined,
+          'Only HTTP and HTTPS protocols are supported'
+        );
       }
 
       // Warn about HTTP
@@ -237,7 +245,11 @@ export class ConfigManager {
       }
     } catch (error) {
       if (error instanceof ConfigError) throw error;
-      throw new ConfigError(`Invalid Dashboard URL: ${url}`);
+      throw new ConfigError(
+        `Invalid Dashboard URL: ${url}`,
+        undefined,
+        'Check the Dashboard URL format (must include protocol and hostname)'
+      );
     }
   }
 }

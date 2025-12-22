@@ -16,6 +16,7 @@ export interface CLIOutput<T = unknown> {
     code: string;
     message: string;
     details?: unknown;
+    hint?: string;
   };
   meta?: {
     command: string;
@@ -62,6 +63,9 @@ export function errorOutput(
       message: error.message,
       details: error.details,
     };
+    if (error.hint) {
+      errorBody.hint = error.hint;
+    }
   } else if (error instanceof Error) {
     errorBody = {
       code: 'INTERNAL_ERROR',
@@ -76,8 +80,11 @@ export function errorOutput(
 
   const output: CLIOutput<never> = {
     success: false,
-    error: errorBody,
   };
+
+  if (errorBody) {
+    output.error = errorBody;
+  }
 
   if (meta) {
     output.meta = {

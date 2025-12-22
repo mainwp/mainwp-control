@@ -14,6 +14,7 @@ import { createAbilitiesExecutor, type AbilitiesExecutor } from '../core/abiliti
 import { ConfigError, AuthError } from '../utils/errors.js';
 import { successOutput, errorOutput } from '../output/json-envelope.js';
 import { ExitCode } from '../utils/exit-codes.js';
+import { formatError } from '../output/formatter.js';
 
 /**
  * Common flags available to all commands
@@ -94,14 +95,20 @@ export abstract class BaseCommand extends Command {
     if (profileName) {
       const profile = await profileStore.get(profileName);
       if (!profile) {
-        throw new ConfigError(`Profile not found: ${profileName}`);
+        throw new ConfigError(
+          `Profile not found: ${profileName}`,
+          undefined,
+          'List available profiles with `mainwpctl profile list` or create one with `mainwpctl login`'
+        );
       }
       this.currentProfile = profile;
     } else {
       this.currentProfile = await profileStore.getActive();
       if (!this.currentProfile) {
         throw new ConfigError(
-          'No profile configured. Run `mainwpctl login` to create one.'
+          'No profile configured.',
+          undefined,
+          'Create your first profile with `mainwpctl login`'
         );
       }
     }
@@ -116,7 +123,11 @@ export abstract class BaseCommand extends Command {
     }
 
     if (!this.currentProfile) {
-      throw new ConfigError('No profile loaded');
+      throw new ConfigError(
+        'No profile loaded',
+        undefined,
+        'This is an internal error. Please report this issue.'
+      );
     }
 
     const keychain = getKeychain();
@@ -155,6 +166,9 @@ export abstract class BaseCommand extends Command {
     if (this.jsonOutput) {
       const envelope = errorOutput(err);
       this.log(JSON.stringify(envelope, null, 2));
+    } else {
+      // Human-readable error output with hints
+      this.logToStderr(formatError(err));
     }
 
     // Determine exit code

@@ -87,13 +87,23 @@ export default class Login extends BaseCommand {
       const response = await client.get('/wp-json/wp-abilities/v1/abilities');
 
       if (response.status !== 200) {
-        throw new AuthError('Failed to connect to Dashboard');
+        throw new AuthError(
+          'Failed to connect to Dashboard',
+          undefined,
+          'Verify the Dashboard URL and network connectivity'
+        );
       }
     } catch (error) {
       if (error instanceof AuthError) {
         throw error;
       }
-      throw new AuthError(`Connection failed: ${(error as Error).message}`);
+      // Preserve hint from underlying error if available
+      const originalError = error as Error & { hint?: string };
+      throw new AuthError(
+        `Connection failed: ${originalError.message}`,
+        undefined,
+        originalError.hint ?? 'Verify the Dashboard URL and network connectivity'
+      );
     }
 
     // Store profile
@@ -179,7 +189,11 @@ export default class Login extends BaseCommand {
             stdin.pause();
             stdin.removeListener('data', onData);
             rl.close();
-            reject(new InputError('Login cancelled by user'));
+            reject(new InputError(
+              'Login cancelled by user',
+              undefined,
+              'Press Ctrl+C to exit or provide credentials to continue'
+            ));
           } else if (charCode === 127) {
             // Backspace
             if (input.length > 0) {

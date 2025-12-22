@@ -52,6 +52,7 @@ export interface ExecutionResult<T = unknown> {
     code: string;
     message: string;
     details?: unknown;
+    hint?: string;
   };
   jobId?: string;
 }
@@ -111,7 +112,11 @@ export class AbilitiesExecutor {
     const ability = await this.getAbility(abilityName);
 
     if (!ability) {
-      throw new InputError(`Unknown ability: ${abilityName}`);
+      throw new InputError(
+        `Unknown ability: ${abilityName}`,
+        undefined,
+        'List available abilities with `mainwpctl abilities list`'
+      );
     }
 
     // Build the request body
@@ -146,13 +151,17 @@ export class AbilitiesExecutor {
       return this.normalizeResponse(response.data);
     } catch (error) {
       if (error instanceof APIError) {
+        const errorObj: ExecutionResult<T>['error'] = {
+          code: error.code,
+          message: error.message,
+          details: error.details,
+        };
+        if (error.hint) {
+          errorObj.hint = error.hint;
+        }
         return {
           success: false,
-          error: {
-            code: error.code,
-            message: error.message,
-            details: error.details,
-          },
+          error: errorObj,
         };
       }
       throw error;

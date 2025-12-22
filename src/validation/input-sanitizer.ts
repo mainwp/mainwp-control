@@ -90,7 +90,8 @@ export class InputSanitizer {
     if (serialized.length > this.limits.maxInputSize) {
       throw new InputError(
         `Input size exceeds limit: ${serialized.length} bytes (max: ${this.limits.maxInputSize})`,
-        { size: serialized.length, limit: this.limits.maxInputSize }
+        { size: serialized.length, limit: this.limits.maxInputSize },
+        'Reduce the size of your input or split into multiple requests'
       );
     }
 
@@ -106,11 +107,11 @@ export class InputSanitizer {
   private validateValue(value: unknown, depth: number, path: string): void {
     // Check depth
     if (depth > this.limits.maxObjectDepth) {
-      throw new InputError(`Input exceeds maximum depth at "${path}"`, {
-        path,
-        depth,
-        limit: this.limits.maxObjectDepth,
-      });
+      throw new InputError(
+        `Input exceeds maximum depth at "${path}"`,
+        { path, depth, limit: this.limits.maxObjectDepth },
+        'Simplify your input structure or reduce nesting depth'
+      );
     }
 
     if (value === null || value === undefined) {
@@ -119,22 +120,22 @@ export class InputSanitizer {
 
     if (typeof value === 'string') {
       if (value.length > this.limits.maxStringLength) {
-        throw new InputError(`String exceeds maximum length at "${path}"`, {
-          path,
-          length: value.length,
-          limit: this.limits.maxStringLength,
-        });
+        throw new InputError(
+          `String exceeds maximum length at "${path}"`,
+          { path, length: value.length, limit: this.limits.maxStringLength },
+          'Use shorter strings or split into multiple requests'
+        );
       }
       return;
     }
 
     if (Array.isArray(value)) {
       if (value.length > this.limits.maxArrayElements) {
-        throw new InputError(`Array exceeds maximum elements at "${path}"`, {
-          path,
-          length: value.length,
-          limit: this.limits.maxArrayElements,
-        });
+        throw new InputError(
+          `Array exceeds maximum elements at "${path}"`,
+          { path, length: value.length, limit: this.limits.maxArrayElements },
+          'Reduce the number of array elements or split into multiple requests'
+        );
       }
       value.forEach((item, index) => {
         this.validateValue(item, depth + 1, `${path}[${index}]`);
@@ -145,11 +146,11 @@ export class InputSanitizer {
     if (typeof value === 'object') {
       const keys = Object.keys(value);
       if (keys.length > this.limits.maxObjectKeys) {
-        throw new InputError(`Object exceeds maximum keys at "${path}"`, {
-          path,
-          count: keys.length,
-          limit: this.limits.maxObjectKeys,
-        });
+        throw new InputError(
+          `Object exceeds maximum keys at "${path}"`,
+          { path, count: keys.length, limit: this.limits.maxObjectKeys },
+          'Reduce the number of object properties or split into multiple requests'
+        );
       }
       for (const key of keys) {
         this.validateValue((value as Record<string, unknown>)[key], depth + 1, `${path}.${key}`);

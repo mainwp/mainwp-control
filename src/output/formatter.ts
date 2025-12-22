@@ -49,8 +49,13 @@ export function formatError(error: Error | string): string {
   const message = error instanceof Error ? error.message : error;
   let output = color('✗ Error: ', colors.red, colors.bold) + message;
 
-  if (isMainWPCTLError(error) && error.details) {
-    output += '\n' + color('  Details: ', colors.dim) + JSON.stringify(error.details);
+  if (isMainWPCTLError(error)) {
+    if (error.details) {
+      output += '\n' + color('  Details: ', colors.dim) + JSON.stringify(error.details);
+    }
+    if (error.hint) {
+      output += '\n' + color('💡 ' + error.hint, colors.dim);
+    }
   }
 
   return output;
