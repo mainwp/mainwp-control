@@ -35,12 +35,14 @@ import {
 const mockFsReadFile = vi.fn();
 const mockFsWriteFile = vi.fn();
 const mockFsMkdir = vi.fn();
+const mockFsRename = vi.fn();
 
 vi.mock('node:fs', () => ({
   promises: {
     readFile: (...args: unknown[]) => mockFsReadFile(...args),
     writeFile: (...args: unknown[]) => mockFsWriteFile(...args),
     mkdir: (...args: unknown[]) => mockFsMkdir(...args),
+    rename: (...args: unknown[]) => mockFsRename(...args),
   },
 }));
 
@@ -115,6 +117,7 @@ describe('E2E: Login → Abilities Flow', () => {
     mockFsReadFile.mockRejectedValue({ code: 'ENOENT' });
     mockFsWriteFile.mockResolvedValue(undefined);
     mockFsMkdir.mockResolvedValue(undefined);
+    mockFsRename.mockResolvedValue(undefined);
 
     // Default: keytar available and working
     mockKeytarSetPassword.mockResolvedValue(undefined);

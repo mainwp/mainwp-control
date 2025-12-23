@@ -88,14 +88,16 @@ export class AuditLogger {
   /**
    * Log a destructive action
    *
+   * SECURITY: Uses restricted permissions for audit logs.
+   *
    * @param params - Action details to log
    */
   async logDestructiveAction(params: LogDestructiveActionInput): Promise<void> {
     const logPath = getAuditLogPath();
 
-    // Ensure directory exists
+    // Create directory with restricted permissions (owner only)
     const dir = getConfigDir();
-    await fs.mkdir(dir, { recursive: true });
+    await fs.mkdir(dir, { recursive: true, mode: 0o700 });
 
     // Check if rotation is needed
     if (await this.shouldRotate(logPath)) {
@@ -124,8 +126,26 @@ export class AuditLogger {
     // Format as NDJSON line
     const line = JSON.stringify(entry) + '\n';
 
+    // Ensure file exists with proper permissions before appending
+    await this.ensureLogFile(logPath);
+
     // Append to log file
     await fs.appendFile(logPath, line, 'utf-8');
+  }
+
+  /**
+   * Ensure log file exists with proper permissions
+   *
+   * SECURITY: Creates file with 0o600 (owner read/write only) if it doesn't exist.
+   */
+  private async ensureLogFile(logPath: string): Promise<void> {
+    try {
+      await fs.access(logPath);
+    } catch {
+      // File doesn't exist, create with restricted permissions
+      const fd = await fs.open(logPath, 'w', 0o600);
+      await fd.close();
+    }
   }
 
   /**

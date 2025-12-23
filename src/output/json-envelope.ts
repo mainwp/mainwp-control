@@ -5,6 +5,7 @@
  */
 
 import { isMainWPCTLError, type MainWPCTLError } from '../utils/errors.js';
+import { sanitizeForTerminal, stripControlChars } from '../utils/terminal-sanitizer.js';
 
 /**
  * Stable CLI output envelope
@@ -32,9 +33,12 @@ export function successOutput<T>(
   data: T,
   meta?: { command: string; version: string }
 ): CLIOutput<T> {
+  // Sanitize data to prevent terminal escape injection in piped JSON
+  const sanitizedData = sanitizeForTerminal(data) as T;
+
   const output: CLIOutput<T> = {
     success: true,
-    data,
+    data: sanitizedData,
   };
 
   if (meta) {
@@ -60,21 +64,21 @@ export function errorOutput(
   if (isMainWPCTLError(error)) {
     errorBody = {
       code: error.code,
-      message: error.message,
-      details: error.details,
+      message: stripControlChars(error.message),
+      details: error.details ? sanitizeForTerminal(error.details) : undefined,
     };
     if (error.hint) {
-      errorBody.hint = error.hint;
+      errorBody.hint = stripControlChars(error.hint);
     }
   } else if (error instanceof Error) {
     errorBody = {
       code: 'INTERNAL_ERROR',
-      message: error.message,
+      message: stripControlChars(error.message),
     };
   } else {
     errorBody = {
       code: 'INTERNAL_ERROR',
-      message: String(error),
+      message: stripControlChars(String(error)),
     };
   }
 

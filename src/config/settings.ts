@@ -72,16 +72,26 @@ export async function loadSettings(): Promise<Settings> {
 
 /**
  * Save settings to file
+ *
+ * SECURITY: Uses atomic write (tmp + rename) and restricted permissions.
  */
 export async function saveSettings(settings: Settings): Promise<void> {
   const dir = getConfigDir();
   const path = getSettingsPath();
+  const tmpPath = `${path}.tmp`;
 
-  // Ensure directory exists
-  await fs.mkdir(dir, { recursive: true });
+  // Create directory with restricted permissions (owner only)
+  await fs.mkdir(dir, { recursive: true, mode: 0o700 });
 
-  // Write settings
-  await fs.writeFile(path, JSON.stringify(settings, null, 2), 'utf-8');
+  // Atomic write: write to temp file then rename
+  // This prevents data corruption if process crashes mid-write
+  await fs.writeFile(tmpPath, JSON.stringify(settings, null, 2), {
+    encoding: 'utf-8',
+    mode: 0o600, // Owner read/write only
+  });
+
+  // Rename is atomic on POSIX systems
+  await fs.rename(tmpPath, path);
 }
 
 /**

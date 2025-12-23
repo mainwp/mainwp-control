@@ -3,6 +3,7 @@
  */
 
 import { isMainWPCTLError } from '../utils/errors.js';
+import { stripControlChars, sanitizeForTerminal, safeString } from '../utils/terminal-sanitizer.js';
 
 /**
  * ANSI color codes (only used when stdout is a TTY)
@@ -46,15 +47,17 @@ export function formatSuccess(message: string): string {
  * Format an error message
  */
 export function formatError(error: Error | string): string {
-  const message = error instanceof Error ? error.message : error;
+  const message = error instanceof Error ? stripControlChars(error.message) : stripControlChars(error);
   let output = color('✗ Error: ', colors.red, colors.bold) + message;
 
   if (isMainWPCTLError(error)) {
     if (error.details) {
-      output += '\n' + color('  Details: ', colors.dim) + JSON.stringify(error.details);
+      // Sanitize error details before display (untrusted API data)
+      const sanitizedDetails = sanitizeForTerminal(error.details);
+      output += '\n' + color('  Details: ', colors.dim) + JSON.stringify(sanitizedDetails);
     }
     if (error.hint) {
-      output += '\n' + color('💡 ' + error.hint, colors.dim);
+      output += '\n' + color('💡 ' + stripControlChars(error.hint), colors.dim);
     }
   }
 
@@ -86,8 +89,10 @@ export function formatHeading(text: string): string {
  * Format a key-value pair
  */
 export function formatKeyValue(key: string, value: unknown): string {
-  const valueStr = typeof value === 'object' ? JSON.stringify(value) : String(value);
-  return color(key + ': ', colors.dim) + valueStr;
+  // Sanitize both key and value (may contain untrusted API data)
+  const safeKey = stripControlChars(key);
+  const valueStr = safeString(value);
+  return color(safeKey + ': ', colors.dim) + valueStr;
 }
 
 /**
@@ -101,21 +106,25 @@ export function formatTable(
     return '(no data)';
   }
 
-  // Calculate column widths
-  const widths = headers.map((h, i) => {
-    const rowWidths = rows.map((r) => (r[i] ?? '').length);
+  // Sanitize all table data (may contain untrusted API data)
+  const safeHeaders = headers.map((h) => stripControlChars(h));
+  const safeRows = rows.map((row) => row.map((cell) => stripControlChars(cell ?? '')));
+
+  // Calculate column widths using sanitized data
+  const widths = safeHeaders.map((h, i) => {
+    const rowWidths = safeRows.map((r) => (r[i] ?? '').length);
     return Math.max(h.length, ...rowWidths);
   });
 
   // Format header
-  const headerLine = headers
+  const headerLine = safeHeaders
     .map((h, i) => h.padEnd(widths[i] ?? 0))
     .join('  ');
 
   const separator = widths.map((w) => '-'.repeat(w)).join('  ');
 
   // Format rows
-  const dataLines = rows.map((row) =>
+  const dataLines = safeRows.map((row) =>
     row.map((cell, i) => (cell ?? '').padEnd(widths[i] ?? 0)).join('  ')
   );
 
@@ -130,7 +139,8 @@ export function formatTable(
  * Format a list of items
  */
 export function formatList(items: string[], bullet = '•'): string {
-  return items.map((item) => `  ${bullet} ${item}`).join('\n');
+  // Sanitize list items (may contain untrusted API data)
+  return items.map((item) => `  ${bullet} ${stripControlChars(item)}`).join('\n');
 }
 
 /**
@@ -140,11 +150,14 @@ export function formatPreview(
   action: string,
   affectedItems: unknown
 ): string {
+  // Sanitize preview data (may contain untrusted API data)
+  const sanitizedItems = sanitizeForTerminal(affectedItems);
+
   const lines = [
-    color('Preview: ', colors.yellow, colors.bold) + action,
+    color('Preview: ', colors.yellow, colors.bold) + stripControlChars(action),
     '',
     color('Affected items:', colors.dim),
-    JSON.stringify(affectedItems, null, 2),
+    JSON.stringify(sanitizedItems, null, 2),
     '',
     color('This is a preview. No changes have been made.', colors.yellow),
     'To execute, run the command with --confirm',

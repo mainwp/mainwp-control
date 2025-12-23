@@ -5,6 +5,7 @@
  * INVARIANT: All HTTP requests MUST go through this module.
  */
 
+import { Agent } from 'undici';
 import { NetworkError, TLSError, APIError, AuthError } from '../utils/errors.js';
 
 /**
@@ -51,14 +52,23 @@ const DEFAULTS = {
  */
 export class HttpClient {
   private readonly baseUrl: string;
+  private readonly baseOrigin: string;
   private readonly authHeader: string;
   private readonly timeout: number;
   private readonly maxResponseSize: number;
   private readonly skipSSLVerification: boolean;
+  private readonly dispatcher: Agent | undefined;
+
+  /** Maximum redirects to follow (same-origin only) */
+  private static readonly MAX_REDIRECTS = 5;
 
   constructor(config: HttpClientConfig) {
     // Normalize base URL (remove trailing slash)
     this.baseUrl = config.baseUrl.replace(/\/+$/, '');
+
+    // Extract origin for redirect validation
+    const parsedUrl = new URL(this.baseUrl);
+    this.baseOrigin = parsedUrl.origin;
 
     // Create Basic auth header
     const credentials = Buffer.from(`${config.username}:${config.appPassword}`).toString('base64');
@@ -68,8 +78,13 @@ export class HttpClient {
     this.maxResponseSize = config.maxResponseSize ?? DEFAULTS.maxResponseSize;
     this.skipSSLVerification = config.skipSSLVerification ?? false;
 
-    // Warn about insecure configuration
+    // Configure undici Agent for SSL verification control
     if (this.skipSSLVerification) {
+      this.dispatcher = new Agent({
+        connect: {
+          rejectUnauthorized: false,
+        },
+      });
       console.warn('WARNING: SSL verification is disabled. This is insecure.');
     }
 
@@ -116,7 +131,8 @@ export class HttpClient {
     method: string,
     path: string,
     body?: unknown,
-    options?: RequestOptions
+    options?: RequestOptions,
+    redirectCount = 0
   ): Promise<HttpResponse<T>> {
     const url = this.buildUrl(path);
     const headers = this.buildHeaders(options?.headers);
@@ -138,18 +154,28 @@ export class HttpClient {
         method,
         headers,
         signal: controller.signal,
+        // SECURITY: Disable auto-redirect to prevent auth header leakage to cross-origin
+        redirect: 'manual',
       };
 
       if (body !== undefined) {
         fetchOptions.body = JSON.stringify(body);
       }
 
-      // Note: Node.js fetch doesn't support rejectUnauthorized directly
-      // SSL verification toggle would need to be handled via agent
-      // For now, we document this limitation
+      // Use undici dispatcher for SSL verification control
+      if (this.dispatcher) {
+        // Cast needed due to type mismatch between undici and Node.js fetch types
+        (fetchOptions as Record<string, unknown>).dispatcher = this.dispatcher;
+      }
+
       const response = await fetch(url, fetchOptions);
 
       clearTimeout(timeoutId);
+
+      // SECURITY: Handle redirects manually - only follow same-origin
+      if (this.isRedirect(response.status)) {
+        return this.handleRedirect<T>(response, method, body, options, redirectCount);
+      }
 
       // Check response size
       const contentLength = response.headers.get('content-length');
@@ -196,6 +222,68 @@ export class HttpClient {
       clearTimeout(timeoutId);
       throw this.normalizeError(error);
     }
+  }
+
+  /**
+   * Check if status code is a redirect
+   */
+  private isRedirect(status: number): boolean {
+    return status >= 300 && status < 400;
+  }
+
+  /**
+   * Handle HTTP redirects securely
+   *
+   * SECURITY: Only follows same-origin redirects to prevent credential leakage.
+   * Cross-origin redirects are rejected with an error.
+   */
+  private async handleRedirect<T>(
+    response: Response,
+    method: string,
+    body: unknown,
+    options: RequestOptions | undefined,
+    redirectCount: number
+  ): Promise<HttpResponse<T>> {
+    if (redirectCount >= HttpClient.MAX_REDIRECTS) {
+      throw new NetworkError(
+        'Too many redirects',
+        undefined,
+        'The Dashboard is redirecting too many times. Check the server configuration.'
+      );
+    }
+
+    const location = response.headers.get('location');
+    if (!location) {
+      throw new NetworkError(
+        `Redirect response (${response.status}) missing Location header`,
+        undefined,
+        'The server sent an invalid redirect response'
+      );
+    }
+
+    // Resolve relative URLs against the current base
+    let redirectUrl: URL;
+    try {
+      redirectUrl = new URL(location, this.baseUrl);
+    } catch {
+      throw new NetworkError(
+        `Invalid redirect URL: ${location}`,
+        undefined,
+        'The server sent an invalid redirect location'
+      );
+    }
+
+    // SECURITY: Only follow same-origin redirects
+    if (redirectUrl.origin !== this.baseOrigin) {
+      throw new NetworkError(
+        `Cross-origin redirect blocked: ${this.baseOrigin} → ${redirectUrl.origin}`,
+        undefined,
+        'The Dashboard is redirecting to a different domain. This may indicate a security issue or misconfiguration.'
+      );
+    }
+
+    // Follow same-origin redirect (pass full URL to preserve path)
+    return this.request<T>(method, redirectUrl.href, body, options, redirectCount + 1);
   }
 
   /**

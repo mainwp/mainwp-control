@@ -70,13 +70,26 @@ async function loadProfilesFile(): Promise<ProfilesFile> {
 
 /**
  * Save profiles to file
+ *
+ * SECURITY: Uses atomic write (tmp + rename) and restricted permissions.
  */
 async function saveProfilesFile(data: ProfilesFile): Promise<void> {
   const dir = getConfigDir();
   const path = getProfilesPath();
+  const tmpPath = `${path}.tmp`;
 
-  await fs.mkdir(dir, { recursive: true });
-  await fs.writeFile(path, JSON.stringify(data, null, 2), 'utf-8');
+  // Create directory with restricted permissions (owner only)
+  await fs.mkdir(dir, { recursive: true, mode: 0o700 });
+
+  // Atomic write: write to temp file then rename
+  // This prevents data corruption if process crashes mid-write
+  await fs.writeFile(tmpPath, JSON.stringify(data, null, 2), {
+    encoding: 'utf-8',
+    mode: 0o600, // Owner read/write only
+  });
+
+  // Rename is atomic on POSIX systems
+  await fs.rename(tmpPath, path);
 }
 
 /**

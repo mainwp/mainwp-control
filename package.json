@@ -70,7 +70,8 @@
     "@oclif/plugin-autocomplete": "^3.2.39",
     "@oclif/plugin-help": "^6.0.0",
     "ajv": "^8.17.0",
-    "keytar": "^7.9.0"
+    "keytar": "^7.9.0",
+    "undici": "^7.16.0"
   },
   "devDependencies": {
     "@oclif/test": "^4.0.0",

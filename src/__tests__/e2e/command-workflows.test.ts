@@ -343,7 +343,7 @@ describe('E2E: Command-Level Workflows', () => {
 
     mockKeychainGet.mockReset();
     mockKeychainGetOrThrow.mockReset();
-    mockKeychainSet.mockReset().mockResolvedValue(undefined);
+    mockKeychainSet.mockReset().mockResolvedValue({ stored: true, location: 'keychain' });
     mockKeychainDelete.mockReset().mockResolvedValue(undefined);
 
     mockHttpGet.mockReset();

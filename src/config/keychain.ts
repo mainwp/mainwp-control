@@ -50,6 +50,18 @@ async function loadKeytar(): Promise<typeof import('keytar') | null> {
 }
 
 /**
+ * Result of a credential storage operation
+ */
+export interface KeychainSetResult {
+  /** Whether credentials were successfully stored */
+  stored: boolean;
+  /** Where credentials were stored (or 'none' if storage failed) */
+  location: 'keychain' | 'none';
+  /** Error message if storage failed */
+  error?: string;
+}
+
+/**
  * Keychain class
  */
 export class Keychain {
@@ -63,19 +75,31 @@ export class Keychain {
 
   /**
    * Store a credential
+   *
+   * @returns Result indicating whether storage succeeded and where credentials are stored
    */
-  async set(profileName: string, password: string): Promise<void> {
+  async set(profileName: string, password: string): Promise<KeychainSetResult> {
     const kt = await loadKeytar();
 
     if (kt) {
       try {
         await kt.setPassword(SERVICE_NAME, profileName, password);
-        return;
+        return { stored: true, location: 'keychain' };
       } catch (error) {
-        console.warn(`Warning: Could not store in keychain: ${(error as Error).message}`);
-        console.warn('Credentials will not be persisted.');
+        const errorMessage = (error as Error).message;
+        return {
+          stored: false,
+          location: 'none',
+          error: errorMessage,
+        };
       }
     }
+
+    return {
+      stored: false,
+      location: 'none',
+      error: 'Keychain (keytar) is not available',
+    };
   }
 
   /**

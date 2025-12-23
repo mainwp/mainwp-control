@@ -120,13 +120,10 @@ export default class Login extends BaseCommand {
 
     // Store password in keychain
     const keychain = getKeychain();
-    await keychain.set(profileName, password);
+    const keychainResult = await keychain.set(profileName, password);
 
     // Set as active
     await profileStore.setActive(profileName);
-
-    // Check keychain availability before output
-    const keychainAvailable = await keychain.isAvailable();
 
     // Output result
     this.output(
@@ -134,6 +131,7 @@ export default class Login extends BaseCommand {
         profile: profileName,
         url: normalizedUrl,
         username,
+        credentialStorage: keychainResult.location,
       },
       () => {
         const lines = [
@@ -142,9 +140,15 @@ export default class Login extends BaseCommand {
           `  Dashboard: ${normalizedUrl}`,
         ];
 
-        if (!keychainAvailable) {
+        if (keychainResult.stored) {
+          lines.push(`  Credentials: Stored in system keychain`);
+        } else {
           lines.push('');
-          lines.push(formatWarning('Keychain not available. Password stored in environment only.'));
+          lines.push(formatWarning('Credentials NOT saved to keychain.'));
+          if (keychainResult.error) {
+            lines.push(`  Reason: ${keychainResult.error}`);
+          }
+          lines.push(`  Set MAINWP_APP_PASSWORD environment variable for persistent access.`);
         }
 
         return lines.join('\n');
