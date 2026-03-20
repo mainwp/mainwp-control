@@ -4,37 +4,7 @@
 
 import { isMainWPCTLError } from '../utils/errors.js';
 import { stripControlChars, sanitizeForTerminal, safeString } from '../utils/terminal-sanitizer.js';
-
-/**
- * ANSI color codes (only used when stdout is a TTY)
- */
-const colors = {
-  reset: '\x1b[0m',
-  bold: '\x1b[1m',
-  dim: '\x1b[2m',
-  red: '\x1b[31m',
-  green: '\x1b[32m',
-  yellow: '\x1b[33m',
-  blue: '\x1b[34m',
-  cyan: '\x1b[36m',
-};
-
-/**
- * Check if we should use colors
- */
-function useColors(): boolean {
-  return process.stdout.isTTY === true && process.env['NO_COLOR'] === undefined;
-}
-
-/**
- * Apply color if colors are enabled
- */
-function color(text: string, ...codes: string[]): string {
-  if (!useColors()) {
-    return text;
-  }
-  return codes.join('') + text + colors.reset;
-}
+import { colors, color } from '../utils/colors.js';
 
 /**
  * Format a success message
@@ -68,7 +38,7 @@ export function formatError(error: Error | string): string {
  * Format a warning message
  */
 export function formatWarning(message: string): string {
-  return color('⚠ Warning: ', colors.yellow) + message;
+  return color('⚠ Warning: ', colors.yellow) + stripControlChars(message);
 }
 
 /**

@@ -15,6 +15,8 @@ import {
   type ToolCall,
   registerProvider,
 } from './provider.js';
+import { makeProviderRequest } from './provider-fetch.js';
+import { readSSEStream } from './sse-reader.js';
 
 /**
  * Anthropic API message format
@@ -196,98 +198,67 @@ export class AnthropicProvider implements LLMProvider {
       requestBody['tools'] = this.convertTools(options.tools);
     }
 
-    const fetchOptions: RequestInit = {
-      method: 'POST',
-      headers: this.getHeaders(),
-      body: JSON.stringify(requestBody),
-    };
-
-    if (options?.signal) {
-      fetchOptions.signal = options.signal;
-    }
-
-    const response = await fetch(`${this.baseUrl}/v1/messages`, fetchOptions);
-
-    if (!response.ok) {
-      const error = await response.text();
-      throw new Error(`Anthropic API error: ${response.status} ${error}`);
-    }
-
-    if (!response.body) {
-      throw new Error('No response body');
-    }
-
-    const reader = response.body.getReader();
-    const decoder = new TextDecoder();
-    let buffer = '';
-
     // Track tool calls
     let toolId = '';
     let toolName = '';
     let toolArgs = '';
 
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
+    for await (const data of readSSEStream({
+      url: `${this.baseUrl}/v1/messages`,
+      headers: this.getHeaders(),
+      body: requestBody,
+      signal: options?.signal,
+      providerName: 'Anthropic',
+    })) {
+      try {
+        const event = JSON.parse(data) as AnthropicStreamEvent;
 
-      buffer += decoder.decode(value, { stream: true });
-      const lines = buffer.split('\n');
-      buffer = lines.pop() ?? '';
-
-      for (const line of lines) {
-        if (!line.startsWith('data: ')) continue;
-        const data = line.slice(6);
-
-        try {
-          const event = JSON.parse(data) as AnthropicStreamEvent;
-
-          if (event.type === 'content_block_start') {
-            const block = event.content_block;
-            if (block?.type === 'tool_use') {
-              toolId = block.id;
-              toolName = block.name;
-              toolArgs = '';
-            }
+        if (event.type === 'content_block_start') {
+          const block = event.content_block;
+          if (block?.type === 'tool_use') {
+            toolId = block.id;
+            toolName = block.name;
+            toolArgs = '';
           }
-
-          if (event.type === 'content_block_delta') {
-            const delta = event.delta;
-            if (delta?.type === 'text_delta' && delta.text) {
-              yield { content: delta.text, done: false };
-            }
-            if (delta?.type === 'input_json_delta' && delta.partial_json) {
-              toolArgs += delta.partial_json;
-            }
-          }
-
-          if (event.type === 'content_block_stop') {
-            if (toolId && toolName) {
-              try {
-                const args = JSON.parse(toolArgs || '{}') as Record<string, unknown>;
-                yield {
-                  toolCall: {
-                    id: toolId,
-                    name: toolName,
-                    arguments: args,
-                  },
-                  done: false,
-                };
-              } catch {
-                // Invalid JSON, skip
-              }
-              toolId = '';
-              toolName = '';
-              toolArgs = '';
-            }
-          }
-
-          if (event.type === 'message_stop') {
-            yield { done: true };
-            return;
-          }
-        } catch {
-          // Invalid JSON, skip line
         }
+
+        if (event.type === 'content_block_delta') {
+          const delta = event.delta;
+          if (delta?.type === 'text_delta' && delta.text) {
+            yield { content: delta.text, done: false };
+          }
+          if (delta?.type === 'input_json_delta' && delta.partial_json) {
+            toolArgs += delta.partial_json;
+          }
+        }
+
+        if (event.type === 'content_block_stop') {
+          if (toolId && toolName) {
+            try {
+              const args = JSON.parse(toolArgs || '{}') as Record<string, unknown>;
+              yield {
+                toolCall: {
+                  id: toolId,
+                  name: toolName,
+                  arguments: args,
+                },
+                done: false,
+              };
+            } catch {
+              // Invalid JSON, skip
+            }
+            toolId = '';
+            toolName = '';
+            toolArgs = '';
+          }
+        }
+
+        if (event.type === 'message_stop') {
+          yield { done: true };
+          return;
+        }
+      } catch {
+        // Invalid JSON, skip line
       }
     }
 
@@ -426,48 +397,16 @@ export class AnthropicProvider implements LLMProvider {
     body: Record<string, unknown>,
     signal?: AbortSignal
   ): Promise<T> {
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), this.timeout);
-
-    // Combine signals
-    const combinedSignal = signal
-      ? this.combineSignals(signal, controller.signal)
-      : controller.signal;
-
-    try {
-      const response = await fetch(`${this.baseUrl}${endpoint}`, {
-        method: 'POST',
-        headers: this.getHeaders(),
-        body: JSON.stringify(body),
-        signal: combinedSignal,
-      });
-
-      if (!response.ok) {
-        const error = await response.text();
-        throw new Error(`Anthropic API error: ${response.status} ${error}`);
-      }
-
-      return (await response.json()) as T;
-    } finally {
-      clearTimeout(timeoutId);
-    }
+    return makeProviderRequest<T>({
+      url: `${this.baseUrl}${endpoint}`,
+      headers: this.getHeaders(),
+      body,
+      timeout: this.timeout,
+      signal,
+      providerName: 'Anthropic',
+    });
   }
 
-  /**
-   * Combine abort signals
-   */
-  private combineSignals(
-    signal1: AbortSignal,
-    signal2: AbortSignal
-  ): AbortSignal {
-    const controller = new AbortController();
-
-    const abort = () => controller.abort();
-    signal1.addEventListener('abort', abort);
-    signal2.addEventListener('abort', abort);
-
-    return controller.signal;
-  }
 }
 
 /**

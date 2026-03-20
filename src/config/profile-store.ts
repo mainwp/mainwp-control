@@ -8,6 +8,7 @@ import { promises as fs } from 'node:fs';
 import { join } from 'node:path';
 import { ConfigError } from '../utils/errors.js';
 import { getConfigDir } from './settings.js';
+import { atomicWriteFile } from './fs-utils.js';
 
 /**
  * Profile data (credentials stored separately in keychain)
@@ -74,22 +75,8 @@ async function loadProfilesFile(): Promise<ProfilesFile> {
  * SECURITY: Uses atomic write (tmp + rename) and restricted permissions.
  */
 async function saveProfilesFile(data: ProfilesFile): Promise<void> {
-  const dir = getConfigDir();
   const path = getProfilesPath();
-  const tmpPath = `${path}.tmp`;
-
-  // Create directory with restricted permissions (owner only)
-  await fs.mkdir(dir, { recursive: true, mode: 0o700 });
-
-  // Atomic write: write to temp file then rename
-  // This prevents data corruption if process crashes mid-write
-  await fs.writeFile(tmpPath, JSON.stringify(data, null, 2), {
-    encoding: 'utf-8',
-    mode: 0o600, // Owner read/write only
-  });
-
-  // Rename is atomic on POSIX systems
-  await fs.rename(tmpPath, path);
+  await atomicWriteFile(path, JSON.stringify(data, null, 2));
 }
 
 /**
@@ -121,11 +108,7 @@ export class ProfileStore {
       );
     }
 
-    if (parsed.protocol === 'http:') {
-      console.warn(
-        'WARNING: Profile uses HTTP instead of HTTPS. Credentials may be exposed.'
-      );
-    }
+    // HTTP warning is emitted at login time via formatWarning, not here
   }
 
   /**
@@ -192,9 +175,6 @@ export class ProfileStore {
       data.activeProfile &&
       !data.profiles.some((p) => p.name === data.activeProfile)
     ) {
-      console.warn(
-        `WARNING: Active profile "${data.activeProfile}" not found in profiles list. Clearing.`
-      );
       data.activeProfile = data.profiles[0]?.name;
     }
   }

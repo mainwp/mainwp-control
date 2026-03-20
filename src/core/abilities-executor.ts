@@ -7,6 +7,7 @@
 
 import { HttpClient, type HttpClientConfig, createHttpClient } from './http-client.js';
 import { APIError, InputError } from '../utils/errors.js';
+import { getInputSanitizer } from '../validation/input-sanitizer.js';
 
 /**
  * Ability annotation metadata
@@ -58,14 +59,10 @@ export interface ExecutionResult<T = unknown> {
 }
 
 /**
- * Abilities list response
+ * Abilities list response — the real API returns Ability[] (flat array),
+ * with pagination via X-WP-Total / X-WP-TotalPages headers.
  */
-interface AbilitiesListResponse {
-  abilities: Ability[];
-  total?: number;
-  page?: number;
-  per_page?: number;
-}
+type AbilitiesListResponse = Ability[];
 
 /**
  * Abilities Executor class
@@ -86,7 +83,10 @@ export class AbilitiesExecutor {
    */
   async listAbilities(): Promise<Ability[]> {
     await this.ensureCache();
-    return Array.from(this.abilitiesCache?.values() ?? []);
+    // Return only full-name entries (cache also stores short names for lookups)
+    return Array.from(this.abilitiesCache?.entries() ?? [])
+      .filter(([key, ability]) => key === ability.name)
+      .map(([, ability]) => ability);
   }
 
   /**
@@ -109,6 +109,9 @@ export class AbilitiesExecutor {
     input: Record<string, unknown> = {},
     options?: ExecutionOptions
   ): Promise<ExecutionResult<T>> {
+    // Defense-in-depth: sanitize input before any processing
+    input = getInputSanitizer().sanitize(input);
+
     const ability = await this.getAbility(abilityName);
 
     if (!ability) {
@@ -126,7 +129,9 @@ export class AbilitiesExecutor {
     const method = this.getHttpMethod(ability, options);
 
     // Build the endpoint
-    const endpoint = `${this.baseEndpoint}/abilities/${encodeURIComponent(ability.name)}/run`;
+    // Ability names contain a namespace slash (e.g. "mainwp/list-sites-v1")
+    // which is part of the WordPress REST route — do NOT encode it.
+    const endpoint = `${this.baseEndpoint}/abilities/${ability.name}/run`;
 
     try {
       let response;
@@ -134,13 +139,13 @@ export class AbilitiesExecutor {
       const requestOptions = options?.signal ? { signal: options.signal } : undefined;
 
       if (method === 'GET') {
-        // For GET requests, encode input as query params
-        const queryString = this.buildQueryString(body);
+        // For GET requests, nest input under input[key] (WordPress REST style).
+        // Control flags (dry_run, confirm) stay top-level.
+        const queryString = this.buildGetQueryString(input, options);
         const url = queryString ? `${endpoint}?${queryString}` : endpoint;
         response = await this.httpClient.get<ExecutionResult<T>>(url, requestOptions);
       } else if (method === 'DELETE') {
-        // DELETE with body in query params
-        const queryString = this.buildQueryString(body);
+        const queryString = this.buildGetQueryString(input, options);
         const url = queryString ? `${endpoint}?${queryString}` : endpoint;
         response = await this.httpClient.delete<ExecutionResult<T>>(url, requestOptions);
       } else {
@@ -193,22 +198,38 @@ export class AbilitiesExecutor {
       return;
     }
 
-    const response = await this.httpClient.get<AbilitiesListResponse>(
-      `${this.baseEndpoint}/abilities`
-    );
-
     this.abilitiesCache = new Map();
 
-    for (const ability of response.data.abilities) {
-      // Store by full name and short name
-      this.abilitiesCache.set(ability.name, ability);
+    // Fetch all pages — API returns Ability[] with WP pagination headers.
+    let page = 1;
+    let totalPages = 1;
 
-      // Also store by short name (without namespace)
-      const shortName = this.getShortName(ability.name);
-      if (shortName !== ability.name) {
-        this.abilitiesCache.set(shortName, ability);
+    do {
+      const response = await this.httpClient.get<AbilitiesListResponse>(
+        `${this.baseEndpoint}/abilities?per_page=100&page=${page}`
+      );
+
+      const abilities = Array.isArray(response.data)
+        ? response.data
+        : (response.data as Record<string, unknown>)['abilities'] as Ability[] ?? [];
+
+      for (const ability of abilities) {
+        this.abilitiesCache.set(ability.name, ability);
+
+        const shortName = this.getShortName(ability.name);
+        if (shortName !== ability.name) {
+          this.abilitiesCache.set(shortName, ability);
+        }
       }
-    }
+
+      // Read WP pagination header for total pages
+      const wpTotalPages = response.headers?.get?.('x-wp-totalpages');
+      if (wpTotalPages) {
+        totalPages = parseInt(wpTotalPages, 10) || 1;
+      }
+
+      page++;
+    } while (page <= totalPages);
 
     this.cacheExpiry = Date.now() + this.cacheTTL;
   }
@@ -230,24 +251,31 @@ export class AbilitiesExecutor {
   }
 
   /**
-   * Build request body with execution options
+   * Build request body with execution options.
+   * The WP Abilities API expects: { input: { ...userInput, dry_run?, confirm? } }
    */
   private buildRequestBody(
     input: Record<string, unknown>,
     options?: ExecutionOptions
   ): Record<string, unknown> {
-    const body = { ...input };
+    const merged = { ...input };
+
+    // SECURITY: Strip control flags from user/LLM-provided input.
+    // These are set exclusively from execution options (CLI flags or safety flow).
+    delete merged['dry_run'];
+    delete merged['confirm'];
+    delete merged['user_confirmed'];
 
     if (options?.dryRun) {
-      body['dry_run'] = true;
+      merged['dry_run'] = true;
     }
 
     if (options?.confirm) {
-      body['confirm'] = true;
-      body['user_confirmed'] = true;
+      merged['confirm'] = true;
+      merged['user_confirmed'] = true;
     }
 
-    return body;
+    return { input: merged };
   }
 
   /**
@@ -274,29 +302,45 @@ export class AbilitiesExecutor {
   }
 
   /**
-   * Build query string for GET/DELETE requests
+   * Build query string for GET/DELETE requests with WordPress-style nesting.
+   * User input goes under input[key]=value; control flags stay top-level.
    */
-  private buildQueryString(params: Record<string, unknown>): string {
+  private buildGetQueryString(
+    input: Record<string, unknown>,
+    options?: ExecutionOptions,
+  ): string {
     const parts: string[] = [];
 
-    for (const [key, value] of Object.entries(params)) {
+    // SECURITY: Control flags managed exclusively by execution options
+    const controlFlags = ['dry_run', 'confirm', 'user_confirmed'];
+
+    // All params go under input[key] — the API treats input as a single object.
+    for (const [key, value] of Object.entries(input)) {
       if (value === undefined || value === null) continue;
+      if (controlFlags.includes(key)) continue;
+      const ek = encodeURIComponent(key);
 
       if (Array.isArray(value)) {
-        // WordPress-style array params: key[0]=value0&key[1]=value1
+        // WordPress-style: input[key][0]=v0&input[key][1]=v1
         value.forEach((v, i) => {
-          parts.push(`${encodeURIComponent(key)}[${i}]=${encodeURIComponent(String(v))}`);
+          parts.push(`input[${ek}][${i}]=${encodeURIComponent(String(v))}`);
         });
       } else if (typeof value === 'object') {
-        // Nested objects
-        parts.push(`${encodeURIComponent(key)}=${encodeURIComponent(JSON.stringify(value))}`);
+        parts.push(`input[${ek}]=${encodeURIComponent(JSON.stringify(value))}`);
       } else {
-        parts.push(`${encodeURIComponent(key)}=${encodeURIComponent(String(value))}`);
+        parts.push(`input[${ek}]=${encodeURIComponent(String(value))}`);
       }
+    }
+
+    if (options?.dryRun) parts.push('input[dry_run]=true');
+    if (options?.confirm) {
+      parts.push('input[confirm]=true');
+      parts.push('input[user_confirmed]=true');
     }
 
     return parts.join('&');
   }
+
 
   /**
    * Normalize API response to ExecutionResult

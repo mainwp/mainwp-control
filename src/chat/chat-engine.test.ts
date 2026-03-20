@@ -582,7 +582,7 @@ describe('ChatEngine', () => {
       expect(engine.hasPendingPreview()).toBe(true);
     });
 
-    it('readonly+destructive executes directly (readonly takes precedence)', async () => {
+    it('readonly+destructive requires safety flow (contradictory → treated as destructive)', async () => {
       const mockProvider = createMockProvider([
         createToolCallResponse('special-v1', {}),
         createAnswerResponse('Done'),
@@ -591,14 +591,14 @@ describe('ChatEngine', () => {
       const { engine, mockExecutor } = createTestEngine({
         provider: mockProvider,
         abilities: [READONLY_DESTRUCTIVE_ABILITY],
-        executeHandler: () => createSuccessResult({ result: 'ok' }),
+        executeHandler: () => createPreviewResult([]),
       });
 
       await engine.sendMessage('Run special');
 
-      // Should NOT be called with dryRun since readonly takes precedence
-      expect(mockExecutor.execute).toHaveBeenCalledWith('special-v1', {});
-      expect(engine.hasPendingPreview()).toBe(false);
+      // Contradictory annotations (destructive + readonly) are now treated as destructive
+      expect(mockExecutor.execute).toHaveBeenCalledWith('special-v1', {}, { dryRun: true });
+      expect(engine.hasPendingPreview()).toBe(true);
     });
 
     it('stores original input in pending preview', async () => {
@@ -787,6 +787,26 @@ describe('ChatEngine', () => {
         expect(responses[0].result.success).toBe(false);
         expect(responses[0].result.error?.code).toBe('DELETE_FAILED');
       }
+    });
+
+    it('never passes both dryRun and confirm simultaneously (mutual exclusion invariant)', async () => {
+      const { engine, mockExecutor } = await setupPreviewState();
+
+      // Preview call already made; now approve
+      await engine.sendMessage('yes');
+
+      // Verify no call ever had both dryRun and confirm set to true
+      expect(mockExecutor.execute).not.toHaveBeenCalledWith(
+        expect.anything(),
+        expect.anything(),
+        expect.objectContaining({ dryRun: true, confirm: true })
+      );
+
+      // Explicitly verify the two calls: preview with dryRun, execution with confirm
+      const calls = mockExecutor.execute.mock.calls;
+      expect(calls).toHaveLength(2);
+      expect(calls[0]![2]).toEqual({ dryRun: true });
+      expect(calls[1]![2]).toEqual({ confirm: true });
     });
   });
 
@@ -2494,6 +2514,65 @@ describe('ChatEngine', () => {
         // Should have some estimated tokens
         expect(stats.estimatedTokens).toBeGreaterThan(0);
       });
+    });
+  });
+
+  // ==========================================================================
+  // Stream Error Handling
+  // ==========================================================================
+
+  describe('Stream Error Handling', () => {
+    it('discards partial tool calls from errored streams', async () => {
+      // Create a streaming provider that errors mid-response with partial tool call
+      const streamingProvider: LLMProvider = {
+        name: 'mock-streaming-provider',
+        capabilities: {
+          functionCalling: true,
+          streaming: true,
+          systemMessages: true,
+          vision: false,
+          maxContextLength: 4096,
+        },
+        chat: vi.fn(),
+        chatStream: vi.fn(async function* () {
+          // Yield partial content then throw
+          yield { content: 'Partial ' };
+          yield {
+            toolCall: {
+              id: 'call_1',
+              name: 'list-sites-v1',
+              arguments: { truncated: true },
+            },
+          };
+          throw new Error('Stream interrupted');
+        }),
+        isConfigured: () => true,
+        getModels: () => ['test-model'],
+        getDefaultModel: () => 'test-model',
+      };
+
+      const abilities = [READONLY_ABILITY];
+      const mockExecutor = createMockExecutor(abilities);
+
+      const engine = createChatEngine({
+        provider: streamingProvider,
+        executor: mockExecutor as never,
+        stream: true,
+      });
+
+      await engine.initialize();
+
+      const responses = await engine.sendMessage('list sites');
+
+      // Should return an error response, not execute the partial tool call
+      expect(responses).toHaveLength(1);
+      expect(responses[0]!.type).toBe('error');
+      if (responses[0]!.type === 'error') {
+        expect(responses[0]!.error).toContain('interrupted');
+      }
+
+      // Executor should NOT have been called with partial tool call
+      expect(mockExecutor.execute).not.toHaveBeenCalled();
     });
   });
 });

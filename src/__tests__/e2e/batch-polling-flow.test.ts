@@ -28,12 +28,11 @@ import type { JobStatus, JobStatusType } from '../../core/batch-manager.js';
 // Module-level mocks
 // ============================================================================
 
-const mockHttpPost = vi.fn();
 const mockHttpGet = vi.fn();
 
 vi.mock('../../core/http-client.js', () => ({
   createHttpClient: vi.fn(() => ({
-    post: mockHttpPost,
+    post: vi.fn(),
     get: mockHttpGet,
     delete: vi.fn(),
     put: vi.fn(),
@@ -57,7 +56,8 @@ import { APIError, NetworkError } from '../../utils/errors.js';
 function createTestManager(): BatchManager {
   return createBatchManager({
     baseUrl: 'https://test.local',
-    token: 'test-token',
+    username: 'test-user',
+    appPassword: 'test-password',
   });
 }
 
@@ -100,7 +100,7 @@ describe('E2E: Batch Operation → Polling Flow', () => {
 
   describe('Successful Batch Job Completion', () => {
     it('yields status updates until completed', async () => {
-      mockHttpPost
+      mockHttpGet
         .mockResolvedValueOnce(createJobStatusResponse({ status: 'pending', progress: 0 }))
         .mockResolvedValueOnce(createJobStatusResponse({ status: 'running', progress: 50 }))
         .mockResolvedValueOnce(createJobStatusResponse({ status: 'completed', progress: 100 }));
@@ -122,7 +122,7 @@ describe('E2E: Batch Operation → Polling Flow', () => {
     });
 
     it('returns final result via WatchResult', async () => {
-      mockHttpPost
+      mockHttpGet
         .mockResolvedValueOnce(createJobStatusResponse({ status: 'running' }))
         .mockResolvedValueOnce(createJobStatusResponse({ status: 'completed' }));
 
@@ -133,7 +133,7 @@ describe('E2E: Batch Operation → Polling Flow', () => {
     });
 
     it('tracks elapsed time', async () => {
-      mockHttpPost.mockResolvedValue(createJobStatusResponse({ status: 'completed' }));
+      mockHttpGet.mockResolvedValue(createJobStatusResponse({ status: 'completed' }));
 
       const result = await manager.resumeJob('job_test123', { initialDelay: 1 });
 
@@ -141,7 +141,7 @@ describe('E2E: Batch Operation → Polling Flow', () => {
     });
 
     it('calls onProgress callback', async () => {
-      mockHttpPost
+      mockHttpGet
         .mockResolvedValueOnce(createJobStatusResponse({ status: 'running' }))
         .mockResolvedValueOnce(createJobStatusResponse({ status: 'completed' }));
 
@@ -173,7 +173,7 @@ describe('E2E: Batch Operation → Polling Flow', () => {
         { site_id: 2, synced: true },
       ];
 
-      mockHttpPost.mockResolvedValue(
+      mockHttpGet.mockResolvedValue(
         createJobStatusResponse({
           status: 'completed',
           results,
@@ -196,7 +196,7 @@ describe('E2E: Batch Operation → Polling Flow', () => {
   describe('Batch Job Timeout with Partial Results', () => {
     it('times out and returns partial result', async () => {
       let callCount = 0;
-      mockHttpPost.mockImplementation(() => {
+      mockHttpGet.mockImplementation(() => {
         callCount++;
         return Promise.resolve({
           data: {
@@ -237,7 +237,7 @@ describe('E2E: Batch Operation → Polling Flow', () => {
 
     it('surfaces partial results when timeout occurs', async () => {
       let callCount = 0;
-      mockHttpPost.mockImplementation(() => {
+      mockHttpGet.mockImplementation(() => {
         callCount++;
         return Promise.resolve({
           data: {
@@ -277,7 +277,7 @@ describe('E2E: Batch Operation → Polling Flow', () => {
     });
 
     it('returns placeholder status when no polls succeed before timeout', async () => {
-      mockHttpPost.mockImplementation(
+      mockHttpGet.mockImplementation(
         () =>
           new Promise((_resolve, reject) => {
             setTimeout(() => reject(new NetworkError('Connection failed')), 100);
@@ -311,7 +311,7 @@ describe('E2E: Batch Operation → Polling Flow', () => {
 
   describe('Batch Job Failure', () => {
     it('handles job failed status', async () => {
-      mockHttpPost.mockResolvedValue(
+      mockHttpGet.mockResolvedValue(
         createJobStatusResponse({
           status: 'failed',
           errors: [{ message: 'Site not found', code: 'NOT_FOUND' }],
@@ -325,7 +325,7 @@ describe('E2E: Batch Operation → Polling Flow', () => {
     });
 
     it('includes errors in failed status', async () => {
-      mockHttpPost.mockResolvedValue(
+      mockHttpGet.mockResolvedValue(
         createJobStatusResponse({
           status: 'failed',
           errors: [
@@ -346,7 +346,7 @@ describe('E2E: Batch Operation → Polling Flow', () => {
     });
 
     it('parses string errors correctly', async () => {
-      mockHttpPost.mockResolvedValue({
+      mockHttpGet.mockResolvedValue({
         data: {
           job_id: 'job_test123',
           status: 'failed',
@@ -363,7 +363,7 @@ describe('E2E: Batch Operation → Polling Flow', () => {
     });
 
     it('parses object errors with all fields', async () => {
-      mockHttpPost.mockResolvedValue({
+      mockHttpGet.mockResolvedValue({
         data: {
           job_id: 'job_test123',
           status: 'failed',
@@ -392,7 +392,7 @@ describe('E2E: Batch Operation → Polling Flow', () => {
 
   describe('Network Error with Retry', () => {
     it('retries on network error', async () => {
-      mockHttpPost
+      mockHttpGet
         .mockRejectedValueOnce(new NetworkError('Connection failed'))
         .mockResolvedValueOnce(createJobStatusResponse({ status: 'completed' }));
 
@@ -418,7 +418,7 @@ describe('E2E: Batch Operation → Polling Flow', () => {
     });
 
     it('continues polling after multiple network errors', async () => {
-      mockHttpPost
+      mockHttpGet
         .mockRejectedValueOnce(new NetworkError('Connection failed'))
         .mockRejectedValueOnce(new NetworkError('Connection failed'))
         .mockResolvedValueOnce(createJobStatusResponse({ status: 'running' }))
@@ -434,7 +434,7 @@ describe('E2E: Batch Operation → Polling Flow', () => {
     });
 
     it('throws on non-network API errors', async () => {
-      mockHttpPost.mockRejectedValue(new APIError('FORBIDDEN', 'Access denied', 403));
+      mockHttpGet.mockRejectedValue(new APIError('FORBIDDEN', 'Access denied', 403));
 
       const generator = manager.watchJob('job_test123');
 
@@ -448,7 +448,7 @@ describe('E2E: Batch Operation → Polling Flow', () => {
 
   describe('Abort Signal Handling', () => {
     it('handles abort signal', async () => {
-      mockHttpPost.mockResolvedValue(createJobStatusResponse({ status: 'running' }));
+      mockHttpGet.mockResolvedValue(createJobStatusResponse({ status: 'running' }));
 
       const controller = new AbortController();
       const generator = manager.watchJob('job_test123', {
@@ -470,7 +470,7 @@ describe('E2E: Batch Operation → Polling Flow', () => {
     });
 
     it('stops polling after abort', async () => {
-      mockHttpPost.mockResolvedValue(createJobStatusResponse({ status: 'running' }));
+      mockHttpGet.mockResolvedValue(createJobStatusResponse({ status: 'running' }));
 
       const controller = new AbortController();
       const generator = manager.watchJob('job_test123', {
@@ -480,7 +480,7 @@ describe('E2E: Batch Operation → Polling Flow', () => {
 
       // Get first status
       await generator.next();
-      const callCountBefore = mockHttpPost.mock.calls.length;
+      const callCountBefore = mockHttpGet.mock.calls.length;
 
       // Abort
       controller.abort();
@@ -488,7 +488,7 @@ describe('E2E: Batch Operation → Polling Flow', () => {
 
       // Wait a bit to ensure no more calls
       await new Promise((resolve) => setTimeout(resolve, 50));
-      const callCountAfter = mockHttpPost.mock.calls.length;
+      const callCountAfter = mockHttpGet.mock.calls.length;
 
       // Should not have made additional calls after abort
       expect(callCountAfter).toBe(callCountBefore);
@@ -516,7 +516,7 @@ describe('E2E: Batch Operation → Polling Flow', () => {
 
     for (const [input, expected] of statusMappings) {
       it(`normalizes "${input}" to "${expected}"`, async () => {
-        mockHttpPost.mockResolvedValueOnce({
+        mockHttpGet.mockResolvedValueOnce({
           data: { job_id: 'job_test', status: input },
         });
 
@@ -532,7 +532,7 @@ describe('E2E: Batch Operation → Polling Flow', () => {
 
   describe('Response Format Handling', () => {
     it('handles wrapped success response', async () => {
-      mockHttpPost.mockResolvedValue({
+      mockHttpGet.mockResolvedValue({
         data: {
           success: true,
           data: {
@@ -549,7 +549,7 @@ describe('E2E: Batch Operation → Polling Flow', () => {
     });
 
     it('handles direct response format', async () => {
-      mockHttpPost.mockResolvedValue({
+      mockHttpGet.mockResolvedValue({
         data: {
           job_id: 'job_direct',
           status: 'running',
@@ -563,13 +563,13 @@ describe('E2E: Batch Operation → Polling Flow', () => {
     });
 
     it('throws on invalid response', async () => {
-      mockHttpPost.mockResolvedValue({ data: null });
+      mockHttpGet.mockResolvedValue({ data: null });
 
       await expect(manager.getJobStatus('job_test')).rejects.toThrow('Invalid job status response');
     });
 
     it('throws when job ID is missing', async () => {
-      mockHttpPost.mockResolvedValue({
+      mockHttpGet.mockResolvedValue({
         data: { status: 'running' },
       });
 
@@ -584,7 +584,7 @@ describe('E2E: Batch Operation → Polling Flow', () => {
   describe('Golden Test: Timeout Surfaces Partial Results', () => {
     it('surfaces partial results when timeout occurs mid-processing', async () => {
       let callCount = 0;
-      mockHttpPost.mockImplementation(() => {
+      mockHttpGet.mockImplementation(() => {
         callCount++;
         return Promise.resolve({
           data: {
@@ -644,7 +644,7 @@ describe('E2E: Batch Operation → Polling Flow', () => {
 
   describe('Edge Cases', () => {
     it('handles job with zero total items', async () => {
-      mockHttpPost.mockResolvedValue(
+      mockHttpGet.mockResolvedValue(
         createJobStatusResponse({
           status: 'completed',
           total: 0,
@@ -660,7 +660,7 @@ describe('E2E: Batch Operation → Polling Flow', () => {
     });
 
     it('handles job with undefined progress fields', async () => {
-      mockHttpPost.mockResolvedValue({
+      mockHttpGet.mockResolvedValue({
         data: {
           job_id: 'job_test',
           status: 'completed',
@@ -676,7 +676,7 @@ describe('E2E: Batch Operation → Polling Flow', () => {
 
     it('handles job ID variations (job_id vs id)', async () => {
       // Using 'id' instead of 'job_id'
-      mockHttpPost.mockResolvedValue({
+      mockHttpGet.mockResolvedValue({
         data: {
           id: 'job_alt_format',
           status: 'completed',

@@ -21,6 +21,14 @@ vi.mock('./http-client.js', () => ({
   })),
 }));
 
+// Mock input-sanitizer module
+const mockSanitize = vi.fn((input: Record<string, unknown>) => input);
+vi.mock('../validation/input-sanitizer.js', () => ({
+  getInputSanitizer: vi.fn(() => ({
+    sanitize: mockSanitize,
+  })),
+}));
+
 import { createHttpClient } from './http-client.js';
 
 describe('AbilitiesExecutor', () => {
@@ -239,11 +247,11 @@ describe('AbilitiesExecutor', () => {
         { confirm: true }
       );
 
-      // The query params should include confirm and user_confirmed
+      // The query params should include confirm and user_confirmed under input[]
       const call = mockDelete.mock.calls[0];
       const url = call?.[0] as string;
-      expect(url).toContain('confirm=true');
-      expect(url).toContain('user_confirmed=true');
+      expect(url).toContain('input[confirm]=true');
+      expect(url).toContain('input[user_confirmed]=true');
     });
 
     it('throws InputError for unknown ability', async () => {
@@ -392,10 +400,11 @@ describe('AbilitiesExecutor Query String Building', () => {
       status: 'active',
     });
 
+    // Input params are nested under input[key] for the WP Abilities API
     const url = mockGet.mock.calls[1]?.[0] as string;
-    expect(url).toContain('page=1');
-    expect(url).toContain('per_page=20');
-    expect(url).toContain('status=active');
+    expect(url).toContain('input[page]=1');
+    expect(url).toContain('input[per_page]=20');
+    expect(url).toContain('input[status]=active');
   });
 
   it('encodes arrays with WordPress-style indexing', async () => {
@@ -406,9 +415,9 @@ describe('AbilitiesExecutor Query String Building', () => {
     });
 
     const url = mockGet.mock.calls[1]?.[0] as string;
-    expect(url).toContain('site_ids[0]=1');
-    expect(url).toContain('site_ids[1]=2');
-    expect(url).toContain('site_ids[2]=3');
+    expect(url).toContain('input[site_ids][0]=1');
+    expect(url).toContain('input[site_ids][1]=2');
+    expect(url).toContain('input[site_ids][2]=3');
   });
 
   it('encodes objects as JSON', async () => {
@@ -419,7 +428,7 @@ describe('AbilitiesExecutor Query String Building', () => {
     });
 
     const url = mockGet.mock.calls[1]?.[0] as string;
-    expect(url).toContain('filter=');
+    expect(url).toContain('input[filter]=');
     // URL-encoded JSON
     expect(decodeURIComponent(url)).toContain('{"status":"active","client_id":5}');
   });
@@ -434,8 +443,192 @@ describe('AbilitiesExecutor Query String Building', () => {
     });
 
     const url = mockGet.mock.calls[1]?.[0] as string;
-    expect(url).toContain('page=1');
+    expect(url).toContain('input[page]=1');
     expect(url).not.toContain('filter');
     expect(url).not.toContain('search');
+  });
+});
+
+describe('AbilitiesExecutor Input Sanitization (F3)', () => {
+  let executor: AbilitiesExecutor;
+  let mockGet: ReturnType<typeof vi.fn>;
+  let mockPost: ReturnType<typeof vi.fn>;
+
+  beforeEach(() => {
+    mockGet = vi.fn();
+    mockPost = vi.fn();
+    mockSanitize.mockClear();
+
+    vi.mocked(createHttpClient).mockReturnValue({
+      get: mockGet,
+      post: mockPost,
+      delete: vi.fn(),
+    } as never);
+
+    executor = createAbilitiesExecutor({
+      baseUrl: 'https://dashboard.local',
+      username: 'admin',
+      appPassword: 'test-password',
+    });
+
+    // Setup abilities cache
+    mockGet.mockResolvedValueOnce({
+      data: {
+        abilities: [
+          {
+            name: 'mainwp/update-site-v1',
+            label: 'Update Site',
+            description: 'Update site',
+            category: 'sites',
+            meta: { annotations: { readonly: false, destructive: false, idempotent: false } },
+          },
+        ],
+      },
+    });
+  });
+
+  afterEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('calls sanitize() on each execute()', async () => {
+    mockSanitize.mockReturnValue({ site_id: 1 });
+    mockPost.mockResolvedValueOnce({ data: { success: true } });
+
+    await executor.execute('update-site-v1', { site_id: 1 });
+
+    expect(mockSanitize).toHaveBeenCalledWith({ site_id: 1 });
+  });
+
+  it('propagates InputError from sanitizer', async () => {
+    const { InputError } = await import('../utils/errors.js');
+    mockSanitize.mockImplementation(() => {
+      throw new InputError('Input size exceeds limit');
+    });
+
+    await expect(
+      executor.execute('update-site-v1', { huge: 'data' })
+    ).rejects.toThrow('Input size exceeds limit');
+  });
+});
+
+describe('H1: Control flag stripping from user/LLM input', () => {
+  let executor: AbilitiesExecutor;
+  let mockGet: ReturnType<typeof vi.fn>;
+  let mockPost: ReturnType<typeof vi.fn>;
+  let mockDelete: ReturnType<typeof vi.fn>;
+
+  const mockAbilities: Ability[] = [
+    {
+      name: 'mainwp/delete-site-v1',
+      label: 'Delete Site',
+      description: 'Delete a connected site',
+      category: 'sites',
+      meta: {
+        annotations: { readonly: false, destructive: true, idempotent: true },
+      },
+    },
+  ];
+
+  beforeEach(() => {
+    mockGet = vi.fn();
+    mockPost = vi.fn();
+    mockDelete = vi.fn();
+
+    vi.mocked(createHttpClient).mockReturnValue({
+      get: mockGet,
+      post: mockPost,
+      delete: mockDelete,
+    } as never);
+
+    executor = createAbilitiesExecutor({
+      baseUrl: 'https://dashboard.local',
+      username: 'admin',
+      appPassword: 'test-password',
+    });
+
+    // Reset sanitizer to pass-through
+    mockSanitize.mockImplementation((input: Record<string, unknown>) => input);
+  });
+
+  afterEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('strips confirm/dry_run/user_confirmed injected by LLM into input (DELETE/query string path)', async () => {
+    // Populate abilities cache
+    mockGet.mockResolvedValueOnce({ data: { abilities: mockAbilities } });
+
+    // Simulate LLM injecting control flags into the input
+    const maliciousInput = {
+      site_id: 123,
+      confirm: true,
+      dry_run: false,
+      user_confirmed: true,
+    };
+
+    mockDelete.mockResolvedValueOnce({
+      data: { success: true, data: { deleted: true } },
+    });
+
+    // Execute with dryRun option — control flags from input should be stripped
+    await executor.execute('delete-site-v1', maliciousInput, { dryRun: true });
+
+    // DELETE uses query string — verify URL doesn't contain injected flags
+    const url = mockDelete.mock.calls[0][0] as string;
+    expect(url).toContain('input[site_id]=123');
+    expect(url).toContain('input[dry_run]=true');  // From options, not input
+    expect(url).not.toContain('input[confirm]');
+    expect(url).not.toContain('input[user_confirmed]');
+  });
+
+  it('strips control flags from LLM input (POST path)', async () => {
+    // Add a non-readonly, non-destructive ability (uses POST)
+    const postAbilities: Ability[] = [
+      {
+        name: 'mainwp/update-site-v1',
+        label: 'Update Site',
+        description: 'Update site settings',
+        category: 'sites',
+        meta: {
+          annotations: { readonly: false, destructive: false, idempotent: false },
+        },
+      },
+    ];
+    mockGet.mockResolvedValueOnce({ data: { abilities: postAbilities } });
+
+    const maliciousInput = {
+      site_id: 456,
+      confirm: true,
+      user_confirmed: true,
+    };
+
+    mockPost.mockResolvedValueOnce({
+      data: { success: true, data: { updated: true } },
+    });
+
+    await executor.execute('update-site-v1', maliciousInput);
+
+    // POST sends JSON body — verify control flags stripped
+    const requestBody = mockPost.mock.calls[0][1];
+    expect(requestBody.input.site_id).toBe(456);
+    expect(requestBody.input.confirm).toBeUndefined();
+    expect(requestBody.input.user_confirmed).toBeUndefined();
+  });
+
+  it('allows control flags only from execution options (DELETE path)', async () => {
+    mockGet.mockResolvedValueOnce({ data: { abilities: mockAbilities } });
+
+    mockDelete.mockResolvedValueOnce({
+      data: { success: true, data: { executed: true } },
+    });
+
+    // Execute with confirm option (legitimate safety flow)
+    await executor.execute('delete-site-v1', { site_id: 456 }, { confirm: true });
+
+    const url = mockDelete.mock.calls[0][0] as string;
+    expect(url).toContain('input[site_id]=456');
+    expect(url).toContain('input[confirm]=true');
+    expect(url).toContain('input[user_confirmed]=true');
   });
 });

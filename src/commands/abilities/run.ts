@@ -8,6 +8,7 @@
  */
 
 import { Args, Flags } from '@oclif/core';
+import { readFile } from 'node:fs/promises';
 import { BaseCommand, commonFlags } from '../../lib/base-command.js';
 import {
   formatSuccess,
@@ -21,7 +22,9 @@ import { getSafetyController, type PreviewResult } from '../../core/safety-contr
 import { getSchemaValidator } from '../../validation/schema-validator.js';
 import { getInputSanitizer } from '../../validation/input-sanitizer.js';
 import { promptForConfirmation, isInteractive } from '../../utils/prompt.js';
-import { getAuditLogger } from '../../utils/audit-logger.js';
+import { logDestructiveActionSafe } from '../../utils/audit-logger.js';
+import type { WatchResult } from '../../core/batch-manager.js';
+import { APIError } from '../../utils/errors.js';
 
 export default class AbilitiesRun extends BaseCommand {
   static description = 'Execute an ability';
@@ -31,22 +34,37 @@ export default class AbilitiesRun extends BaseCommand {
     '<%= config.bin %> abilities run list-sites-v1',
     '<%= config.bin %> abilities run list-sites-v1 --input \'{"status": "connected"}\'',
 
+    // Input from file or stdin
+    '<%= config.bin %> abilities run update-site-plugins-v1 --input-file params.json --confirm',
+    'echo \'{"site_id": 5}\' | <%= config.bin %> abilities run list-sites-v1 --input -',
+
     // Destructive abilities - preview first
     '<%= config.bin %> abilities run delete-site-v1 --input \'{"site_id": 1}\' --dry-run',
 
     // Destructive abilities - execute after preview
     '<%= config.bin %> abilities run delete-site-v1 --input \'{"site_id": 1}\' --confirm',
 
+    // Wait for batch job completion
+    '<%= config.bin %> abilities run sync-sites-v1 --wait --json',
+
     // JSON output for scripting
     '<%= config.bin %> abilities run list-sites-v1 --json',
+
+    // Quiet mode (exit code only)
+    '<%= config.bin %> abilities run check-site-v1 --input \'{"site_id": 1}\' --quiet',
   ];
 
   static flags = {
     ...commonFlags,
     input: Flags.string({
       char: 'i',
-      description: 'Input parameters as JSON',
+      description: 'Input parameters as JSON (use "-" to read from stdin)',
       default: '{}',
+      exclusive: ['input-file'],
+    }),
+    'input-file': Flags.string({
+      description: 'Read input parameters from a JSON file',
+      exclusive: ['input'],
     }),
     'dry-run': Flags.boolean({
       description: 'Preview changes without executing (required for destructive abilities)',
@@ -61,6 +79,14 @@ export default class AbilitiesRun extends BaseCommand {
     force: Flags.boolean({
       description: 'Skip confirmation prompt (use with --confirm)',
       default: false,
+    }),
+    wait: Flags.boolean({
+      description: 'Wait for batch job to complete (blocks until done)',
+      default: false,
+    }),
+    'wait-timeout': Flags.integer({
+      description: 'Maximum seconds to wait for batch job (default: 300)',
+      default: 300,
     }),
   };
 
@@ -88,12 +114,15 @@ export default class AbilitiesRun extends BaseCommand {
       );
     }
 
+    // Resolve input from --input, --input-file, or stdin
+    const rawInput = await this.resolveInput(flags.input, flags['input-file']);
+
     // Parse input JSON
     let input: Record<string, unknown>;
     try {
-      input = JSON.parse(flags.input) as Record<string, unknown>;
+      input = JSON.parse(rawInput) as Record<string, unknown>;
     } catch {
-      throw new InputError(`Invalid JSON input: ${flags.input}`);
+      throw new InputError(`Invalid JSON input: ${rawInput}`);
     }
 
     // Sanitize input
@@ -107,6 +136,16 @@ export default class AbilitiesRun extends BaseCommand {
     // Safety validation BEFORE any network call
     const dryRun = flags['dry-run'];
     const confirm = flags.confirm;
+    const requiresSafetyFlow = safetyController.requiresSafetyFlow(ability);
+
+    this.debugLog('Resolved ability execution', {
+      abilityName: ability.name,
+      dryRun,
+      confirm,
+      wait: flags.wait,
+      waitTimeoutSeconds: flags['wait-timeout'],
+      requiresSafetyFlow,
+    });
 
     try {
       safetyController.validateExecutionFlags(ability, dryRun, confirm);
@@ -115,7 +154,7 @@ export default class AbilitiesRun extends BaseCommand {
         throw error;
       }
       // For destructive abilities without flags, provide guidance
-      if (safetyController.requiresSafetyFlow(ability)) {
+      if (requiresSafetyFlow) {
         this.outputDestructiveGuidance(ability.name);
         throw error;
       }
@@ -125,15 +164,26 @@ export default class AbilitiesRun extends BaseCommand {
     // Determine execution path
     const shouldExecute = safetyController.shouldExecuteDirectly(ability, dryRun, confirm);
 
-    if (!shouldExecute) {
-      // Preview mode
+    if (dryRun || !shouldExecute) {
+      // Preview mode — --dry-run always previews, regardless of ability classification
       await this.executePreview(ability.name, input, dryRun);
     } else if (confirm && safetyController.requiresSafetyFlow(ability)) {
       // Destructive execution with confirmation
-      await this.executeDestructive(ability.name, input, flags.force);
+      await this.executeDestructive({
+        abilityName: ability.name,
+        input,
+        force: flags.force,
+        wait: flags.wait,
+        waitTimeout: flags['wait-timeout'],
+      });
     } else {
       // Direct execution (read-only or non-destructive)
-      await this.executeDirect(ability.name, input);
+      await this.executeDirect({
+        abilityName: ability.name,
+        input,
+        wait: flags.wait,
+        waitTimeout: flags['wait-timeout'],
+      });
     }
   }
 
@@ -171,14 +221,16 @@ export default class AbilitiesRun extends BaseCommand {
   /**
    * Execute destructive ability with confirmation
    */
-  private async executeDestructive(
-    abilityName: string,
-    input: Record<string, unknown>,
-    force: boolean
-  ): Promise<void> {
+  private async executeDestructive(opts: {
+    abilityName: string;
+    input: Record<string, unknown>;
+    force: boolean;
+    wait?: boolean;
+    waitTimeout?: number;
+  }): Promise<void> {
+    const { abilityName, input, force, wait, waitTimeout } = opts;
     const executor = await this.getExecutor();
     const safetyController = getSafetyController();
-    const auditLogger = getAuditLogger();
 
     // Get preview data first for audit logging (gracefully handle failures)
     let preview: PreviewResult | undefined;
@@ -199,19 +251,12 @@ export default class AbilitiesRun extends BaseCommand {
 
     // In non-interactive mode, require --force or fail
     if (!isInteractive() && !force) {
-      // Log declined audit entry before throwing
-      try {
-        await auditLogger.logDestructiveAction({
-          abilityName,
-          ...previewMeta,
-          userDecision: 'declined',
-          input,
-        });
-      } catch (error) {
-        console.error(
-          `[AuditLogger] Failed to log destructive action: ${error instanceof Error ? error.message : String(error)}`
-        );
-      }
+      await logDestructiveActionSafe({
+        abilityName,
+        ...previewMeta,
+        userDecision: 'declined',
+        input,
+      });
       throw new InputError(
         'Destructive operations require interactive confirmation or --force flag in non-interactive mode.'
       );
@@ -223,19 +268,12 @@ export default class AbilitiesRun extends BaseCommand {
         `Execute destructive ability "${abilityName}"?`
       );
       if (!confirmed) {
-        // Log declined audit entry
-        try {
-          await auditLogger.logDestructiveAction({
-            abilityName,
-            ...previewMeta,
-            userDecision: 'declined',
-            input,
-          });
-        } catch (error) {
-          console.error(
-            `[AuditLogger] Failed to log destructive action: ${error instanceof Error ? error.message : String(error)}`
-          );
-        }
+        await logDestructiveActionSafe({
+          abilityName,
+          ...previewMeta,
+          userDecision: 'declined',
+          input,
+        });
         this.log(formatWarning('Operation cancelled by user.'));
         return;
       }
@@ -253,51 +291,31 @@ export default class AbilitiesRun extends BaseCommand {
     }
 
     // Log audit entry (fire-and-forget, covers both success and failure)
-    try {
-      await auditLogger.logDestructiveAction({
-        abilityName,
-        ...previewMeta,
-        userDecision: 'approved',
-        execution: executionResult,
-        input,
-      });
-    } catch (error) {
-      console.error(
-        `[AuditLogger] Failed to log destructive action: ${error instanceof Error ? error.message : String(error)}`
-      );
-    }
+    await logDestructiveActionSafe({
+      abilityName,
+      ...previewMeta,
+      userDecision: 'approved',
+      execution: executionResult,
+      input,
+    });
 
     // Throw after audit logging if execution failed
     if (!result.success) {
-      throw new InputError(result.error?.message ?? 'Execution failed', result.error);
-    }
-
-    this.output(
-      {
-        mode: 'execute',
-        ability: abilityName,
-        ...result,
-      },
-      () => this.formatExecutionOutput(abilityName, result.data)
-    );
-  }
-
-  /**
-   * Execute directly (read-only or non-destructive)
-   */
-  private async executeDirect(
-    abilityName: string,
-    input: Record<string, unknown>
-  ): Promise<void> {
-    const executor = await this.getExecutor();
-    const result = await executor.execute(abilityName, input);
-
-    if (!result.success) {
-      throw new InputError(result.error?.message ?? 'Execution failed', result.error);
+      throw new APIError(
+        result.error?.code ?? 'ABILITY_EXECUTION_ERROR',
+        result.error?.message ?? 'Execution failed',
+        undefined,
+        result.error
+      );
     }
 
     // Check for batch job
     if (result.jobId) {
+      if (wait) {
+        await this.waitForBatchJob(abilityName, result.jobId, waitTimeout ?? 300);
+        return;
+      }
+
       this.output(
         {
           mode: 'batch',
@@ -318,6 +336,199 @@ export default class AbilitiesRun extends BaseCommand {
       },
       () => this.formatExecutionOutput(abilityName, result.data)
     );
+  }
+
+  /**
+   * Execute directly (read-only or non-destructive)
+   */
+  private async executeDirect(opts: {
+    abilityName: string;
+    input: Record<string, unknown>;
+    wait?: boolean;
+    waitTimeout?: number;
+  }): Promise<void> {
+    const { abilityName, input, wait, waitTimeout } = opts;
+    const executor = await this.getExecutor();
+    const result = await executor.execute(abilityName, input);
+
+    if (!result.success) {
+      throw new APIError(
+        result.error?.code ?? 'ABILITY_EXECUTION_ERROR',
+        result.error?.message ?? 'Execution failed',
+        undefined,
+        result.error
+      );
+    }
+
+    // Check for batch job
+    if (result.jobId) {
+      if (wait) {
+        // --wait: poll until job completes
+        await this.waitForBatchJob(abilityName, result.jobId, waitTimeout ?? 300);
+        return;
+      }
+
+      this.output(
+        {
+          mode: 'batch',
+          ability: abilityName,
+          jobId: result.jobId,
+          ...result,
+        },
+        () => this.formatBatchOutput(abilityName, result.jobId!)
+      );
+      return;
+    }
+
+    this.output(
+      {
+        mode: 'execute',
+        ability: abilityName,
+        ...result,
+      },
+      () => this.formatExecutionOutput(abilityName, result.data)
+    );
+  }
+
+  /**
+   * Wait for a batch job to complete using BatchManager
+   */
+  private async waitForBatchJob(
+    abilityName: string,
+    jobId: string,
+    timeoutSeconds: number
+  ): Promise<void> {
+    const batchManager = await this.getBatchManager();
+
+    const watchResult: WatchResult = await batchManager.resumeJob(jobId, {
+      maxWait: timeoutSeconds * 1000,
+    });
+
+    if (watchResult.timedOut) {
+      // Output partial results and throw API error for exit code 4
+      this.output(
+        {
+          mode: 'batch',
+          ability: abilityName,
+          jobId,
+          timedOut: true,
+          ...watchResult.status,
+          elapsed_ms: watchResult.elapsed,
+        },
+        () => formatWarning(`Batch job ${jobId} timed out after ${timeoutSeconds}s (partial results returned)`)
+      );
+      throw new APIError(
+        'BATCH_TIMEOUT',
+        `Batch job timed out after ${timeoutSeconds}s`,
+        undefined,
+        { jobId, partialStatus: watchResult.status }
+      );
+    }
+
+    // Job completed (or failed)
+    const data = {
+      mode: 'batch',
+      ability: abilityName,
+      jobId,
+      timedOut: false,
+      ...watchResult.status,
+      elapsed_ms: watchResult.elapsed,
+    };
+
+    this.output(data, () => this.formatWatchResultOutput(abilityName, jobId, watchResult));
+  }
+
+  /**
+   * Format watch result output for human display
+   */
+  private formatWatchResultOutput(
+    abilityName: string,
+    jobId: string,
+    result: WatchResult
+  ): string {
+    const { status, elapsed } = result;
+    const lines: string[] = [];
+
+    if (status.status === 'completed') {
+      lines.push(formatSuccess(`Batch job completed: ${abilityName}`));
+    } else if (status.status === 'failed') {
+      lines.push(formatWarning(`Batch job failed: ${abilityName}`));
+    } else {
+      lines.push(formatWarning(`Batch job ${status.status}: ${abilityName}`));
+    }
+
+    lines.push('');
+    lines.push(formatKeyValue('Job ID', jobId));
+    lines.push(formatKeyValue('Status', status.status));
+    lines.push(formatKeyValue('Elapsed', `${Math.round(elapsed / 1000)}s`));
+
+    if (status.processed !== undefined && status.total !== undefined) {
+      lines.push(formatKeyValue('Processed', `${status.processed}/${status.total}`));
+    }
+
+    if (status.results && status.results.length > 0) {
+      lines.push('');
+      lines.push(`${status.results.length} items processed`);
+    }
+
+    if (status.errors && status.errors.length > 0) {
+      lines.push('');
+      for (const error of status.errors) {
+        lines.push(formatWarning(`  ${error.message}`));
+      }
+    }
+
+    return lines.join('\n');
+  }
+
+  /**
+   * Resolve input from --input, --input-file, or stdin (--input -)
+   */
+  private async resolveInput(
+    inputFlag: string,
+    inputFilePath: string | undefined,
+  ): Promise<string> {
+    // --input-file takes priority when provided
+    if (inputFilePath) {
+      try {
+        return await readFile(inputFilePath, 'utf-8');
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+          throw new InputError(`Input file not found: ${inputFilePath}`);
+        }
+        throw new InputError(
+          `Failed to read input file: ${inputFilePath}: ${error instanceof Error ? error.message : String(error)}`
+        );
+      }
+    }
+
+    // --input - means read from stdin
+    if (inputFlag === '-') {
+      const data = await this.readStdin();
+      if (!data) {
+        throw new InputError('No input received from stdin');
+      }
+      return data;
+    }
+
+    // Default: use --input value directly
+    return inputFlag;
+  }
+
+  /**
+   * Read all data from stdin
+   */
+  private async readStdin(): Promise<string> {
+    if (process.stdin.isTTY) {
+      return '';
+    }
+    return new Promise((resolve, reject) => {
+      const chunks: string[] = [];
+      process.stdin.setEncoding('utf-8');
+      process.stdin.on('data', (chunk: string) => chunks.push(chunk));
+      process.stdin.on('end', () => resolve(chunks.join('')));
+      process.stdin.on('error', reject);
+    });
   }
 
   /**

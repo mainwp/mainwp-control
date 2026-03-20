@@ -84,11 +84,8 @@ export function errorOutput(
 
   const output: CLIOutput<never> = {
     success: false,
+    error: errorBody,
   };
-
-  if (errorBody) {
-    output.error = errorBody;
-  }
 
   if (meta) {
     output.meta = {

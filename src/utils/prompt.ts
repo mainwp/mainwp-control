@@ -6,41 +6,13 @@
  */
 
 import * as readline from 'node:readline';
+import { colors, color } from './colors.js';
 
 /**
  * Check if we're in an interactive terminal
  */
 export function isInteractive(): boolean {
   return process.stdin.isTTY === true && process.stdout.isTTY === true;
-}
-
-/**
- * Check if we should use colored output
- */
-export function useColors(): boolean {
-  return process.stdout.isTTY === true && process.env['NO_COLOR'] === undefined;
-}
-
-/**
- * ANSI color codes
- */
-const colors = {
-  reset: '\x1b[0m',
-  bold: '\x1b[1m',
-  yellow: '\x1b[33m',
-  red: '\x1b[31m',
-  green: '\x1b[32m',
-  dim: '\x1b[2m',
-};
-
-/**
- * Apply color if colors are enabled
- */
-function color(text: string, ...codes: string[]): string {
-  if (!useColors()) {
-    return text;
-  }
-  return codes.join('') + text + colors.reset;
 }
 
 /**
@@ -192,83 +164,3 @@ export async function promptForPassword(question: string): Promise<string> {
   });
 }
 
-/**
- * Prompt for selection from a list
- *
- * @param question - The question to ask
- * @param options - Array of options to choose from
- * @returns The selected option (or undefined if cancelled)
- */
-export async function promptForSelection(
-  question: string,
-  options: string[]
-): Promise<string | undefined> {
-  if (!isInteractive() || options.length === 0) {
-    return undefined;
-  }
-
-  // Display options
-  console.log(color('? ', colors.yellow) + question);
-  options.forEach((opt, i) => {
-    console.log(color(`  ${i + 1}) `, colors.dim) + opt);
-  });
-
-  const answer = await promptForInput('Enter number');
-  const index = parseInt(answer, 10) - 1;
-
-  if (isNaN(index) || index < 0 || index >= options.length) {
-    return undefined;
-  }
-
-  return options[index];
-}
-
-/**
- * Display a warning and require explicit acknowledgment
- *
- * @param warning - The warning message
- * @returns true if user acknowledged, false otherwise
- */
-export async function promptWithWarning(warning: string): Promise<boolean> {
-  if (!isInteractive()) {
-    return false;
-  }
-
-  console.log('');
-  console.log(color('⚠️  WARNING', colors.yellow, colors.bold));
-  console.log(warning);
-  console.log('');
-
-  return promptForConfirmation('Do you want to continue?', false);
-}
-
-/**
- * Display a destructive action confirmation
- *
- * Shows a prominent warning and requires typing "yes" to confirm.
- */
-export async function promptDestructiveConfirmation(
-  action: string,
-  details?: string
-): Promise<boolean> {
-  if (!isInteractive()) {
-    return false;
-  }
-
-  console.log('');
-  console.log(color('🛑 DESTRUCTIVE ACTION', colors.red, colors.bold));
-  console.log(action);
-
-  if (details) {
-    console.log('');
-    console.log(color('Details:', colors.dim));
-    console.log(details);
-  }
-
-  console.log('');
-  console.log('Type "yes" to confirm, or anything else to cancel.');
-
-  const answer = await promptForInput('Confirm');
-
-  return answer.toLowerCase() === 'yes';
-}

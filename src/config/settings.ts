@@ -5,6 +5,12 @@
 import { promises as fs } from 'node:fs';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
+import {
+  isSupportedProviderName,
+  type ProviderName,
+  SUPPORTED_PROVIDER_NAMES,
+} from '../chat/providers/provider.js';
+import { atomicWriteFile } from './fs-utils.js';
 
 /**
  * Settings structure
@@ -30,7 +36,35 @@ export interface Settings {
 
   /** Maximum estimated tokens in chat context (reserved for future use) */
   chatContextTokens?: number;
+
+  /** Allow insecure HTTP connections (not recommended) */
+  allowInsecureHttp?: boolean;
 }
+
+export interface ResolvedSettings {
+  defaultJsonOutput: boolean;
+  llmProvider?: ProviderName;
+  timeout: number;
+  skipSSLVerification: boolean;
+  debug: boolean;
+  chatContextMessages: number;
+  chatContextTokens?: number;
+  allowInsecureHttp: boolean;
+}
+
+export interface SettingsResolution {
+  settings: ResolvedSettings;
+  warnings: string[];
+}
+
+export const SETTINGS_DEFAULTS: ResolvedSettings = {
+  defaultJsonOutput: false,
+  timeout: 30000,
+  skipSSLVerification: false,
+  debug: false,
+  chatContextMessages: 20,
+  allowInsecureHttp: false,
+};
 
 /**
  * Get the config directory path
@@ -51,23 +85,131 @@ export function getSettingsPath(): string {
 }
 
 /**
- * Load settings from file
+ * Cached settings (cleared on explicit reload).
+ * No TTL needed: mainwpctl is a short-lived CLI process — settings are read
+ * once per invocation. clearSettingsCache() handles explicit invalidation
+ * (e.g. after saveSettings).
+ */
+let cachedSettings: Settings | null = null;
+
+/**
+ * Load settings from file (cached after first read)
  */
 export async function loadSettings(): Promise<Settings> {
+  if (cachedSettings) {
+    return cachedSettings;
+  }
+
   const path = getSettingsPath();
 
   try {
     const content = await fs.readFile(path, 'utf-8');
-    return JSON.parse(content) as Settings;
+    cachedSettings = JSON.parse(content) as Settings;
+    return cachedSettings;
   } catch (error) {
-    // File doesn't exist or is invalid - return empty settings
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
-      return {};
+      cachedSettings = {};
+      return cachedSettings;
     }
-    // Log parse errors but don't fail
-    console.warn(`Warning: Could not parse settings file: ${path}`);
-    return {};
+    if (error instanceof SyntaxError) {
+      // Corrupted/malformed JSON — warn but don't crash
+      console.error(`Warning: Failed to parse settings file at ${path}. Using defaults.`);
+      cachedSettings = {};
+      return cachedSettings;
+    }
+    // Permission or other I/O error — surface it
+    throw error;
   }
+}
+
+/**
+ * Validate and normalize settings with safe fallbacks.
+ */
+export function resolveSettings(raw: Settings): SettingsResolution {
+  const warnings: string[] = [];
+  const settings: ResolvedSettings = { ...SETTINGS_DEFAULTS };
+
+  settings.defaultJsonOutput = readBooleanSetting(
+    raw.defaultJsonOutput,
+    'defaultJsonOutput',
+    SETTINGS_DEFAULTS.defaultJsonOutput,
+    warnings
+  );
+  settings.debug = readBooleanSetting(raw.debug, 'debug', SETTINGS_DEFAULTS.debug, warnings);
+  settings.skipSSLVerification = readBooleanSetting(
+    raw.skipSSLVerification,
+    'skipSSLVerification',
+    SETTINGS_DEFAULTS.skipSSLVerification,
+    warnings
+  );
+  settings.allowInsecureHttp = readBooleanSetting(
+    raw.allowInsecureHttp,
+    'allowInsecureHttp',
+    SETTINGS_DEFAULTS.allowInsecureHttp,
+    warnings
+  );
+
+  if (raw.timeout === undefined) {
+    settings.timeout = SETTINGS_DEFAULTS.timeout;
+  } else if (Number.isInteger(raw.timeout) && raw.timeout > 0) {
+    settings.timeout = raw.timeout;
+  } else {
+    warnings.push('Ignoring invalid settings.timeout; expected a positive integer in milliseconds.');
+  }
+
+  if (raw.chatContextMessages === undefined) {
+    settings.chatContextMessages = SETTINGS_DEFAULTS.chatContextMessages;
+  } else if (Number.isInteger(raw.chatContextMessages) && raw.chatContextMessages >= 0) {
+    settings.chatContextMessages = raw.chatContextMessages;
+  } else {
+    warnings.push('Ignoring invalid settings.chatContextMessages; expected an integer greater than or equal to 0.');
+  }
+
+  if (raw.chatContextTokens !== undefined) {
+    if (Number.isInteger(raw.chatContextTokens) && raw.chatContextTokens > 0) {
+      settings.chatContextTokens = raw.chatContextTokens;
+    } else {
+      warnings.push('Ignoring invalid settings.chatContextTokens; expected a positive integer.');
+    }
+  }
+
+  if (raw.llmProvider) {
+    const normalized = raw.llmProvider.trim().toLowerCase();
+    if (isSupportedProviderName(normalized)) {
+      settings.llmProvider = normalized;
+    } else {
+      warnings.push(
+        `Ignoring invalid settings.llmProvider "${raw.llmProvider}". Available: ${SUPPORTED_PROVIDER_NAMES.join(', ')}`
+      );
+    }
+  }
+
+  return { settings, warnings };
+}
+
+function readBooleanSetting(
+  value: unknown,
+  key: string,
+  fallback: boolean,
+  warnings: string[]
+): boolean {
+  if (value === undefined) {
+    return fallback;
+  }
+
+  if (typeof value === 'boolean') {
+    return value;
+  }
+
+  warnings.push(`Ignoring invalid settings.${key}; expected a boolean.`);
+  return fallback;
+}
+
+/**
+ * Clear the settings cache (forces re-read on next loadSettings call)
+ */
+export function clearSettingsCache(): void {
+  cachedSettings = null;
 }
 
 /**
@@ -76,22 +218,11 @@ export async function loadSettings(): Promise<Settings> {
  * SECURITY: Uses atomic write (tmp + rename) and restricted permissions.
  */
 export async function saveSettings(settings: Settings): Promise<void> {
-  const dir = getConfigDir();
   const path = getSettingsPath();
-  const tmpPath = `${path}.tmp`;
+  await atomicWriteFile(path, JSON.stringify(settings, null, 2));
 
-  // Create directory with restricted permissions (owner only)
-  await fs.mkdir(dir, { recursive: true, mode: 0o700 });
-
-  // Atomic write: write to temp file then rename
-  // This prevents data corruption if process crashes mid-write
-  await fs.writeFile(tmpPath, JSON.stringify(settings, null, 2), {
-    encoding: 'utf-8',
-    mode: 0o600, // Owner read/write only
-  });
-
-  // Rename is atomic on POSIX systems
-  await fs.rename(tmpPath, path);
+  // Update cache with freshly saved settings
+  cachedSettings = settings;
 }
 
 /**

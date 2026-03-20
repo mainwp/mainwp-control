@@ -10,12 +10,18 @@
 import { Command, Flags, Interfaces } from '@oclif/core';
 import { getProfileStore, type Profile } from '../config/profile-store.js';
 import { getKeychain } from '../config/keychain.js';
-import { loadSettings } from '../config/settings.js';
+import {
+  loadSettings,
+  resolveSettings,
+  type ResolvedSettings,
+  type Settings,
+} from '../config/settings.js';
 import { createAbilitiesExecutor, type AbilitiesExecutor } from '../core/abilities-executor.js';
-import { ConfigError, AuthError } from '../utils/errors.js';
+import { createBatchManager, type BatchManager } from '../core/batch-manager.js';
+import { isMainWPCTLError, ConfigError } from '../utils/errors.js';
 import { successOutput, errorOutput } from '../output/json-envelope.js';
 import { ExitCode } from '../utils/exit-codes.js';
-import { formatError } from '../output/formatter.js';
+import { formatError, formatWarning } from '../output/formatter.js';
 
 /**
  * Common flags available to all commands
@@ -26,13 +32,17 @@ export const commonFlags = {
     // No default - allows distinguishing "not provided" from "explicitly false"
     // Precedence: --json flag > settings.defaultJsonOutput > false
   }),
+  quiet: Flags.boolean({
+    char: 'q',
+    description: 'Suppress output (exit code only)',
+    default: false,
+  }),
   profile: Flags.string({
     char: 'p',
     description: 'Use a specific profile',
   }),
   debug: Flags.boolean({
     description: 'Show debug output',
-    default: false,
   }),
 };
 
@@ -63,9 +73,41 @@ export abstract class BaseCommand extends Command {
   protected debugMode = false;
 
   /**
+   * Whether debug was explicitly requested on the CLI.
+   */
+  protected explicitDebugMode = false;
+
+  /**
+   * Quiet mode flag — suppress stdout output (exit code only)
+   */
+  protected quietMode = false;
+
+  /**
+   * Raw settings from settings.json
+   */
+  protected rawSettings: Settings = {};
+
+  /**
+   * Validated and normalized settings
+   */
+  protected settings: ResolvedSettings = {
+    defaultJsonOutput: false,
+    timeout: 30000,
+    skipSSLVerification: false,
+    debug: false,
+    chatContextMessages: 20,
+    allowInsecureHttp: false,
+  };
+
+  /**
    * Cached executor instance
    */
   private executor: AbilitiesExecutor | undefined;
+
+  /**
+   * Cached batch manager instance
+   */
+  private batchManagerInstance: BatchManager | undefined;
 
   /**
    * Whether this command needs a profile to be loaded.
@@ -80,13 +122,23 @@ export abstract class BaseCommand extends Command {
    * Call this at the start of each command's run() method.
    */
   protected async initCommon(flags: CommonFlags): Promise<void> {
-    // Load settings from file
-    const settings = await loadSettings();
+    // Load and validate settings
+    this.rawSettings = await loadSettings();
+    const resolved = resolveSettings(this.rawSettings);
+    this.settings = resolved.settings;
 
     // Apply precedence: explicit flag > settings file > default (false)
     // flags.json is undefined if not provided, boolean if provided
-    this.jsonOutput = flags.json ?? settings.defaultJsonOutput ?? false;
-    this.debugMode = flags.debug ?? false;
+    this.jsonOutput = flags.json ?? this.settings.defaultJsonOutput;
+    this.explicitDebugMode = flags.debug === true;
+    this.debugMode = flags.debug ?? this.settings.debug;
+
+    // Quiet mode: suppress stdout. --json and explicit --debug override --quiet.
+    this.quietMode = (flags.quiet ?? false) && !this.jsonOutput && !this.explicitDebugMode;
+
+    for (const warning of resolved.warnings) {
+      this.logToStderr(formatWarning(warning));
+    }
 
     if (this.needsProfile()) {
       await this.loadProfile(flags.profile);
@@ -119,6 +171,14 @@ export abstract class BaseCommand extends Command {
         );
       }
     }
+
+    if (this.currentProfile) {
+      this.debugLog('Loaded profile', {
+        profile: this.currentProfile.name,
+        dashboardUrl: this.currentProfile.dashboardUrl,
+        skipSSLVerification: this.getTransportConfig().skipSSLVerification,
+      });
+    }
   }
 
   /**
@@ -139,15 +199,122 @@ export abstract class BaseCommand extends Command {
 
     const keychain = getKeychain();
     const password = await keychain.getOrThrow(this.currentProfile.name);
-
     this.executor = createAbilitiesExecutor({
       baseUrl: this.currentProfile.dashboardUrl,
       username: this.currentProfile.username,
       appPassword: password,
-      skipSSLVerification: this.currentProfile.skipSSLVerification,
+      ...this.getTransportConfig(),
+    });
+
+    this.debugLog('Initialized abilities executor', {
+      profile: this.currentProfile.name,
+      timeoutMs: this.settings.timeout,
+      allowInsecureHttp: this.settings.allowInsecureHttp,
+      skipSSLVerification: this.getTransportConfig().skipSSLVerification,
     });
 
     return this.executor;
+  }
+
+  /**
+   * Get the BatchManager instance (lazy, cached)
+   */
+  protected async getBatchManager(): Promise<BatchManager> {
+    if (this.batchManagerInstance) {
+      return this.batchManagerInstance;
+    }
+
+    if (!this.currentProfile) {
+      throw new ConfigError(
+        'No profile loaded',
+        undefined,
+        'This is an internal error. Please report this issue.'
+      );
+    }
+
+    const keychain = getKeychain();
+    const appPassword = await keychain.getOrThrow(this.currentProfile.name);
+    this.batchManagerInstance = createBatchManager({
+      baseUrl: this.currentProfile.dashboardUrl,
+      username: this.currentProfile.username,
+      appPassword,
+      ...this.getTransportConfig(),
+    });
+
+    this.debugLog('Initialized batch manager', {
+      profile: this.currentProfile.name,
+      timeoutMs: this.settings.timeout,
+      allowInsecureHttp: this.settings.allowInsecureHttp,
+      skipSSLVerification: this.getTransportConfig().skipSSLVerification,
+    });
+
+    return this.batchManagerInstance;
+  }
+
+  /**
+   * Build common transport configuration using profile-scoped settings first.
+   */
+  protected getTransportConfig(): {
+    skipSSLVerification: boolean;
+    allowInsecureHttp: boolean;
+    timeout: number;
+  } {
+    return {
+      skipSSLVerification:
+        this.currentProfile?.skipSSLVerification ?? this.settings.skipSSLVerification,
+      allowInsecureHttp: this.settings.allowInsecureHttp,
+      timeout: this.settings.timeout,
+    };
+  }
+
+  /**
+   * Emit redacted debug output to stderr.
+   */
+  protected debugLog(message: string, context?: Record<string, unknown>): void {
+    if (!this.shouldEmitDebug()) {
+      return;
+    }
+
+    const suffix =
+      context && Object.keys(context).length > 0
+        ? ` ${JSON.stringify(this.redactDebugContext(context))}`
+        : '';
+
+    this.logToStderr(`[debug] ${message}${suffix}`);
+  }
+
+  private shouldEmitDebug(): boolean {
+    if (!this.debugMode) {
+      return false;
+    }
+
+    return this.explicitDebugMode || !this.quietMode;
+  }
+
+  private redactDebugContext(context: Record<string, unknown>): Record<string, unknown> {
+    const sensitiveKeys = ['password', 'secret', 'token', 'authorization', 'cookie', 'apikey'];
+    const redacted: Record<string, unknown> = {};
+
+    for (const [key, value] of Object.entries(context)) {
+      if (sensitiveKeys.includes(key.toLowerCase())) {
+        redacted[key] = '[REDACTED]';
+        continue;
+      }
+
+      if (typeof value === 'string' && value.length > 300) {
+        redacted[key] = `${value.slice(0, 297)}...`;
+        continue;
+      }
+
+      if (value && typeof value === 'object' && !Array.isArray(value)) {
+        redacted[key] = this.redactDebugContext(value as Record<string, unknown>);
+        continue;
+      }
+
+      redacted[key] = value;
+    }
+
+    return redacted;
   }
 
   /**
@@ -157,6 +324,10 @@ export abstract class BaseCommand extends Command {
    * @param humanFormatter - Optional function that returns human-readable string
    */
   protected output<T>(data: T, humanFormatter?: () => string): void {
+    if (this.quietMode) {
+      return;
+    }
+
     if (this.jsonOutput) {
       const envelope = successOutput(data);
       this.log(JSON.stringify(envelope, null, 2));
@@ -169,7 +340,12 @@ export abstract class BaseCommand extends Command {
   /**
    * Handle errors with appropriate exit codes
    */
-  protected async catch(err: Error & { exitCode?: number }): Promise<void> {
+  protected async catch(err: Error & { exitCode?: number; oclif?: { exit?: number } }): Promise<void> {
+    // Re-throw oclif exit errors to preserve their exit code
+    if (err.oclif && typeof err.oclif.exit === 'number') {
+      throw err;
+    }
+
     if (this.jsonOutput) {
       const envelope = errorOutput(err);
       this.log(JSON.stringify(envelope, null, 2));
@@ -178,14 +354,8 @@ export abstract class BaseCommand extends Command {
       this.logToStderr(formatError(err));
     }
 
-    // Determine exit code
-    let exitCode = err.exitCode ?? ExitCode.INTERNAL_ERROR;
-
-    if (err instanceof ConfigError) {
-      exitCode = ExitCode.AUTH_ERROR;
-    } else if (err instanceof AuthError) {
-      exitCode = ExitCode.AUTH_ERROR;
-    }
+    // Determine exit code from error class (MainWPCTLError subclasses carry exitCode)
+    const exitCode = isMainWPCTLError(err) ? err.exitCode : (err.exitCode ?? ExitCode.INTERNAL_ERROR);
 
     this.exit(exitCode);
   }

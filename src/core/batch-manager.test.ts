@@ -17,13 +17,13 @@ import { createHttpClient } from './http-client.js';
 
 describe('BatchManager', () => {
   let manager: BatchManager;
-  let mockPost: ReturnType<typeof vi.fn>;
+  let mockGet: ReturnType<typeof vi.fn>;
 
   beforeEach(() => {
-    mockPost = vi.fn();
+    mockGet = vi.fn();
     vi.mocked(createHttpClient).mockReturnValue({
-      post: mockPost,
-      get: vi.fn(),
+      post: vi.fn(),
+      get: mockGet,
       put: vi.fn(),
       delete: vi.fn(),
     } as never);
@@ -40,7 +40,7 @@ describe('BatchManager', () => {
 
   describe('getJobStatus', () => {
     it('fetches and normalizes job status', async () => {
-      mockPost.mockResolvedValue({
+      mockGet.mockResolvedValue({
         data: {
           job_id: 'job_123',
           status: 'running',
@@ -66,7 +66,7 @@ describe('BatchManager', () => {
     });
 
     it('handles wrapped success response', async () => {
-      mockPost.mockResolvedValue({
+      mockGet.mockResolvedValue({
         data: {
           success: true,
           data: {
@@ -97,7 +97,7 @@ describe('BatchManager', () => {
       ];
 
       for (const [input, expected] of statusMappings) {
-        mockPost.mockResolvedValueOnce({
+        mockGet.mockResolvedValueOnce({
           data: { job_id: 'job', status: input },
         });
 
@@ -107,13 +107,13 @@ describe('BatchManager', () => {
     });
 
     it('throws on invalid response', async () => {
-      mockPost.mockResolvedValue({ data: null });
+      mockGet.mockResolvedValue({ data: null });
 
       await expect(manager.getJobStatus('job')).rejects.toThrow('Invalid job status response');
     });
 
     it('throws when job ID is missing', async () => {
-      mockPost.mockResolvedValue({
+      mockGet.mockResolvedValue({
         data: { status: 'running' },
       });
 
@@ -123,7 +123,7 @@ describe('BatchManager', () => {
 
   describe('watchJob', () => {
     it('yields status updates until completed', async () => {
-      mockPost
+      mockGet
         .mockResolvedValueOnce({
           data: { job_id: 'job_123', status: 'pending', progress: 0 },
         })
@@ -155,7 +155,7 @@ describe('BatchManager', () => {
       // Simulate a job that accumulates partial results over multiple polls
       // but never completes before the timeout expires
       let callCount = 0;
-      mockPost.mockImplementation(() => {
+      mockGet.mockImplementation(() => {
         callCount++;
         return Promise.resolve({
           data: {
@@ -203,7 +203,7 @@ describe('BatchManager', () => {
     });
 
     it('handles abort signal', async () => {
-      mockPost.mockResolvedValue({
+      mockGet.mockResolvedValue({
         data: { job_id: 'job_123', status: 'running' },
       });
 
@@ -228,7 +228,7 @@ describe('BatchManager', () => {
     });
 
     it('retries on network error', async () => {
-      mockPost
+      mockGet
         .mockRejectedValueOnce(new NetworkError('Connection failed'))
         .mockResolvedValueOnce({
           data: { job_id: 'job_123', status: 'completed' },
@@ -256,7 +256,7 @@ describe('BatchManager', () => {
     });
 
     it('throws on non-network API errors', async () => {
-      mockPost.mockRejectedValue(new APIError('FORBIDDEN', 'Access denied', 403));
+      mockGet.mockRejectedValue(new APIError('FORBIDDEN', 'Access denied', 403));
 
       const generator = manager.watchJob('job_123');
 
@@ -264,7 +264,7 @@ describe('BatchManager', () => {
     });
 
     it('calls onProgress callback', async () => {
-      mockPost
+      mockGet
         .mockResolvedValueOnce({
           data: { job_id: 'job_123', status: 'running' },
         })
@@ -291,7 +291,7 @@ describe('BatchManager', () => {
 
   describe('resumeJob', () => {
     it('returns final result after watching completes', async () => {
-      mockPost
+      mockGet
         .mockResolvedValueOnce({
           data: { job_id: 'job_123', status: 'running' },
         })
@@ -308,7 +308,7 @@ describe('BatchManager', () => {
 
   describe('error parsing', () => {
     it('parses string errors', async () => {
-      mockPost.mockResolvedValue({
+      mockGet.mockResolvedValue({
         data: {
           job_id: 'job_123',
           status: 'failed',
@@ -325,7 +325,7 @@ describe('BatchManager', () => {
     });
 
     it('parses object errors', async () => {
-      mockPost.mockResolvedValue({
+      mockGet.mockResolvedValue({
         data: {
           job_id: 'job_123',
           status: 'failed',
@@ -351,13 +351,13 @@ describe('BatchManager', () => {
 
 describe('Timeout with partial results (Golden Test)', () => {
   let manager: BatchManager;
-  let mockPost: ReturnType<typeof vi.fn>;
+  let mockGet: ReturnType<typeof vi.fn>;
 
   beforeEach(() => {
-    mockPost = vi.fn();
+    mockGet = vi.fn();
     vi.mocked(createHttpClient).mockReturnValue({
-      post: mockPost,
-      get: vi.fn(),
+      post: vi.fn(),
+      get: mockGet,
       put: vi.fn(),
       delete: vi.fn(),
     } as never);
@@ -375,7 +375,7 @@ describe('Timeout with partial results (Golden Test)', () => {
   it('surfaces partial results when timeout occurs mid-processing', async () => {
     // Simulate a job that returns partial results over time
     let callCount = 0;
-    mockPost.mockImplementation(() => {
+    mockGet.mockImplementation(() => {
       callCount++;
       return Promise.resolve({
         data: {
@@ -430,7 +430,7 @@ describe('Timeout with partial results (Golden Test)', () => {
 
   it('returns placeholder status when no polls succeed before timeout', async () => {
     // Network error on all attempts - but timeout first
-    mockPost.mockImplementation(
+    mockGet.mockImplementation(
       () =>
         new Promise((_, reject) => {
           // Delay rejection to simulate network delay

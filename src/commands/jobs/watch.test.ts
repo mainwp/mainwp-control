@@ -9,17 +9,10 @@ vi.mock('../../core/batch-manager.js', () => ({
   createBatchManager: vi.fn(),
 }));
 
-vi.mock('../../core/config-manager.js', () => ({
-  ConfigManager: vi.fn().mockImplementation(() => ({
-    getActiveProfile: vi.fn().mockReturnValue({
-      dashboardUrl: 'https://test.local',
-    }),
-    getCredential: vi.fn().mockResolvedValue('test-token'),
-  })),
-}));
 
 import { createBatchManager } from '../../core/batch-manager.js';
 import type { JobStatus, WatchResult, WatchOptions } from '../../core/batch-manager.js';
+import { formatProgressBar, formatElapsed } from '../../output/formatter.js';
 
 describe('jobs watch command', () => {
   let mockWatchJob: ReturnType<typeof vi.fn>;
@@ -41,27 +34,8 @@ describe('jobs watch command', () => {
     vi.clearAllMocks();
   });
 
-  describe('argument parsing', () => {
-    it('accepts job ID as argument', () => {
-      // The command expects a job ID argument
-      // This is a structural test - the command class defines ID as required
-      // Testing via the oclif test framework would require more setup
-      expect(true).toBe(true);
-    });
-  });
-
   describe('output formatting', () => {
     it('displays progress correctly', () => {
-      // Test the progress bar formatting logic
-      const formatProgressBar = (percent: number, width = 30): string => {
-        const clampedPercent = Math.max(0, Math.min(100, percent));
-        const filled = Math.round((clampedPercent / 100) * width);
-        const empty = width - filled;
-        const bar = '█'.repeat(filled) + '░'.repeat(empty);
-        const percentStr = `${clampedPercent}%`.padStart(4);
-        return `[${bar}] ${percentStr}`;
-      };
-
       expect(formatProgressBar(0, 10)).toBe('[░░░░░░░░░░]   0%');
       expect(formatProgressBar(50, 10)).toBe('[█████░░░░░]  50%');
       expect(formatProgressBar(100, 10)).toBe('[██████████] 100%');
@@ -69,22 +43,6 @@ describe('jobs watch command', () => {
     });
 
     it('formats elapsed time correctly', () => {
-      const formatElapsed = (ms: number): string => {
-        const seconds = Math.floor(ms / 1000);
-        const minutes = Math.floor(seconds / 60);
-        const hours = Math.floor(minutes / 60);
-
-        if (hours > 0) {
-          const remainingMinutes = minutes % 60;
-          return `${hours}h ${remainingMinutes}m`;
-        }
-        if (minutes > 0) {
-          const remainingSeconds = seconds % 60;
-          return `${minutes}m ${remainingSeconds}s`;
-        }
-        return `${seconds}s`;
-      };
-
       expect(formatElapsed(5000)).toBe('5s');
       expect(formatElapsed(65000)).toBe('1m 5s');
       expect(formatElapsed(3665000)).toBe('1h 1m');
@@ -107,29 +65,6 @@ describe('jobs watch command', () => {
       expect(isTerminalStatus('running')).toBe(false);
     });
 
-    it('formats status with appropriate styling', () => {
-      // Test that different statuses get different formatting
-      const getStatusIcon = (status: string): string => {
-        switch (status) {
-          case 'completed':
-            return '✓';
-          case 'failed':
-            return '✗';
-          case 'partial':
-            return '⚠';
-          case 'running':
-            return '⟳';
-          default:
-            return '○';
-        }
-      };
-
-      expect(getStatusIcon('completed')).toBe('✓');
-      expect(getStatusIcon('failed')).toBe('✗');
-      expect(getStatusIcon('partial')).toBe('⚠');
-      expect(getStatusIcon('running')).toBe('⟳');
-      expect(getStatusIcon('pending')).toBe('○');
-    });
   });
 
   describe('generator consumption', () => {
@@ -198,26 +133,6 @@ describe('jobs watch command', () => {
       expect(jsonOutput.status).toBe('completed');
       expect(jsonOutput.timed_out).toBe(false);
       expect(jsonOutput.elapsed_ms).toBe(5000);
-    });
-  });
-
-  describe('error handling', () => {
-    it('handles missing profile gracefully', async () => {
-      // When no profile is configured, the command should error
-      // This would be tested via integration tests with oclif
-      expect(true).toBe(true);
-    });
-
-    it('handles invalid job ID format', async () => {
-      // Job IDs should be validated - empty strings are not allowed
-      const isValidJobId = (id: string): boolean => {
-        return typeof id === 'string' && id.trim().length > 0;
-      };
-
-      expect(isValidJobId('job_123')).toBe(true);
-      expect(isValidJobId('sync_abc')).toBe(true);
-      expect(isValidJobId('')).toBe(false);
-      expect(isValidJobId('  ')).toBe(false);
     });
   });
 

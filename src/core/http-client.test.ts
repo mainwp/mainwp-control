@@ -164,8 +164,8 @@ describe('HttpClient Redirect Security', () => {
    * GOLDEN TEST: Too many redirects are rejected
    */
   it('rejects too many redirects', async () => {
-    // Return 302 redirect 10 times (exceeds MAX_REDIRECTS of 5)
-    for (let i = 0; i < 10; i++) {
+    // Return 302 redirect 15 times (exceeds MAX_REDIRECTS of 10)
+    for (let i = 0; i < 15; i++) {
       mockFetch.mockResolvedValueOnce({
         status: 302,
         ok: false,
@@ -180,7 +180,7 @@ describe('HttpClient Redirect Security', () => {
     await expect(client.get('/start')).rejects.toThrow(/Too many redirects/);
 
     // Should stop after MAX_REDIRECTS + 1 calls
-    expect(mockFetch.mock.calls.length).toBeLessThanOrEqual(6);
+    expect(mockFetch.mock.calls.length).toBeLessThanOrEqual(11);
   });
 
   /**
@@ -202,30 +202,17 @@ describe('HttpClient Redirect Security', () => {
    * GOLDEN TEST: Invalid redirect URL is rejected
    */
   it('rejects invalid redirect URL', async () => {
+    // javascript: protocol has origin "null" → cross-origin → blocked
     mockFetch.mockResolvedValueOnce({
       status: 302,
       ok: false,
       headers: new Headers({
-        location: 'not-a-valid-url-at-all',
+        location: 'javascript:alert(1)',
       }),
     });
 
     const client = createHttpClient(baseConfig);
-
-    // Should still work since relative URLs are resolved against base
-    // Let's test with a truly malformed URL
-    mockFetch.mockReset();
-    mockFetch.mockResolvedValueOnce({
-      status: 302,
-      ok: false,
-      headers: new Headers({
-        location: 'javascript:alert(1)', // Protocol attack
-      }),
-    });
-
-    // This should resolve to baseUrl + path, not execute JS
-    // The URL constructor will reject javascript: URLs as invalid
-    // when resolved against https: base
+    await expect(client.get('/api/test')).rejects.toThrow(/Cross-origin redirect blocked/);
   });
 
   /**
@@ -286,15 +273,15 @@ describe('HttpClient Redirect Security', () => {
 describe('HttpClient SSL Configuration', () => {
   beforeEach(() => {
     mockFetch.mockReset();
-    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    vi.spyOn(console, 'error').mockImplementation(() => {});
   });
 
   afterEach(() => {
     vi.restoreAllMocks();
   });
 
-  it('warns when SSL verification is disabled', () => {
-    const warnSpy = vi.spyOn(console, 'warn');
+  it('emits warning to stderr when SSL verification is disabled', () => {
+    const errorSpy = vi.spyOn(console, 'error');
 
     createHttpClient({
       baseUrl: 'https://dashboard.example.com',
@@ -303,23 +290,70 @@ describe('HttpClient SSL Configuration', () => {
       skipSSLVerification: true,
     });
 
-    expect(warnSpy).toHaveBeenCalledWith(
+    expect(errorSpy).toHaveBeenCalledWith(
       expect.stringContaining('SSL verification is disabled')
     );
   });
 
-  it('warns when using HTTP instead of HTTPS', () => {
-    const warnSpy = vi.spyOn(console, 'warn');
+  it('throws TLSError when using HTTP URL without allowInsecureHttp', () => {
+    expect(() =>
+      createHttpClient({
+        baseUrl: 'http://dashboard.example.com',
+        username: 'admin',
+        appPassword: 'password',
+      })
+    ).toThrow(/HTTPS is required/);
+  });
+
+  it('emits warning when using HTTP URL with allowInsecureHttp', () => {
+    const errorSpy = vi.spyOn(console, 'error');
 
     createHttpClient({
       baseUrl: 'http://dashboard.example.com',
       username: 'admin',
       appPassword: 'password',
+      allowInsecureHttp: true,
     });
 
-    expect(warnSpy).toHaveBeenCalledWith(
-      expect.stringContaining('HTTP instead of HTTPS')
+    expect(errorSpy).toHaveBeenCalledWith(
+      expect.stringContaining('Dashboard URL uses HTTP')
     );
+  });
+
+  it('emits warning when using HTTP URL with MAINWP_ALLOW_HTTP env', () => {
+    const errorSpy = vi.spyOn(console, 'error');
+    const original = process.env['MAINWP_ALLOW_HTTP'];
+    process.env['MAINWP_ALLOW_HTTP'] = '1';
+
+    try {
+      createHttpClient({
+        baseUrl: 'http://dashboard.example.com',
+        username: 'admin',
+        appPassword: 'password',
+      });
+
+      expect(errorSpy).toHaveBeenCalledWith(
+        expect.stringContaining('Dashboard URL uses HTTP')
+      );
+    } finally {
+      if (original === undefined) {
+        delete process.env['MAINWP_ALLOW_HTTP'];
+      } else {
+        process.env['MAINWP_ALLOW_HTTP'] = original;
+      }
+    }
+  });
+
+  it('does not emit warning for HTTPS URL without SSL skip', () => {
+    const errorSpy = vi.spyOn(console, 'error');
+
+    createHttpClient({
+      baseUrl: 'https://dashboard.example.com',
+      username: 'admin',
+      appPassword: 'password',
+    });
+
+    expect(errorSpy).not.toHaveBeenCalled();
   });
 
   it('passes dispatcher option when skipSSLVerification is true', async () => {
@@ -366,6 +400,264 @@ describe('HttpClient SSL Configuration', () => {
     // Verify dispatcher was not passed
     const fetchCall = mockFetch.mock.calls[0];
     expect(fetchCall[1].dispatcher).toBeUndefined();
+  });
+});
+
+describe('HttpClient Response Size Checking', () => {
+  const baseConfig: HttpClientConfig = {
+    baseUrl: 'https://dashboard.example.com',
+    username: 'admin',
+    appPassword: 'test-password',
+    maxResponseSize: 100,
+  };
+
+  beforeEach(() => {
+    mockFetch.mockReset();
+  });
+
+  it('handles non-numeric Content-Length gracefully', async () => {
+    mockFetch.mockResolvedValueOnce({
+      status: 200,
+      ok: true,
+      statusText: 'OK',
+      headers: new Headers({ 'content-length': 'abc' }),
+      text: () => Promise.resolve('{"ok":true}'),
+    });
+
+    const client = createHttpClient(baseConfig);
+    const response = await client.get('/test');
+
+    expect(response.data).toEqual({ ok: true });
+  });
+
+  it('skips post-read body check when Content-Length already validated', async () => {
+    // Content-Length is 50, which is under the 100 limit.
+    // Body is also under limit. No error should occur.
+    mockFetch.mockResolvedValueOnce({
+      status: 200,
+      ok: true,
+      statusText: 'OK',
+      headers: new Headers({ 'content-length': '50' }),
+      text: () => Promise.resolve('x'.repeat(50)),
+    });
+
+    const client = createHttpClient(baseConfig);
+    const response = await client.get('/test');
+
+    expect(response.status).toBe(200);
+  });
+
+  it('rejects oversized Content-Length before reading body', async () => {
+    mockFetch.mockResolvedValueOnce({
+      status: 200,
+      ok: true,
+      statusText: 'OK',
+      headers: new Headers({ 'content-length': '200' }),
+      text: () => Promise.resolve('x'.repeat(200)),
+    });
+
+    const client = createHttpClient(baseConfig);
+    await expect(client.get('/test')).rejects.toThrow(/Response too large/);
+  });
+
+  it('checks body length when Content-Length is absent', async () => {
+    mockFetch.mockResolvedValueOnce({
+      status: 200,
+      ok: true,
+      statusText: 'OK',
+      headers: new Headers({}),
+      text: () => Promise.resolve('x'.repeat(200)),
+    });
+
+    const client = createHttpClient(baseConfig);
+    await expect(client.get('/test')).rejects.toThrow(/Response too large/);
+  });
+});
+
+describe('HttpClient sanitizeErrorData — Recursive Redaction', () => {
+  const baseConfig: HttpClientConfig = {
+    baseUrl: 'https://dashboard.example.com',
+    username: 'admin',
+    appPassword: 'test-password',
+  };
+
+  beforeEach(() => {
+    mockFetch.mockReset();
+  });
+
+  /**
+   * Helper: trigger handleHttpError by returning a non-ok status.
+   * The error data is sanitized internally before being thrown.
+   */
+  async function triggerErrorWithData(data: unknown): Promise<Error> {
+    mockFetch.mockResolvedValueOnce({
+      status: 500,
+      ok: false,
+      statusText: 'Internal Server Error',
+      headers: new Headers({ 'content-type': 'application/json' }),
+      text: () => Promise.resolve(JSON.stringify(data)),
+    });
+
+    const client = createHttpClient(baseConfig);
+    try {
+      await client.get('/test');
+      throw new Error('Expected error to be thrown');
+    } catch (error) {
+      return error as Error;
+    }
+  }
+
+  it('redacts top-level sensitive fields', async () => {
+    const error = await triggerErrorWithData({
+      message: 'Auth failed',
+      password: 'secret123',
+      token: 'tok_abc',
+    });
+
+    expect(error.message).toContain('Server error');
+    // The sanitized data is embedded in the thrown error
+    const errorData = (error as any).details;
+    expect(errorData.password).toBe('[REDACTED]');
+    expect(errorData.token).toBe('[REDACTED]');
+    expect(errorData.message).toBe('Auth failed');
+  });
+
+  it('redacts nested sensitive fields recursively', async () => {
+    const error = await triggerErrorWithData({
+      error: 'Auth error',
+      details: {
+        authorization: 'Basic cHduZWQ=',
+        nested: {
+          secret: 'deep-secret',
+          safe: 'visible',
+        },
+      },
+    });
+
+    const errorData = (error as any).details;
+    expect(errorData.details.authorization).toBe('[REDACTED]');
+    expect(errorData.details.nested.secret).toBe('[REDACTED]');
+    expect(errorData.details.nested.safe).toBe('visible');
+  });
+
+  it('handles case-insensitive key matching', async () => {
+    const error = await triggerErrorWithData({
+      Authorization: 'Bearer tok_abc',
+      PASSWORD: 'secret',
+      Cookie: 'session=xyz',
+    });
+
+    const errorData = (error as any).details;
+    expect(errorData.Authorization).toBe('[REDACTED]');
+    expect(errorData.PASSWORD).toBe('[REDACTED]');
+    expect(errorData.Cookie).toBe('[REDACTED]');
+  });
+
+  it('handles arrays in error data', async () => {
+    const error = await triggerErrorWithData({
+      errors: [
+        { message: 'Error 1', token: 'tok_1' },
+        { message: 'Error 2', secret: 'sec_2' },
+      ],
+    });
+
+    const errorData = (error as any).details;
+    expect(errorData.errors[0].token).toBe('[REDACTED]');
+    expect(errorData.errors[0].message).toBe('Error 1');
+    expect(errorData.errors[1].secret).toBe('[REDACTED]');
+    expect(errorData.errors[1].message).toBe('Error 2');
+  });
+
+  it('handles primitive values unchanged', async () => {
+    const error = await triggerErrorWithData({
+      code: 500,
+      message: 'Internal error',
+      active: true,
+    });
+
+    const errorData = (error as any).details;
+    expect(errorData.code).toBe(500);
+    expect(errorData.message).toBe('Internal error');
+    expect(errorData.active).toBe(true);
+  });
+});
+
+describe('HttpClient buildUrl Origin Validation', () => {
+  const baseConfig: HttpClientConfig = {
+    baseUrl: 'https://dashboard.example.com',
+    username: 'admin',
+    appPassword: 'test-password',
+  };
+
+  beforeEach(() => {
+    mockFetch.mockReset();
+  });
+
+  it('rejects full URL with different origin', async () => {
+    mockFetch.mockResolvedValueOnce({
+      status: 200,
+      ok: true,
+      statusText: 'OK',
+      headers: new Headers(),
+      text: () => Promise.resolve('{}'),
+    });
+
+    const client = createHttpClient(baseConfig);
+
+    await expect(
+      client.get('https://evil.com/steal-creds')
+    ).rejects.toThrow(/origin mismatch/);
+
+    // fetch should not have been called
+    expect(mockFetch).not.toHaveBeenCalled();
+  });
+
+  it('rejects full URL with different port', async () => {
+    const client = createHttpClient(baseConfig);
+
+    await expect(
+      client.get('https://dashboard.example.com:8443/api')
+    ).rejects.toThrow(/origin mismatch/);
+  });
+
+  it('rejects protocol downgrade in full URL', async () => {
+    const client = createHttpClient(baseConfig);
+
+    await expect(
+      client.get('http://dashboard.example.com/api')
+    ).rejects.toThrow(/origin mismatch/);
+  });
+
+  it('accepts full URL with same origin', async () => {
+    mockFetch.mockResolvedValueOnce({
+      status: 200,
+      ok: true,
+      statusText: 'OK',
+      headers: new Headers(),
+      text: () => Promise.resolve('{"ok":true}'),
+    });
+
+    const client = createHttpClient(baseConfig);
+    const response = await client.get('https://dashboard.example.com/wp-json/v1/test');
+
+    expect(response.status).toBe(200);
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+  });
+
+  it('handles relative paths normally', async () => {
+    mockFetch.mockResolvedValueOnce({
+      status: 200,
+      ok: true,
+      statusText: 'OK',
+      headers: new Headers(),
+      text: () => Promise.resolve('{}'),
+    });
+
+    const client = createHttpClient(baseConfig);
+    await client.get('/wp-json/test');
+
+    const fetchCall = mockFetch.mock.calls[0];
+    expect(fetchCall[0]).toBe('https://dashboard.example.com/wp-json/test');
   });
 });
 

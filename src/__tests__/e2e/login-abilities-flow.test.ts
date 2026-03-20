@@ -109,6 +109,12 @@ describe('E2E: Login → Abilities Flow', () => {
   beforeEach(() => {
     setupE2ETest();
 
+    // Default: keytar available and working
+    // Configure this before any Keychain usage in the test.
+    mockKeytarSetPassword.mockResolvedValue(undefined);
+    mockKeytarGetPassword.mockResolvedValue(null);
+    mockKeytarDeletePassword.mockResolvedValue(true);
+
     // Create fresh instances for each test
     profileStore = new ProfileStore();
     keychain = new Keychain();
@@ -119,15 +125,10 @@ describe('E2E: Login → Abilities Flow', () => {
     mockFsMkdir.mockResolvedValue(undefined);
     mockFsRename.mockResolvedValue(undefined);
 
-    // Default: keytar available and working
-    mockKeytarSetPassword.mockResolvedValue(undefined);
-    mockKeytarGetPassword.mockResolvedValue(null);
-    mockKeytarDeletePassword.mockResolvedValue(true);
   });
 
   afterEach(() => {
     cleanupE2ETest();
-    vi.resetModules();
   });
 
   // ==========================================================================

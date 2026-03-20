@@ -113,6 +113,13 @@ vi.mock('../../chat/providers/provider.js', async (importOriginal) => {
     ...original,
     detectConfiguredProvider: vi.fn(() => 'openai'),
     getProviderConfigFromEnv: vi.fn(() => ({ apiKey: 'test-key' })),
+    resolveProviderSelection: vi.fn(() => ({
+      name: 'openai',
+      source: 'auto',
+      configured: true,
+      config: { apiKey: 'test-key', timeout: 30000 },
+      warnings: [],
+    })),
     createProvider: vi.fn(() => ({
       name: 'mock-provider',
       capabilities: {
@@ -663,9 +670,13 @@ describe('E2E: Command-Level Workflows', () => {
       clearEnvVar('OPENROUTER_API_KEY');
       clearEnvVar('LOCAL_LLM_URL');
 
-      // Re-mock to return null
-      const { detectConfiguredProvider } = await import('../../chat/providers/provider.js');
-      vi.mocked(detectConfiguredProvider).mockReturnValueOnce(null);
+      const { resolveProviderSelection } = await import('../../chat/providers/provider.js');
+      vi.mocked(resolveProviderSelection).mockReturnValueOnce({
+        source: 'none',
+        configured: false,
+        config: { apiKey: '', timeout: 30000 },
+        warnings: [],
+      });
 
       const output = await runCommand(ChatCommand, ['Hello'], CHAT_FLAGS);
 

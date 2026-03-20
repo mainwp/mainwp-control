@@ -217,3 +217,21 @@ export function getAuditLogger(): AuditLogger {
 export function createAuditLogger(): AuditLogger {
   return new AuditLogger();
 }
+
+/**
+ * Fire-and-forget wrapper for logDestructiveAction.
+ * Swallows errors to prevent audit logging failures from
+ * interrupting the primary execution flow.
+ */
+export async function logDestructiveActionSafe(
+  params: LogDestructiveActionInput
+): Promise<void> {
+  try {
+    await getAuditLogger().logDestructiveAction(params);
+  } catch (error) {
+    console.error(
+      `CRITICAL: [AuditLogger] Failed to log destructive action: ${error instanceof Error ? error.message : String(error)}. ` +
+      `Audit log path: ${getAuditLogPath()}`
+    );
+  }
+}

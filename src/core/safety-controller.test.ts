@@ -9,7 +9,7 @@
  * of the safety contract.
  */
 
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import {
   SafetyController,
   createSafetyController,
@@ -188,16 +188,22 @@ describe('Golden Test: Safety Classification', () => {
     expect(classification.requiresSafetyFlow).toBe(false);
   });
 
-  it('readonly+destructive does NOT require safety flow', () => {
-    // Edge case: If something is marked both readonly and destructive,
-    // readonly takes precedence (cannot destroy while reading)
+  it('contradictory readonly+destructive requires safety flow (treated as destructive)', () => {
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
     const ability = createTestAbility('special-v1', {
       readonly: true,
       destructive: true,
     });
     const classification = controller.classify(ability);
 
-    expect(classification.requiresSafetyFlow).toBe(false);
+    // Contradictory annotations → warn and treat as destructive
+    expect(classification.requiresSafetyFlow).toBe(true);
+    expect(classification.isReadOnly).toBe(false);
+    expect(classification.isDestructive).toBe(true);
+    expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining('contradictory'));
+
+    errorSpy.mockRestore();
   });
 
   it('idempotent+destructive still requires safety flow', () => {
@@ -281,5 +287,145 @@ describe('Golden Test: Direct Execution Decision', () => {
   it('does NOT execute destructive without flags directly', () => {
     const ability = createTestAbility('delete-site-v1', { destructive: true });
     expect(controller.shouldExecuteDirectly(ability, false, false)).toBe(false);
+  });
+});
+
+describe('Annotation Validation (F2)', () => {
+  let controller: SafetyController;
+
+  beforeEach(() => {
+    controller = createSafetyController();
+  });
+
+  it('falls back to safe defaults for non-boolean annotation values', () => {
+    const ability: Ability = {
+      name: 'bad-annotations-v1',
+      label: 'Bad',
+      description: 'Ability with non-boolean annotations',
+      category: 'test',
+      meta: {
+        annotations: {
+          destructive: 'yes' as unknown as boolean,
+          readonly: 1 as unknown as boolean,
+          idempotent: null as unknown as boolean,
+        },
+      },
+    };
+
+    const classification = controller.classify(ability);
+
+    // All non-boolean → fall back to defaults (false)
+    expect(classification.isDestructive).toBe(false);
+    expect(classification.isReadOnly).toBe(false);
+    expect(classification.isIdempotent).toBe(false);
+    expect(classification.requiresSafetyFlow).toBe(false);
+  });
+
+  it('warns on contradictory annotations and requires safety flow', () => {
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    const ability = createTestAbility('contradictory-v1', {
+      destructive: true,
+      readonly: true,
+    });
+
+    const classification = controller.classify(ability);
+
+    expect(classification.requiresSafetyFlow).toBe(true);
+    expect(classification.isDestructive).toBe(true);
+    expect(classification.isReadOnly).toBe(false);
+    expect(errorSpy).toHaveBeenCalledWith(
+      expect.stringContaining('contradictory')
+    );
+
+    errorSpy.mockRestore();
+  });
+
+  it('missing/undefined annotation fields produce safe defaults', () => {
+    const ability: Ability = {
+      name: 'no-annotations-v1',
+      label: 'None',
+      description: 'No annotations',
+      category: 'test',
+      // No meta at all
+    };
+
+    const classification = controller.classify(ability);
+
+    expect(classification.isDestructive).toBe(false);
+    expect(classification.isReadOnly).toBe(false);
+    expect(classification.isIdempotent).toBe(false);
+    expect(classification.requiresSafetyFlow).toBe(false);
+  });
+});
+
+describe('M6: Known-destructive pattern defense-in-depth', () => {
+  let controller: SafetyController;
+
+  beforeEach(() => {
+    controller = createSafetyController();
+  });
+
+  it('forces destructive classification for delete-* even when API says readonly', () => {
+    const ability = createTestAbility('mainwp/delete-site-v1', {
+      destructive: false,
+      readonly: true,
+    });
+
+    const classification = controller.classify(ability);
+    expect(classification.isDestructive).toBe(true);
+    expect(classification.requiresSafetyFlow).toBe(true);
+  });
+
+  it('forces destructive classification for disconnect-* patterns', () => {
+    const ability = createTestAbility('disconnect-site-v1', {
+      destructive: false,
+      readonly: true,
+    });
+
+    const classification = controller.classify(ability);
+    expect(classification.isDestructive).toBe(true);
+    expect(classification.requiresSafetyFlow).toBe(true);
+  });
+
+  it('forces destructive classification for suspend-* patterns', () => {
+    const ability = createTestAbility('mainwp/suspend-site-v1', {
+      destructive: false,
+    });
+
+    const classification = controller.classify(ability);
+    expect(classification.isDestructive).toBe(true);
+    expect(classification.requiresSafetyFlow).toBe(true);
+  });
+
+  it('forces destructive classification for run-updates-* patterns', () => {
+    const ability = createTestAbility('run-updates-v1', {
+      destructive: false,
+    });
+
+    const classification = controller.classify(ability);
+    expect(classification.isDestructive).toBe(true);
+    expect(classification.requiresSafetyFlow).toBe(true);
+  });
+
+  it('does not force destructive for non-matching ability names', () => {
+    const ability = createTestAbility('list-sites-v1', {
+      destructive: false,
+      readonly: true,
+    });
+
+    const classification = controller.classify(ability);
+    expect(classification.isDestructive).toBe(false);
+    expect(classification.requiresSafetyFlow).toBe(false);
+  });
+
+  it('does not interfere when API already reports destructive correctly', () => {
+    const ability = createTestAbility('delete-site-v1', {
+      destructive: true,
+    });
+
+    const classification = controller.classify(ability);
+    expect(classification.isDestructive).toBe(true);
+    expect(classification.requiresSafetyFlow).toBe(true);
   });
 });

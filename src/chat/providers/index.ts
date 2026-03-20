@@ -8,6 +8,9 @@
 // Core provider interface and utilities
 export * from './provider.js';
 
+// OpenAI-compatible base class
+export { OpenAICompatibleProvider } from './openai-compatible.js';
+
 // Provider implementations
 export { OpenAIProvider, createOpenAIProvider } from './openai.js';
 export { AnthropicProvider, createAnthropicProvider } from './anthropic.js';

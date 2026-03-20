@@ -227,9 +227,9 @@ export class BatchManager {
   async getJobStatus(jobId: string, signal?: AbortSignal): Promise<JobStatus> {
     const endpoint = `${this.baseEndpoint}/abilities/mainwp/get-batch-job-status-v1/run`;
 
-    const response = await this.httpClient.post<JobStatusResponse>(
-      endpoint,
-      { job_id: jobId },
+    const qs = `input[job_id]=${encodeURIComponent(jobId)}`;
+    const response = await this.httpClient.get<JobStatusResponse>(
+      `${endpoint}?${qs}`,
       signal ? { signal } : undefined
     );
 

@@ -27,6 +27,7 @@ export interface HttpClientConfig {
   skipSSLVerification?: boolean | undefined;
   timeout?: number | undefined;
   maxResponseSize?: number | undefined;
+  allowInsecureHttp?: boolean | undefined;
 }
 
 /**
@@ -60,7 +61,7 @@ export class HttpClient {
   private readonly dispatcher: Agent | undefined;
 
   /** Maximum redirects to follow (same-origin only) */
-  private static readonly MAX_REDIRECTS = 5;
+  private static readonly MAX_REDIRECTS = 10;
 
   constructor(config: HttpClientConfig) {
     // Normalize base URL (remove trailing slash)
@@ -78,18 +79,33 @@ export class HttpClient {
     this.maxResponseSize = config.maxResponseSize ?? DEFAULTS.maxResponseSize;
     this.skipSSLVerification = config.skipSSLVerification ?? false;
 
+    // SECURITY: Enforce HTTPS by default
+    if (this.baseUrl.startsWith('http://')) {
+      const allowHttp = config.allowInsecureHttp || process.env['MAINWP_ALLOW_HTTP'] === '1';
+      if (!allowHttp) {
+        throw new TLSError(
+          'Dashboard URL uses insecure HTTP. HTTPS is required by default.',
+          undefined,
+          'Switch to HTTPS, or set allowInsecureHttp in settings / MAINWP_ALLOW_HTTP=1 env var to override'
+        );
+      }
+      console.error(
+        'Warning: Dashboard URL uses HTTP. Credentials are sent unencrypted. ' +
+        'Consider switching to HTTPS.'
+      );
+    }
+
     // Configure undici Agent for SSL verification control
     if (this.skipSSLVerification) {
+      console.error(
+        'Warning: SSL verification is disabled for this profile. ' +
+        'Connection is vulnerable to interception.'
+      );
       this.dispatcher = new Agent({
         connect: {
           rejectUnauthorized: false,
         },
       });
-      console.warn('WARNING: SSL verification is disabled. This is insecure.');
-    }
-
-    if (this.baseUrl.startsWith('http://')) {
-      console.warn('WARNING: Using HTTP instead of HTTPS. Credentials may be exposed.');
     }
   }
 
@@ -144,16 +160,16 @@ export class HttpClient {
       options?.timeout ?? this.timeout
     );
 
-    // Combine signals if provided
-    if (options?.signal) {
-      options.signal.addEventListener('abort', () => controller.abort());
-    }
+    // Combine user signal with timeout signal
+    const effectiveSignal = options?.signal
+      ? AbortSignal.any([options.signal, controller.signal])
+      : controller.signal;
 
     try {
       const fetchOptions: RequestInit = {
         method,
         headers,
-        signal: controller.signal,
+        signal: effectiveSignal,
         // SECURITY: Disable auto-redirect to prevent auth header leakage to cross-origin
         redirect: 'manual',
       };
@@ -177,11 +193,12 @@ export class HttpClient {
         return this.handleRedirect<T>(response, method, body, options, redirectCount);
       }
 
-      // Check response size
+      // Check response size via Content-Length header (pre-read guard)
       const contentLength = response.headers.get('content-length');
-      if (contentLength && parseInt(contentLength, 10) > this.maxResponseSize) {
+      const parsedContentLength = contentLength ? parseInt(contentLength, 10) : NaN;
+      if (!isNaN(parsedContentLength) && parsedContentLength > this.maxResponseSize) {
         throw new NetworkError(
-          `Response too large: ${contentLength} bytes`,
+          `Response too large: ${parsedContentLength} bytes`,
           undefined,
           'Response is too large. Check the Dashboard logs or try a simpler query'
         );
@@ -190,8 +207,8 @@ export class HttpClient {
       // Parse response
       const text = await response.text();
 
-      // Check size after reading
-      if (text.length > this.maxResponseSize) {
+      // Post-read body length check (only when Content-Length was absent or unparseable)
+      if (isNaN(parsedContentLength) && text.length > this.maxResponseSize) {
         throw new NetworkError(
           `Response too large: ${text.length} bytes`,
           undefined,
@@ -290,8 +307,12 @@ export class HttpClient {
    * Build full URL from path
    */
   private buildUrl(path: string): string {
-    // If path is already a full URL, use it
+    // If path is already a full URL, validate same-origin
     if (path.startsWith('http://') || path.startsWith('https://')) {
+      const parsedUrl = new URL(path);
+      if (parsedUrl.origin !== this.baseOrigin) {
+        throw new NetworkError(`Request URL origin mismatch: ${parsedUrl.origin} !== ${this.baseOrigin}`);
+      }
       return path;
     }
 
@@ -375,24 +396,24 @@ export class HttpClient {
         );
       }
 
-      // Check for network errors
-      if ('code' in error) {
-        const code = (error as NodeJS.ErrnoException).code;
-        if (code === 'ECONNREFUSED') {
+      // Check for network errors (check both error and cause chain)
+      const errorCode = this.extractErrorCode(error);
+      if (errorCode) {
+        if (errorCode === 'ECONNREFUSED') {
           return new NetworkError(
             'Connection refused. Is the Dashboard running?',
             undefined,
             'Verify the Dashboard is running and the URL is correct'
           );
         }
-        if (code === 'ENOTFOUND') {
+        if (errorCode === 'ENOTFOUND') {
           return new NetworkError(
             'Host not found. Check the Dashboard URL.',
             undefined,
             'Check the Dashboard URL in your profile with `mainwpctl config show`'
           );
         }
-        if (code === 'CERT_HAS_EXPIRED' || code === 'UNABLE_TO_VERIFY_LEAF_SIGNATURE') {
+        if (errorCode === 'CERT_HAS_EXPIRED' || errorCode === 'UNABLE_TO_VERIFY_LEAF_SIGNATURE') {
           return new TLSError(
             'SSL certificate error. Use --skip-ssl-verify if needed.',
             undefined,
@@ -401,8 +422,9 @@ export class HttpClient {
         }
       }
 
-      // Already a proper error type
-      if (error.name.includes('Error')) {
+      // Already a MainWPCTL error or known network error type
+      if (error.name === 'NetworkError' || error.name === 'TLSError' ||
+          error.name === 'APIError' || error.name === 'AuthError') {
         return error;
       }
     }
@@ -411,23 +433,39 @@ export class HttpClient {
   }
 
   /**
+   * Extract error code from an error or its cause chain
+   * (e.g., fetch wraps ECONNREFUSED in TypeError.cause)
+   */
+  private extractErrorCode(error: Error): string | undefined {
+    // Check the error itself
+    if ('code' in error && typeof (error as NodeJS.ErrnoException).code === 'string') {
+      return (error as NodeJS.ErrnoException).code;
+    }
+    // Check the cause chain (Node.js fetch wraps errors in TypeError)
+    const cause = (error as Error & { cause?: Error }).cause;
+    if (cause instanceof Error) {
+      return this.extractErrorCode(cause);
+    }
+    return undefined;
+  }
+
+  /**
    * Sanitize error data to prevent credential leaks
    */
   private sanitizeErrorData(data: unknown): unknown {
-    if (typeof data !== 'object' || data === null) {
-      return data;
-    }
+    if (typeof data !== 'object' || data === null) return data;
+    if (Array.isArray(data)) return data.map(item => this.sanitizeErrorData(item));
 
-    const sanitized = { ...data } as Record<string, unknown>;
-
-    // Remove sensitive fields
+    const sanitized: Record<string, unknown> = {};
     const sensitiveFields = ['password', 'token', 'secret', 'authorization', 'cookie'];
-    for (const field of sensitiveFields) {
-      if (field in sanitized) {
-        sanitized[field] = '[REDACTED]';
+
+    for (const [key, value] of Object.entries(data)) {
+      if (sensitiveFields.includes(key.toLowerCase())) {
+        sanitized[key] = '[REDACTED]';
+      } else {
+        sanitized[key] = this.sanitizeErrorData(value);
       }
     }
-
     return sanitized;
   }
 }

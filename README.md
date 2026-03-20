@@ -1,100 +1,73 @@
-# mainwpctl
+# MainWP Control
 
-AI-first command-line interface for managing MainWP Dashboards.
+Automation and AI workflows for the MainWP Dashboard. The CLI command is `mainwpctl`.
 
-`mainwpctl` provides deterministic control over your MainWP Dashboard and connected WordPress sites. It uses the MainWP Abilities API for all operations, ensuring consistent behavior between manual commands and AI-assisted chat.
+### What You Can Do
+
+- **Site Management**: List sites, check status, sync data, add or remove child sites
+- **Update Management**: Preview and apply core, plugin, and theme updates across sites
+- **Batch Operations**: Run updates, sync, or reconnect across dozens of sites with `--wait`
+- **CI/CD Integration**: Deterministic exit codes, JSON output, and composability with Unix tools
+- **Interactive Chat**: Explore abilities through natural conversation (optional, requires LLM key)
+
+Built for WordPress agencies and site managers who automate their MainWP workflows.
+
+---
+
+## When to Use MainWP Control vs MCP Server
+
+Use the **[MainWP MCP Server](https://github.com/mainwp/mainwp-mcp)** for conversational AI management — natural language queries inside Claude, Cursor, ChatGPT, or any MCP-compatible client. The MCP server excels at exploration, ad-hoc questions, and interactive workflows.
+
+Use **MainWP Control** for automated and scripted workflows — cron jobs, CI/CD pipelines, monitoring scripts, and batch operations. `mainwpctl` gives you deterministic exit codes, stable JSON output, and composability with standard Unix tools. Both talk to the same Abilities API with the same safety model.
+
+---
 
 ## Quick Start
 
-### Installation
+**Requirements:** Node.js >=20 and MainWP Dashboard 6+ with Abilities API
 
 ```bash
-# From npm (when published)
+# Install
 npm install -g mainwpctl
 
-# From source
-git clone https://github.com/mainwp/mainwpctl.git
-cd mainwpctl
-npm install
-npm run build
-npm link
-```
-
-### Authentication
-
-Connect to your MainWP Dashboard using a WordPress Application Password:
-
-```bash
+# Authenticate
 mainwpctl login
+
+# List sites (JSON for scripting)
+mainwpctl abilities run list-sites-v1 --json
 ```
 
-You'll be prompted for:
-- **Dashboard URL**: Your MainWP Dashboard URL (e.g., `https://dashboard.example.com`)
-- **Username**: WordPress admin username
-- **Application Password**: Create one at *Users > Profile > Application Passwords*
+---
 
-### Basic Usage
+## Real-World Workflows
+
+Destructive operations in MainWP Control follow a safe two-step pattern — preview first, then execute:
 
 ```bash
-# Start interactive chat (default)
-mainwpctl
+# Step 1: Preview what will be deleted (nothing is modified)
+mainwpctl abilities run delete-site-v1 \
+  --input '{"site_id_or_domain": "mysite.com"}' \
+  --dry-run --json
 
-# List all sites
-mainwpctl abilities run list-sites-v1
-
-# Get site details
-mainwpctl abilities run get-site-v1 --input '{"site_id_or_domain": 1}'
-
-# Check available updates
-mainwpctl abilities run list-updates-v1 --json
+# Step 2: Apply after reviewing the preview
+mainwpctl abilities run delete-site-v1 \
+  --input '{"site_id_or_domain": "mysite.com"}' \
+  --confirm --force --json
 ```
+
+Each workflow guide below is fully standalone — it walks you from creating an Application Password through a working result, with every step verified and every concept explained.
+
+| Workflow | Description |
+|----------|-------------|
+| [Daily Health Check](docs/workflows/daily-health-check.md) | Cron job that checks site connectivity and alerts via Slack |
+| [Plugin Deployment Verification](docs/workflows/plugin-deployment-verification.md) | GitHub Actions workflow to verify a plugin exists across all sites |
+| [Monthly Batch Updates](docs/workflows/monthly-batch-updates.md) | Preview and apply updates safely — scripted and GitHub Actions variants |
+| [Input from File](docs/workflows/input-from-file.md) | Pass complex parameters via JSON files, stdin pipes, or heredocs |
+| [Monitoring Integration](docs/workflows/monitoring-integration.md) | Send site metrics to Datadog, StatsD, or other monitoring tools |
+
+---
 
 ## Commands
-
-### Chat Mode (Default)
-
-Running `mainwpctl` without arguments starts interactive chat:
-
-```bash
-mainwpctl
-```
-
-In chat mode, describe what you want in natural language:
-- "List all sites"
-- "Show me plugins with updates"
-- "Delete site example.com" (will ask for confirmation)
-
-Chat requires an LLM provider. Set one of these environment variables:
-- `ANTHROPIC_API_KEY` - Anthropic Claude
-- `OPENAI_API_KEY` - OpenAI GPT
-- `GOOGLE_API_KEY` - Google Gemini
-- `OPENROUTER_API_KEY` - OpenRouter
-- `LOCAL_LLM_URL` - Local OpenAI-compatible endpoint
-
-### Authentication
-
-```bash
-# Login with prompts
-mainwpctl login
-
-# Login with flags
-mainwpctl login --url https://dashboard.example.com --username admin
-
-# Skip SSL verification (for local development)
-mainwpctl login --skip-ssl-verify
-```
-
-### Profile Management
-
-Manage multiple Dashboard connections:
-
-```bash
-# List all profiles
-mainwpctl profile list
-
-# Switch active profile
-mainwpctl profile use <profile-name>
-```
 
 ### Abilities
 
@@ -104,25 +77,14 @@ The MainWP Abilities API provides all available operations:
 # List all abilities
 mainwpctl abilities list
 
-# Get ability details
+# Get ability details (input schema, annotations)
 mainwpctl abilities info <ability-name>
 
 # Execute an ability
-mainwpctl abilities run <ability-name> [--input JSON]
-```
+mainwpctl abilities run <ability-name> [--input JSON] [--input-file path] [--json]
 
-#### Running Abilities
-
-```bash
-# Read-only abilities run directly
-mainwpctl abilities run list-sites-v1
-
-# With parameters
-mainwpctl abilities run get-site-v1 --input '{"site_id_or_domain": 1}'
-
-# Destructive abilities require --dry-run first, then --confirm
-mainwpctl abilities run delete-site-v1 --input '{"site_id_or_domain": 1}' --dry-run
-mainwpctl abilities run delete-site-v1 --input '{"site_id_or_domain": 1}' --confirm
+# Execute and wait for batch completion
+mainwpctl abilities run <ability-name> --wait [--wait-timeout 300] --json
 ```
 
 ### Batch Jobs
@@ -134,94 +96,141 @@ Monitor long-running batch operations:
 mainwpctl jobs watch <job-id>
 
 # With timeout
-mainwpctl jobs watch <job-id> --timeout 300
+mainwpctl jobs watch <job-id> --timeout 120
 ```
 
 ### Diagnostics
 
-Check configuration and connectivity:
-
 ```bash
-# Run diagnostics
+# Check configuration and connectivity
 mainwpctl doctor
 
-# Verbose output
+# Verbose output with details
 mainwpctl doctor -v
 
 # JSON output for scripting
 mainwpctl doctor --json
 ```
 
-## Global Flags
-
-All commands support these flags:
-
-| Flag | Description |
-|------|-------------|
-| `--json` | Output JSON (for scripting/CI) |
-| `--profile <name>` | Use specific profile |
-| `--debug` | Show debug output |
-| `--help` | Show help |
-
-## Shell Completion
-
-Enable tab completion for commands, flags, and profile names:
+### Profile Management
 
 ```bash
-# Bash - add to ~/.bashrc
-source /path/to/mainwpctl/scripts/completions/mainwpctl.bash
+# List all profiles
+mainwpctl profile list
 
-# Zsh - add to ~/.zshrc
-source /path/to/mainwpctl/scripts/completions/mainwpctl.zsh
+# Switch active profile
+mainwpctl profile use <profile-name>
 ```
 
-For detailed setup instructions, see [scripts/completions/README.md](scripts/completions/README.md).
+### Authentication
+
+```bash
+# Interactive login
+mainwpctl login
+
+# Non-interactive login (CI)
+export MAINWP_APP_PASSWORD='your-application-password'
+mainwpctl login --url https://dashboard.example.com --username admin
+```
+
+When the OS keychain is unavailable, `mainwpctl` does not persist plaintext credentials. Keep `MAINWP_APP_PASSWORD` available to each non-interactive run on CI, cron hosts, and headless servers.
+
+### Chat Mode
+
+Optional interactive mode for exploring abilities before scripting them. Requires an LLM provider key.
+
+```bash
+# Interactive chat
+mainwpctl chat
+
+# Single message (works in scripts)
+mainwpctl chat "list all sites with pending updates"
+```
+
+Chat requires one of these environment variables:
+- `ANTHROPIC_API_KEY` — Anthropic Claude
+- `OPENAI_API_KEY` — OpenAI GPT
+- `GOOGLE_API_KEY` — Google Gemini
+- `OPENROUTER_API_KEY` — OpenRouter
+- `LOCAL_LLM_API_KEY` — Local endpoint (with optional `LOCAL_LLM_URL`)
+
+Note: In non-TTY environments (pipes, CI), `mainwpctl chat` without a message exits with guidance. Use `mainwpctl chat "message"` for single-message mode in scripts.
+
+---
 
 ## Safety Model
 
-`mainwpctl` enforces safety for destructive operations:
+Destructive operations follow a two-step pattern:
 
-1. **Preview Required**: Destructive abilities automatically show a preview using `--dry-run`
-2. **Explicit Confirmation**: Execute with `--confirm` only after reviewing the preview
-3. **Mutual Exclusion**: `--dry-run` and `--confirm` cannot be used together
-4. **Chat Safety**: AI chat always previews destructive actions before asking for approval
+1. **Preview** with `--dry-run` to see what will change
+2. **Execute** with `--confirm` after reviewing the preview
+
+In CI/scripted workflows, you can pass `--confirm --force` directly if you've
+already validated the operation.
 
 ### Example: Deleting a Site
 
 ```bash
 # Step 1: Preview what will be deleted
 mainwpctl abilities run delete-site-v1 \
-  --input '{"site_id_or_domain": "example.com"}' \
+  --input '{"site_id_or_domain": "mysite.com"}' \
   --dry-run
-
-# Output shows what will be affected
 
 # Step 2: Confirm deletion
 mainwpctl abilities run delete-site-v1 \
-  --input '{"site_id_or_domain": "example.com"}' \
+  --input '{"site_id_or_domain": "mysite.com"}' \
   --confirm
 ```
 
+---
+
 ## Exit Codes
 
-| Code | Meaning |
-|------|---------|
-| 0 | Success |
-| 1 | User/input error |
-| 2 | Auth/config error |
-| 3 | Network error |
-| 4 | API error |
-| 5 | Internal error |
+| Code | Meaning | CI Usage |
+|------|---------|----------|
+| 0 | Success | Continue pipeline |
+| 1 | User/input error | Fix command syntax |
+| 2 | Auth/config error | Check credentials |
+| 3 | Network error | Retry or check connectivity |
+| 4 | API error | Check ability parameters |
+| 5 | Internal error | Report bug |
+
+---
+
+## Global Flags
+
+| Flag | Description |
+|------|-------------|
+| `--json` | Structured JSON output |
+| `--quiet` / `-q` | Suppress output (exit code only) |
+| `--profile <name>` | Use specific profile |
+| `--debug` | Show redacted debug diagnostics on stderr |
+| `--help` | Show help |
+
+### Abilities Run Flags
+
+| Flag | Description |
+|------|-------------|
+| `--input` / `-i` | Input parameters as JSON (use `-` for stdin) |
+| `--input-file` | Read input from a JSON file |
+| `--dry-run` | Preview changes without executing |
+| `--confirm` | Execute destructive ability |
+| `--force` | Skip interactive confirmation (CI mode) |
+| `--wait` | Block until batch job completes |
+| `--wait-timeout` | Max seconds to wait (default: 300) |
+
+---
 
 ## Environment Variables
 
-### Authentication
+### MainWP Configuration
 
 | Variable | Description |
 |----------|-------------|
-| `MAINWP_APP_PASSWORD` | Fallback application password (if keychain unavailable) |
+| `MAINWP_APP_PASSWORD` | Application password for non-interactive login and for commands when keychain storage is unavailable |
+| `MAINWP_ALLOW_HTTP` | Set to `1` to allow insecure HTTP Dashboard URLs |
 
-### LLM Providers
+### Chat Configuration (optional)
 
 | Variable | Provider |
 |----------|----------|
@@ -229,91 +238,94 @@ mainwpctl abilities run delete-site-v1 \
 | `OPENAI_API_KEY` | OpenAI GPT |
 | `GOOGLE_API_KEY` | Google Gemini |
 | `OPENROUTER_API_KEY` | OpenRouter |
-| `LOCAL_LLM_URL` | Local endpoint URL |
-
-### Chat Options
-
-| Variable | Description |
-|----------|-------------|
+| `LOCAL_LLM_API_KEY` | Local LLM provider (required, enables local provider) |
+| `LOCAL_LLM_URL` | Local endpoint URL (optional, defaults to localhost) |
 | `MAINWP_LLM_PROVIDER` | Override auto-detected provider |
 | `MAINWP_LLM_MODEL` | Specify model to use |
 
+---
+
 ## Configuration File
 
-Settings can be configured in `~/.config/mainwpctl/settings.json`:
+Settings in `~/.config/mainwpctl/settings.json`:
 
 ```json
 {
   "defaultJsonOutput": true,
   "timeout": 30000,
-  "debug": false
+  "debug": false,
+  "llmProvider": "openai",
+  "chatContextMessages": 20
 }
 ```
-
-### Available Settings
 
 | Setting | Type | Description |
 |---------|------|-------------|
-| `defaultJsonOutput` | boolean | Default output format (`true` = JSON, `false` = human-readable) |
-| `llmProvider` | string | Default LLM provider for chat |
-| `timeout` | number | HTTP request timeout in milliseconds |
-| `skipSSLVerification` | boolean | Skip SSL verification (not recommended) |
+| `defaultJsonOutput` | boolean | Default to JSON output |
+| `timeout` | number | Default HTTP request timeout in milliseconds |
 | `debug` | boolean | Enable debug output |
-| `chatContextMessages` | number | Max messages in chat context (default: 20) |
+| `llmProvider` | string | Default LLM provider for chat |
+| `chatContextMessages` | number | Max messages in chat context |
+| `skipSSLVerification` | boolean | Advanced fallback: disable TLS verification when the active profile does not set its own SSL preference |
+| `allowInsecureHttp` | boolean | Advanced fallback: allow `http://` Dashboard URLs without setting `MAINWP_ALLOW_HTTP=1` |
 
-### Default JSON Output
+`skipSSLVerification` and `allowInsecureHttp` are insecure overrides. Prefer storing TLS behavior on the profile with `mainwpctl login --skip-ssl-verify`, and keep HTTPS as the default transport.
 
-Set JSON as the default output format for all commands:
+---
 
-```json
-{
-  "defaultJsonOutput": true
-}
-```
-
-The `--json` flag always takes precedence over this setting:
+## Shell Completion
 
 ```bash
-# Uses JSON output (from settings)
-mainwpctl doctor
+# Bash
+source /path/to/mainwpctl/scripts/completions/mainwpctl.bash
 
-# Uses human-readable output (flag overrides setting)
-mainwpctl doctor --json=false
-```
-
-## CI/CD Integration
-
-`mainwpctl` is designed for CI pipelines:
-
-```bash
-# Set credentials via environment
-export MAINWP_APP_PASSWORD="xxxx xxxx xxxx xxxx"
-
-# Login
-mainwpctl login --url https://dashboard.example.com --username admin
-
-# Run commands with JSON output
-mainwpctl abilities run list-sites-v1 --json | jq '.data.sites'
-
-# Check for updates
-UPDATES=$(mainwpctl abilities run list-updates-v1 --json | jq '.data.total')
-if [ "$UPDATES" -gt 0 ]; then
-  echo "Found $UPDATES updates"
-fi
+# Zsh
+source /path/to/mainwpctl/scripts/completions/mainwpctl.zsh
 ```
 
 ## Requirements
 
 - Node.js 20 LTS or later
-- MainWP Dashboard 5.2+ with Abilities API
+- MainWP Dashboard 6+ with Abilities API
 - WordPress Application Password
+
+---
+
+## Contributing
+
+```bash
+npm run build      # Build the project
+npm test           # Run tests (unit + e2e, no network needed)
+npm run lint       # Check code style
+```
+
+### Live Integration Tests
+
+`npm run test:live` runs tests against a real MainWP Dashboard, including workflow documentation validation. These require a running Dashboard and credentials:
+
+```bash
+# Set credentials (or export from an .env file)
+export MAINWP_API_URL=https://your-dashboard.example.com
+export MAINWP_USER=your-admin-username
+export MAINWP_APP_PASSWORD=your-application-password
+
+npm run test:live
+```
+
+The live suite includes:
+- **API tests** — login, abilities discovery, read-only execution, safety model, exit codes
+- **Workflow doc tests** — validates that every jq expression, field name, and data pipeline documented in `docs/workflows/` works against the real API
+
+Live tests are safe: they only run read-only operations and `--dry-run` previews — never mutations.
+
+---
 
 ## License
 
 GPL-3.0-or-later
 
-## Links
+---
 
 - [MainWP](https://mainwp.com/)
-- [GitHub Repository](https://github.com/mainwp/mainwpctl)
-- [Issue Tracker](https://github.com/mainwp/mainwpctl/issues)
+- [MainWP MCP Server](https://github.com/mainwp/mainwp-mcp)
+- [Issue Tracker](https://github.com/mainwp/mainwp-control/issues)

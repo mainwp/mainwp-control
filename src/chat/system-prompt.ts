@@ -1,5 +1,5 @@
 /**
- * System Prompt for mainwpctl chat
+ * System Prompt for MainWP Control chat
  *
  * Embeds the runtime AI behavior contract from CHAT_PROMPT.md.
  * This is executable configuration, not documentation.
@@ -13,7 +13,7 @@ import type { Ability } from '../core/abilities-executor.js';
  * Core system prompt content
  * Derived from CHAT_PROMPT.md (authoritative document)
  */
-const CORE_PROMPT = `You are an AI assistant embedded in mainwpctl, a command-line control tool for MainWP Dashboard management.
+const CORE_PROMPT = `You are an AI assistant embedded in MainWP Control (\`mainwpctl\`), a command-line tool for MainWP Dashboard management.
 
 ## Role
 
@@ -102,35 +102,6 @@ function formatAbility(ability: Ability): string {
   return `- **${ability.name}**${tagStr}: ${ability.description}`;
 }
 
-/**
- * Format input schema for an ability
- */
-function formatInputSchema(ability: Ability): string {
-  if (!ability.input_schema) {
-    return '  No parameters required.';
-  }
-
-  const schema = ability.input_schema as Record<string, unknown>;
-  const properties = schema['properties'] as Record<string, unknown> | undefined;
-  const required = (schema['required'] as string[]) ?? [];
-
-  if (!properties) {
-    return '  No parameters required.';
-  }
-
-  const lines: string[] = [];
-  for (const [name, prop] of Object.entries(properties)) {
-    const propObj = prop as Record<string, unknown>;
-    const type = propObj['type'] ?? 'unknown';
-    const desc = propObj['description'] ?? '';
-    const isRequired = required.includes(name);
-    const reqStr = isRequired ? ' (required)' : '';
-
-    lines.push(`  - ${name}: ${type}${reqStr}${desc ? ` - ${desc}` : ''}`);
-  }
-
-  return lines.join('\n');
-}
 
 /**
  * Build abilities section for system prompt
@@ -178,36 +149,8 @@ function buildAbilitiesSection(abilities: Ability[]): string {
 /**
  * Build complete system prompt with abilities
  */
-export function buildSystemPrompt(abilities: Ability[]): string {
+function buildSystemPrompt(abilities: Ability[]): string {
   return CORE_PROMPT + buildAbilitiesSection(abilities);
-}
-
-/**
- * Build system prompt with detailed ability schemas
- * Used when user asks for detailed help
- */
-export function buildDetailedPrompt(abilities: Ability[]): string {
-  const base = buildSystemPrompt(abilities);
-
-  const details: string[] = ['\n## Ability Details\n'];
-
-  for (const ability of abilities) {
-    details.push(`### ${ability.name}\n`);
-    details.push(`${ability.description}\n`);
-    details.push('**Parameters:**');
-    details.push(formatInputSchema(ability));
-    details.push('');
-  }
-
-  return base + details.join('\n');
-}
-
-/**
- * Get the core system prompt (without abilities)
- * Useful for testing or when abilities aren't loaded yet
- */
-export function getCorePrompt(): string {
-  return CORE_PROMPT;
 }
 
 /**
@@ -245,9 +188,7 @@ export function buildConfiguredPrompt(
 ): string {
   const mergedConfig = { ...defaultConfig, ...config };
 
-  let prompt = mergedConfig.includeSchemas
-    ? buildDetailedPrompt(abilities)
-    : buildSystemPrompt(abilities);
+  let prompt = buildSystemPrompt(abilities);
 
   // Add configuration constraints
   prompt += `\n## Constraints\n`;

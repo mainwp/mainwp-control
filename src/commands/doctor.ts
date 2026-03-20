@@ -16,12 +16,12 @@ import { BaseCommand, commonFlags } from '../lib/base-command.js';
 import { getProfileStore } from '../config/profile-store.js';
 import { getKeychain } from '../config/keychain.js';
 import {
-  detectConfiguredProvider,
   PROVIDER_ENV_VARS,
-  getProviderConfigFromEnv,
+  resolveProviderSelection,
 } from '../chat/providers/provider.js';
 import { ExitCode } from '../utils/exit-codes.js';
 import { maskPassword, maskApiKey } from '../utils/format.js';
+import { color, colors } from '../utils/colors.js';
 
 /**
  * Check result
@@ -45,6 +45,9 @@ interface DoctorReport {
   };
   ready: boolean;
 }
+
+/** Check names whose failure means the system is not ready */
+const CRITICAL_CHECKS = ['Profiles', 'Active Profile', 'Credentials', 'Dashboard Connection'];
 
 export default class DoctorCommand extends BaseCommand {
   static override description = 'Diagnose configuration and connectivity issues';
@@ -88,8 +91,11 @@ export default class DoctorCommand extends BaseCommand {
     checks.push(await this.checkKeychain());
     checks.push(await this.checkActiveProfile());
     checks.push(await this.checkCredentials());
-    checks.push(await this.checkDashboardConnection());
-    checks.push(await this.checkAbilitiesAPI());
+
+    // Fetch abilities once for both dashboard and API checks
+    const { abilities, connectionCheck } = await this.fetchAbilities();
+    checks.push(connectionCheck);
+    checks.push(this.checkAbilitiesFromList(abilities));
     checks.push(await this.checkLLMProvider());
 
     // Build report
@@ -256,34 +262,39 @@ export default class DoctorCommand extends BaseCommand {
   }
 
   /**
-   * Check Dashboard connection
+   * Fetch abilities once for both dashboard connection and API checks
    */
-  private async checkDashboardConnection(): Promise<CheckResult> {
+  private async fetchAbilities(): Promise<{
+    abilities: Array<{ name: string; meta?: { annotations?: { destructive?: boolean } } }>;
+    connectionCheck: CheckResult;
+  }> {
     if (!this.currentProfile) {
       return {
-        name: 'Dashboard Connection',
-        status: 'fail',
-        message: 'No profile to check',
+        abilities: [],
+        connectionCheck: {
+          name: 'Dashboard Connection',
+          status: 'fail',
+          message: 'No profile to check',
+        },
       };
     }
 
     try {
-      // Try to get executor (which validates connection)
       const executor = await this.getExecutor();
-
-      // Test with a simple request
       const abilities = await executor.listAbilities();
 
       return {
-        name: 'Dashboard Connection',
-        status: 'pass',
-        message: 'Connected to Dashboard',
-        details: `${abilities.length} abilities available`,
+        abilities,
+        connectionCheck: {
+          name: 'Dashboard Connection',
+          status: 'pass',
+          message: 'Connected to Dashboard',
+          details: `${abilities.length} abilities available`,
+        },
       };
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
 
-      // Provide specific guidance based on error
       let details = message;
       if (message.includes('ECONNREFUSED')) {
         details = 'Connection refused. Is the Dashboard running?';
@@ -296,75 +307,67 @@ export default class DoctorCommand extends BaseCommand {
       }
 
       return {
-        name: 'Dashboard Connection',
-        status: 'fail',
-        message: 'Cannot connect to Dashboard',
-        details,
+        abilities: [],
+        connectionCheck: {
+          name: 'Dashboard Connection',
+          status: 'fail',
+          message: 'Cannot connect to Dashboard',
+          details,
+        },
       };
     }
   }
 
   /**
-   * Check Abilities API
+   * Check Abilities API from pre-fetched list
    */
-  private async checkAbilitiesAPI(): Promise<CheckResult> {
-    if (!this.currentProfile) {
+  private checkAbilitiesFromList(
+    abilities: Array<{ name: string; meta?: { annotations?: { destructive?: boolean } } }>
+  ): CheckResult {
+    if (abilities.length === 0) {
       return {
         name: 'Abilities API',
         status: 'fail',
-        message: 'No profile to check',
+        message: 'No abilities available',
+        details: 'Dashboard connection may have failed',
       };
     }
 
-    try {
-      const executor = await this.getExecutor();
-      const abilities = await executor.listAbilities();
+    const requiredAbilities = ['list-sites-v1', 'get-site-v1'];
+    const missing = requiredAbilities.filter(
+      (name) => !abilities.find((a) => a.name === name)
+    );
 
-      // Check for required abilities
-      const requiredAbilities = [
-        'list-sites-v1',
-        'get-site-v1',
-      ];
-
-      const missing = requiredAbilities.filter(
-        (name) => !abilities.find((a) => a.name === name)
-      );
-
-      if (missing.length > 0) {
-        return {
-          name: 'Abilities API',
-          status: 'warn',
-          message: 'Some abilities missing',
-          details: `Missing: ${missing.join(', ')}`,
-        };
-      }
-
-      // Check for destructive abilities
-      const destructive = abilities.filter((a) => a.meta?.annotations?.destructive);
-
+    if (missing.length > 0) {
       return {
         name: 'Abilities API',
-        status: 'pass',
-        message: `${abilities.length} abilities available`,
-        details: `${destructive.length} destructive abilities (safety enforced)`,
-      };
-    } catch (error) {
-      return {
-        name: 'Abilities API',
-        status: 'fail',
-        message: 'Failed to load abilities',
-        details: error instanceof Error ? error.message : String(error),
+        status: 'warn',
+        message: 'Some abilities missing',
+        details: `Missing: ${missing.join(', ')}`,
       };
     }
+
+    const destructive = abilities.filter((a) => a.meta?.annotations?.destructive);
+
+    return {
+      name: 'Abilities API',
+      status: 'pass',
+      message: `${abilities.length} abilities available`,
+      details: `${destructive.length} destructive abilities (safety enforced)`,
+    };
   }
 
   /**
    * Check LLM provider configuration
    */
   private async checkLLMProvider(): Promise<CheckResult> {
-    const detectedProvider = detectConfiguredProvider();
+    const resolution = resolveProviderSelection({
+      envProvider: process.env['MAINWP_LLM_PROVIDER'],
+      settingsProvider: this.settings.llmProvider,
+      timeout: this.settings.timeout,
+    });
 
-    if (!detectedProvider) {
+    if (!resolution.name) {
       // List all possible env vars
       const envVars = Object.entries(PROVIDER_ENV_VARS)
         .map(([name, config]) => `  ${name}: ${config.key}`)
@@ -375,31 +378,32 @@ export default class DoctorCommand extends BaseCommand {
         status: 'warn',
         message: 'No LLM provider configured',
         details:
-          'Chat mode will not work. Set one of these environment variables:\n' +
+          [...resolution.warnings, 'Chat mode will not work. Set one of these environment variables:'].join('\n') + '\n' +
           envVars,
       };
     }
 
-    // Check if provider has valid config
-    const config = getProviderConfigFromEnv(detectedProvider);
-
-    if (!config?.apiKey) {
+    if (!resolution.configured) {
       return {
         name: 'LLM Provider',
         status: 'warn',
-        message: `${detectedProvider} detected but no API key`,
-        details: `Set ${PROVIDER_ENV_VARS[detectedProvider]?.key ?? 'API key'}`,
+        message: `${resolution.name} selected but no API key`,
+        details: [
+          ...resolution.warnings,
+          `Source: ${resolution.source}`,
+          `Set ${PROVIDER_ENV_VARS[resolution.name]?.key ?? 'API key'}`,
+        ].join('\n'),
       };
     }
 
     // Mask API key
-    const masked = maskApiKey(config.apiKey);
+    const masked = maskApiKey(resolution.config.apiKey);
 
     return {
       name: 'LLM Provider',
       status: 'pass',
-      message: `${detectedProvider} configured`,
-      details: `API Key: ${masked}`,
+      message: `${resolution.name} configured`,
+      details: [`Source: ${resolution.source}`, `API Key: ${masked}`].join('\n'),
     };
   }
 
@@ -414,9 +418,8 @@ export default class DoctorCommand extends BaseCommand {
     };
 
     // Ready if no critical failures (connection to dashboard)
-    const criticalChecks = ['Profiles', 'Active Profile', 'Credentials', 'Dashboard Connection'];
     const criticalFailed = checks.some(
-      (c) => criticalChecks.includes(c.name) && c.status === 'fail'
+      (c) => CRITICAL_CHECKS.includes(c.name) && c.status === 'fail'
     );
 
     return {
@@ -435,16 +438,15 @@ export default class DoctorCommand extends BaseCommand {
 
     for (const check of report.checks) {
       const icon = this.getStatusIcon(check.status);
-      const color = this.getStatusColor(check.status);
+      const statusColor = this.getStatusColorCode(check.status);
 
       this.log(`  ${icon} ${check.name}`);
-      this.log(`     ${color}${check.message}\x1b[0m`);
+      this.log(`     ${color(check.message, statusColor)}`);
 
       if (verbose && check.details) {
-        // Indent multiline details
         const detailLines = check.details.split('\n');
         for (const line of detailLines) {
-          this.log(`     \x1b[90m${line}\x1b[0m`);
+          this.log(`     ${color(line, colors.gray)}`);
         }
       }
     }
@@ -453,15 +455,15 @@ export default class DoctorCommand extends BaseCommand {
 
     // Summary
     this.log(
-      `  Summary: \x1b[32m${report.summary.passed} passed\x1b[0m, ` +
-        `\x1b[33m${report.summary.warnings} warnings\x1b[0m, ` +
-        `\x1b[31m${report.summary.failed} failed\x1b[0m`
+      `  Summary: ${color(`${report.summary.passed} passed`, colors.green)}, ` +
+        `${color(`${report.summary.warnings} warnings`, colors.yellow)}, ` +
+        `${color(`${report.summary.failed} failed`, colors.red)}`
     );
 
     if (report.ready) {
-      this.log('\n  \x1b[32m✓ System is ready\x1b[0m\n');
+      this.log(`\n  ${color('✓ System is ready', colors.green)}\n`);
     } else {
-      this.log('\n  \x1b[31m✗ System has critical issues\x1b[0m');
+      this.log(`\n  ${color('✗ System has critical issues', colors.red)}`);
       this.log('  Run with -v for more details\n');
     }
   }
@@ -472,25 +474,25 @@ export default class DoctorCommand extends BaseCommand {
   private getStatusIcon(status: CheckResult['status']): string {
     switch (status) {
       case 'pass':
-        return '\x1b[32m✓\x1b[0m';
+        return color('✓', colors.green);
       case 'warn':
-        return '\x1b[33m⚠\x1b[0m';
+        return color('⚠', colors.yellow);
       case 'fail':
-        return '\x1b[31m✗\x1b[0m';
+        return color('✗', colors.red);
     }
   }
 
   /**
-   * Get status color escape code
+   * Get status color code string
    */
-  private getStatusColor(status: CheckResult['status']): string {
+  private getStatusColorCode(status: CheckResult['status']): string {
     switch (status) {
       case 'pass':
-        return '\x1b[32m';
+        return colors.green;
       case 'warn':
-        return '\x1b[33m';
+        return colors.yellow;
       case 'fail':
-        return '\x1b[31m';
+        return colors.red;
     }
   }
 }

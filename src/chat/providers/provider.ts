@@ -109,6 +109,29 @@ export interface ProviderConfig {
 }
 
 /**
+ * Supported provider names
+ */
+export const SUPPORTED_PROVIDER_NAMES = [
+  'openai',
+  'anthropic',
+  'gemini',
+  'openrouter',
+  'local',
+] as const;
+
+export type ProviderName = typeof SUPPORTED_PROVIDER_NAMES[number];
+
+export type ProviderSelectionSource = 'flag' | 'env' | 'settings' | 'auto' | 'none';
+
+export interface ResolvedProviderSelection {
+  name?: ProviderName;
+  source: ProviderSelectionSource;
+  configured: boolean;
+  config: ProviderConfig;
+  warnings: string[];
+}
+
+/**
  * Provider capabilities
  */
 export interface ProviderCapabilities {
@@ -195,6 +218,13 @@ export function listProviders(): string[] {
 }
 
 /**
+ * Check whether a provider name is supported.
+ */
+export function isSupportedProviderName(value: string): value is ProviderName {
+  return (SUPPORTED_PROVIDER_NAMES as readonly string[]).includes(value.toLowerCase());
+}
+
+/**
  * Create a provider from config
  */
 export function createProvider(name: string, config: ProviderConfig): LLMProvider {
@@ -241,11 +271,88 @@ export function getProviderConfigFromEnv(
 }
 
 /**
+ * Resolve the effective provider selection and merged configuration.
+ */
+export function resolveProviderSelection(options: {
+  flagProvider?: string | undefined;
+  envProvider?: string | undefined;
+  settingsProvider?: string | undefined;
+  apiKey?: string | undefined;
+  baseUrl?: string | undefined;
+  model?: string | undefined;
+  timeout?: number | undefined;
+}): ResolvedProviderSelection {
+  const warnings: string[] = [];
+
+  const preferredCandidates: Array<{ value: string | undefined; source: ProviderSelectionSource }> = [
+    { value: options.flagProvider, source: 'flag' },
+    { value: options.envProvider, source: 'env' },
+    { value: options.settingsProvider, source: 'settings' },
+  ];
+
+  let selectedName: ProviderName | undefined;
+  let source: ProviderSelectionSource = 'none';
+
+  for (const candidate of preferredCandidates) {
+    if (!candidate.value) continue;
+
+    const normalized = candidate.value.trim().toLowerCase();
+    if (!isSupportedProviderName(normalized)) {
+      warnings.push(
+        `Ignoring unsupported LLM provider "${candidate.value}". Available: ${SUPPORTED_PROVIDER_NAMES.join(', ')}`
+      );
+      continue;
+    }
+
+    selectedName = normalized;
+    source = candidate.source;
+    break;
+  }
+
+  if (!selectedName) {
+    const detected = detectConfiguredProvider();
+    if (detected && isSupportedProviderName(detected)) {
+      selectedName = detected;
+      source = 'auto';
+    }
+  }
+
+  if (!selectedName) {
+    return {
+      source: 'none',
+      configured: false,
+      config: {
+        apiKey: '',
+        timeout: options.timeout,
+      },
+      warnings,
+    };
+  }
+
+  const envConfig = getProviderConfigFromEnv(selectedName) ?? {};
+  const apiKey = options.apiKey ?? envConfig.apiKey ?? '';
+  const baseUrl = options.baseUrl ?? envConfig.baseUrl;
+
+  return {
+    name: selectedName,
+    source,
+    configured: Boolean(apiKey),
+    config: {
+      apiKey,
+      baseUrl,
+      defaultModel: options.model,
+      timeout: options.timeout,
+    },
+    warnings,
+  };
+}
+
+/**
  * Auto-detect configured provider from environment
  */
 export function detectConfiguredProvider(): string | undefined {
   // Priority order
-  const priority = ['anthropic', 'openai', 'gemini', 'openrouter', 'local'];
+  const priority: ProviderName[] = ['anthropic', 'openai', 'gemini', 'openrouter', 'local'];
 
   for (const provider of priority) {
     const config = getProviderConfigFromEnv(provider);

@@ -69,14 +69,69 @@ export class SafetyController {
    * No heuristics are permitted.
    */
   classify(ability: Ability): SafetyClassification {
-    const annotations = ability.meta?.annotations ?? this.getDefaultAnnotations();
+    const annotations = this.validateAnnotations(
+      ability.meta?.annotations ?? this.getDefaultAnnotations()
+    );
+
+    // SECURITY: Defense-in-depth — force destructive classification for
+    // abilities whose names match known-destructive patterns, regardless
+    // of what the API reports. Prevents a compromised server from
+    // downgrading destructive abilities to bypass the safety flow.
+    const destructive = annotations.destructive || this.isKnownDestructivePattern(ability.name);
+    const readonly_ = destructive ? false : annotations.readonly;
 
     return {
-      isDestructive: annotations.destructive,
-      isReadOnly: annotations.readonly,
+      isDestructive: destructive,
+      isReadOnly: readonly_,
       isIdempotent: annotations.idempotent,
-      requiresSafetyFlow: annotations.destructive && !annotations.readonly,
+      requiresSafetyFlow: destructive && !readonly_,
     };
+  }
+
+  /**
+   * Known-destructive ability name patterns.
+   * These abilities require the safety flow regardless of API-reported annotations.
+   */
+  private static readonly DESTRUCTIVE_PATTERNS = [
+    /^(?:mainwp\/)?delete-/,
+    /^(?:mainwp\/)?disconnect-/,
+    /^(?:mainwp\/)?suspend-/,
+    /^(?:mainwp\/)?deactivate-/,
+    /^(?:mainwp\/)?remove-/,
+    /^(?:mainwp\/)?run-updates-/,
+    /^(?:mainwp\/)?update-all-/,
+  ];
+
+  private isKnownDestructivePattern(name: string): boolean {
+    return SafetyController.DESTRUCTIVE_PATTERNS.some(pattern => pattern.test(name));
+  }
+
+  /**
+   * Validate annotation fields and resolve contradictions.
+   *
+   * - Non-boolean values fall back to safe defaults.
+   * - Contradictory annotations (destructive + readonly) → warn and treat as destructive.
+   */
+  private validateAnnotations(annotations: AbilityAnnotations): AbilityAnnotations {
+    const defaults = this.getDefaultAnnotations();
+
+    const destructive = typeof annotations.destructive === 'boolean'
+      ? annotations.destructive : defaults.destructive;
+    let readonly_ = typeof annotations.readonly === 'boolean'
+      ? annotations.readonly : defaults.readonly;
+    const idempotent = typeof annotations.idempotent === 'boolean'
+      ? annotations.idempotent : defaults.idempotent;
+
+    // Contradictory: both destructive and readonly — treat as destructive (safe default)
+    if (destructive && readonly_) {
+      console.error(
+        'Warning: Ability has contradictory annotations (destructive + readonly). ' +
+        'Treating as destructive for safety.'
+      );
+      readonly_ = false;
+    }
+
+    return { destructive, readonly: readonly_, idempotent };
   }
 
   /**
@@ -169,31 +224,6 @@ export class SafetyController {
 
     // Destructive without flags - this should have been caught by validateExecutionFlags
     return false;
-  }
-
-  /**
-   * Build execution parameters with appropriate flags
-   */
-  buildExecutionParams(
-    input: Record<string, unknown>,
-    ability: Ability,
-    dryRun?: boolean,
-    confirm?: boolean
-  ): Record<string, unknown> {
-    const params = { ...input };
-    const classification = this.classify(ability);
-
-    // Only add flags for abilities that support them
-    if (classification.requiresSafetyFlow) {
-      if (dryRun === true) {
-        params['dry_run'] = true;
-      } else if (confirm === true) {
-        params['confirm'] = true;
-        params['user_confirmed'] = true;
-      }
-    }
-
-    return params;
   }
 
   /**

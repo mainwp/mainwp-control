@@ -115,9 +115,8 @@ export class Keychain {
         if (password) {
           return password;
         }
-      } catch (error) {
+      } catch {
         // Keytar failed, fall through to env var
-        console.warn(`Warning: Could not read from keychain: ${(error as Error).message}`);
       }
     }
 

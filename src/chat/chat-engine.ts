@@ -39,7 +39,7 @@ import {
   type PreviewResult,
 } from '../core/safety-controller.js';
 import { abilityToTool } from './providers/provider.js';
-import { getAuditLogger } from '../utils/audit-logger.js';
+import { logDestructiveActionSafe } from '../utils/audit-logger.js';
 
 /**
  * Chat response types
@@ -249,23 +249,15 @@ export class ChatEngine {
       });
 
       // Log audit entry for declined action (fire-and-forget)
-      try {
-        const auditLogger = getAuditLogger();
-        await auditLogger.logDestructiveAction({
-          abilityName: preview.ability.name,
-          preview: {
-            summary: preview.preview.summary,
-            affectedCount: preview.preview.affected.length,
-          },
-          userDecision: 'declined',
-          input: preview.input,
-        });
-      } catch (error) {
-        // Log audit errors to stderr but don't throw
-        console.error(
-          `[AuditLogger] Failed to log destructive action: ${error instanceof Error ? error.message : String(error)}`
-        );
-      }
+      await logDestructiveActionSafe({
+        abilityName: preview.ability.name,
+        preview: {
+          summary: preview.preview.summary,
+          affectedCount: preview.preview.affected.length,
+        },
+        userDecision: 'declined',
+        input: preview.input,
+      });
 
       // Truncate after preview resolution (safe boundary)
       this.truncateHistory();
@@ -291,30 +283,22 @@ export class ChatEngine {
     );
 
     // Log audit entry for approved and executed action (fire-and-forget)
-    try {
-      const auditLogger = getAuditLogger();
-      const executionResult: { success: boolean; error?: string } = {
-        success: result.success,
-      };
-      if (result.error?.message) {
-        executionResult.error = result.error.message;
-      }
-      await auditLogger.logDestructiveAction({
-        abilityName: preview.ability.name,
-        preview: {
-          summary: preview.preview.summary,
-          affectedCount: preview.preview.affected.length,
-        },
-        userDecision: 'approved',
-        execution: executionResult,
-        input: preview.input,
-      });
-    } catch (error) {
-      // Log audit errors to stderr but don't throw
-      console.error(
-        `[AuditLogger] Failed to log destructive action: ${error instanceof Error ? error.message : String(error)}`
-      );
+    const executionAudit: { success: boolean; error?: string } = {
+      success: result.success,
+    };
+    if (result.error?.message) {
+      executionAudit.error = result.error.message;
     }
+    await logDestructiveActionSafe({
+      abilityName: preview.ability.name,
+      preview: {
+        summary: preview.preview.summary,
+        affectedCount: preview.preview.affected.length,
+      },
+      userDecision: 'approved',
+      execution: executionAudit,
+      input: preview.input,
+    });
 
     // Add result to context
     const toolResultMsg = {
@@ -361,6 +345,15 @@ export class ChatEngine {
         llmResponse = await this.accumulateStream(stream);
       } else {
         llmResponse = await this.provider.chat(this.messages, chatOptions);
+      }
+
+      // Don't process tool calls from interrupted streams — arguments may be incomplete
+      if (llmResponse.finishReason === 'error') {
+        responses.push({
+          type: 'error',
+          error: 'Response interrupted — please try again',
+        });
+        break;
       }
 
       // Parse response

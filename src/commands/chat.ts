@@ -10,14 +10,16 @@
 import { Args, Flags } from '@oclif/core';
 import * as readline from 'node:readline';
 import { BaseCommand, commonFlags } from '../lib/base-command.js';
+import { ExitCode } from '../utils/exit-codes.js';
 import { ChatEngine, createChatEngine, type ChatResponse } from '../chat/chat-engine.js';
 import {
   createProvider,
-  detectConfiguredProvider,
-  getProviderConfigFromEnv,
+  resolveProviderSelection,
   type ProviderConfig,
 } from '../chat/providers/provider.js';
 import type { PreviewResult } from '../core/safety-controller.js';
+import { isInteractive } from '../utils/prompt.js';
+import { stripControlChars } from '../utils/terminal-sanitizer.js';
 
 // Import providers to register them
 import '../chat/providers/index.js';
@@ -32,7 +34,7 @@ function formatPreview(preview: PreviewResult): string {
   lines.push(`PREVIEW: ${preview.abilityName}`);
   lines.push(`${'='.repeat(60)}`);
   lines.push('');
-  lines.push(preview.summary);
+  lines.push(stripControlChars(preview.summary));
 
   if (preview.affected.length > 0) {
     lines.push('');
@@ -41,7 +43,7 @@ function formatPreview(preview: PreviewResult): string {
       const itemStr =
         typeof item === 'object' && item !== null
           ? JSON.stringify(item, null, 2)
-          : String(item);
+          : stripControlChars(String(item));
       lines.push(`  - ${itemStr}`);
     }
     if (preview.affected.length > 10) {
@@ -61,21 +63,22 @@ function formatPreview(preview: PreviewResult): string {
 function formatResponse(response: ChatResponse): string {
   switch (response.type) {
     case 'message':
-      return response.content;
+      return stripControlChars(response.content);
 
     case 'tool_result':
       if (response.result.success) {
+        // JSON.stringify already escapes control chars as \uXXXX — safe
         const data = JSON.stringify(response.result.data, null, 2);
-        return `[${response.tool}]\n${data}`;
+        return `[${stripControlChars(response.tool)}]\n${data}`;
       } else {
-        return `[${response.tool}] Error: ${response.result.error?.message ?? 'Unknown error'}`;
+        return `[${stripControlChars(response.tool)}] Error: ${stripControlChars(response.result.error?.message ?? 'Unknown error')}`;
       }
 
     case 'preview':
       return formatPreview(response.preview);
 
     case 'error':
-      return `Error: ${response.error}`;
+      return `Error: ${stripControlChars(response.error)}`;
   }
 }
 
@@ -117,7 +120,8 @@ export default class ChatCommand extends BaseCommand {
       env: 'MAINWP_LLM_MODEL',
     }),
     'api-key': Flags.string({
-      description: 'LLM API key (overrides environment)',
+      description: 'LLM API key (DEPRECATED: use environment variables instead — CLI args are visible in process list)',
+      env: 'MAINWP_LLM_API_KEY',
     }),
     'base-url': Flags.string({
       description: 'Custom API base URL',
@@ -152,34 +156,49 @@ export default class ChatCommand extends BaseCommand {
 
     await this.initCommon(flags);
 
-    // Detect or use specified provider
-    const providerName = flags.provider ?? detectConfiguredProvider();
+    // Non-interactive without a message: show help, exit
+    if (!isInteractive() && !args.message) {
+      this.logToStderr('Error: Interactive chat requires a terminal. Provide a message argument or use abilities run.');
+      this.logToStderr('  mainwpctl "list all sites"              # single message');
+      this.logToStderr('  mainwpctl abilities run list-sites-v1   # direct command');
+      this.exit(ExitCode.INPUT_ERROR);
+    }
 
-    if (!providerName) {
+    // SECURITY: Warn about process-visible API key
+    if (flags['api-key'] && !process.env['MAINWP_LLM_API_KEY']) {
+      this.logToStderr('Warning: Passing API keys via --api-key flag exposes them in the process list. Use environment variables instead.');
+    }
+
+    const providerResolution = resolveProviderSelection({
+      flagProvider: flags.provider,
+      settingsProvider: this.settings.llmProvider,
+      apiKey: flags['api-key'],
+      baseUrl: flags['base-url'],
+      model: flags.model,
+      timeout: this.settings.timeout,
+    });
+
+    for (const warning of providerResolution.warnings) {
+      this.logToStderr(`Warning: ${warning}`);
+    }
+
+    if (!providerResolution.name) {
       this.error(
         'No LLM provider configured. Set one of:\n' +
           '  - ANTHROPIC_API_KEY for Anthropic Claude\n' +
           '  - OPENAI_API_KEY for OpenAI\n' +
           '  - GOOGLE_API_KEY for Google Gemini\n' +
           '  - OPENROUTER_API_KEY for OpenRouter\n' +
-          '  - LOCAL_LLM_URL for local endpoints\n' +
-          'Or specify --provider and --api-key flags.',
+          '  - LOCAL_LLM_API_KEY for local endpoints (optional LOCAL_LLM_URL)\n' +
+          'Or specify --provider and environment variables / --api-key.',
         { exit: 2 }
       );
     }
 
-    // Build provider config
-    const envConfig = getProviderConfigFromEnv(providerName) ?? {};
-    const providerConfig: ProviderConfig = {
-      apiKey: flags['api-key'] ?? envConfig.apiKey ?? '',
-      baseUrl: flags['base-url'] ?? envConfig.baseUrl,
-    };
+    const providerName = providerResolution.name;
+    const providerConfig: ProviderConfig = providerResolution.config;
 
-    if (flags.model) {
-      providerConfig.defaultModel = flags.model;
-    }
-
-    if (!providerConfig.apiKey && providerName !== 'local') {
+    if (!providerResolution.configured) {
       this.error(
         `No API key for ${providerName}. Set the appropriate environment variable or use --api-key.`,
         { exit: 2 }
@@ -196,6 +215,15 @@ export default class ChatCommand extends BaseCommand {
     // Disable streaming for JSON output since we need clean JSON structure
     this.isStreaming = flags.stream && !this.jsonOutput;
 
+    const maxContextMessages = flags['max-context-messages'] ?? this.settings.chatContextMessages;
+    this.debugLog('Resolved LLM provider', {
+      provider: providerName,
+      source: providerResolution.source,
+      timeoutMs: this.settings.timeout,
+      maxContextMessages,
+      streaming: this.isStreaming,
+    });
+
     // Create chat engine
     const engineOptions: Parameters<typeof createChatEngine>[0] = {
       provider,
@@ -207,8 +235,8 @@ export default class ChatCommand extends BaseCommand {
     // Add streaming callback if streaming is enabled
     if (this.isStreaming) {
       engineOptions.onStreamChunk = (content: string) => {
-        // Display content progressively without newline
-        process.stdout.write(content);
+        // SECURITY: Sanitize streamed content from untrusted LLM provider
+        process.stdout.write(stripControlChars(content));
       };
     }
 
@@ -218,7 +246,6 @@ export default class ChatCommand extends BaseCommand {
 
     // Handle context window configuration
     // 0 = unlimited (no truncation), positive number = that limit, undefined = use default (20)
-    const maxContextMessages = flags['max-context-messages'];
     if (maxContextMessages !== undefined) {
       engineOptions.maxContextMessages = maxContextMessages;
     }
@@ -226,13 +253,17 @@ export default class ChatCommand extends BaseCommand {
     this.chatEngine = createChatEngine(engineOptions);
 
     // Initialize
-    this.log('Initializing chat...');
+    if (!this.jsonOutput) {
+      this.log('Initializing chat...');
+    }
     await this.chatEngine.initialize();
 
     const info = this.chatEngine.getProviderInfo();
-    this.log(`Connected to ${info.name} (${info.model})`);
-    this.log(`Loaded ${this.chatEngine.getAbilities().length} abilities`);
-    this.log('');
+    if (!this.jsonOutput) {
+      this.log(`Connected to ${info.name} (${info.model})`);
+      this.log(`Loaded ${this.chatEngine.getAbilities().length} abilities`);
+      this.log('');
+    }
 
     // Check for single message (non-interactive)
     if (args.message) {
@@ -250,26 +281,42 @@ export default class ChatCommand extends BaseCommand {
   private async handleSingleMessage(message: string): Promise<void> {
     const responses = await this.chatEngine!.sendMessage(message);
 
+    if (this.jsonOutput) {
+      // Select the terminal-state response for JSON output.
+      // preview/error: singular (loop breaks after producing one), so find() is correct.
+      // tool_result: multiple can accumulate in multi-step turns, so findLast()
+      // ensures we return the final outcome, not an intermediate step.
+      const jsonResponse =
+        responses.find((response) => response.type === 'preview') ??
+        responses.find((response) => response.type === 'error') ??
+        responses.findLast((response) => response.type === 'tool_result') ??
+        responses.at(-1);
+
+      if (jsonResponse) {
+        this.log(JSON.stringify(jsonResponse, null, 2));
+      }
+
+      return;
+    }
+
     for (const response of responses) {
       // Add newline after streamed content (streaming doesn't include final newline)
       if (this.isStreaming && response.type === 'message') {
         this.log(''); // Blank line after streamed content
       }
 
-      if (this.jsonOutput) {
-        this.log(JSON.stringify(response, null, 2));
-      } else {
-        // For streaming message responses, content already displayed via callback
-        // Skip duplicate display but still handle other response types
-        if (!(this.isStreaming && response.type === 'message')) {
-          this.log(formatResponse(response));
-        }
+      // For streaming message responses, content already displayed via callback
+      // Skip duplicate display but still handle other response types
+      if (!(this.isStreaming && response.type === 'message')) {
+        this.log(formatResponse(response));
       }
 
       // If preview is pending, we can't continue in non-interactive
       if (response.type === 'preview') {
-        this.log('\nDestructive action requires approval.');
-        this.log('Run in interactive mode to approve.');
+        if (!this.jsonOutput) {
+          this.log('\nDestructive action requires approval.');
+          this.log('Run in interactive mode to approve.');
+        }
         return;
       }
     }
@@ -290,7 +337,7 @@ export default class ChatCommand extends BaseCommand {
     // Handle Ctrl+C gracefully
     this.rl.on('close', () => {
       this.log('\nGoodbye!');
-      process.exit(0);
+      this.exit(0);
     });
 
     const prompt = () => {
@@ -367,7 +414,7 @@ export default class ChatCommand extends BaseCommand {
           }
         } catch (error) {
           this.logToStderr(
-            `Error: ${error instanceof Error ? error.message : String(error)}`
+            `Error: ${stripControlChars(error instanceof Error ? error.message : String(error))}`
           );
         }
 

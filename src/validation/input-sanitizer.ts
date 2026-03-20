@@ -47,6 +47,8 @@ const SENSITIVE_PATTERNS = [
   /credential/i,
   /private[_-]?key/i,
   /bearer/i,
+  /signing[_-]?key/i,
+  /encryption[_-]?key/i,
 ];
 
 /**

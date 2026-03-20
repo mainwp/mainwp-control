@@ -5,13 +5,13 @@
  */
 
 import { Flags } from '@oclif/core';
-import { createInterface } from 'node:readline';
 import { BaseCommand, commonFlags } from '../lib/base-command.js';
 import { getProfileStore, type Profile } from '../config/profile-store.js';
 import { getKeychain } from '../config/keychain.js';
 import { createHttpClient } from '../core/http-client.js';
 import { formatSuccess, formatWarning } from '../output/formatter.js';
 import { AuthError, InputError } from '../utils/errors.js';
+import { promptForInput, promptForPassword, isInteractive } from '../utils/prompt.js';
 
 export default class Login extends BaseCommand {
   static description = 'Authenticate with a MainWP Dashboard';
@@ -40,7 +40,6 @@ export default class Login extends BaseCommand {
     }),
     'skip-ssl-verify': Flags.boolean({
       description: 'Skip SSL certificate verification',
-      default: false,
     }),
   };
 
@@ -56,9 +55,44 @@ export default class Login extends BaseCommand {
     await this.initCommon(flags);
 
     // Collect credentials
-    const url = flags.url ?? (await this.prompt('Dashboard URL: '));
-    const username = flags.username ?? (await this.prompt('WordPress username: '));
-    const password = flags.password ?? (await this.prompt('Application password: ', true));
+    const interactive = isInteractive();
+
+    const url = flags.url ?? (await promptForInput('Dashboard URL'));
+    if (!url) {
+      throw new InputError(
+        'Dashboard URL is required',
+        undefined,
+        interactive ? undefined : 'Pass --url when running without a terminal'
+      );
+    }
+    const username = flags.username ?? (await promptForInput('WordPress username'));
+    if (!username) {
+      throw new InputError(
+        'WordPress username is required',
+        undefined,
+        interactive ? undefined : 'Pass --username when running without a terminal'
+      );
+    }
+
+    if (flags.password) {
+      this.logToStderr(
+        formatWarning(
+          'Passing application passwords via --password exposes them in the process list. Prefer MAINWP_APP_PASSWORD.'
+        )
+      );
+    }
+
+    const envPassword = process.env['MAINWP_APP_PASSWORD'];
+    const password = flags.password ?? envPassword ?? (await promptForPassword('Application password'));
+    if (!password) {
+      throw new InputError(
+        'Application password is required',
+        undefined,
+        interactive
+          ? undefined
+          : 'Pass --password or set MAINWP_APP_PASSWORD when running without a terminal'
+      );
+    }
 
     // Normalize URL
     let normalizedUrl = url.trim();
@@ -75,12 +109,24 @@ export default class Login extends BaseCommand {
       this.log('Testing connection...');
     }
 
+    const skipSSLVerification = flags['skip-ssl-verify'] ?? this.settings.skipSSLVerification;
+    this.debugLog('Testing login connection', {
+      dashboardUrl: normalizedUrl,
+      username,
+      timeoutMs: this.settings.timeout,
+      allowInsecureHttp: this.settings.allowInsecureHttp,
+      skipSSLVerification,
+      passwordSource: flags.password ? 'flag' : envPassword ? 'environment' : 'prompt',
+    });
+
     try {
       const client = createHttpClient({
         baseUrl: normalizedUrl,
         username,
         appPassword: password,
-        skipSSLVerification: flags['skip-ssl-verify'],
+        skipSSLVerification,
+        allowInsecureHttp: this.settings.allowInsecureHttp,
+        timeout: this.settings.timeout,
       });
 
       // Try to fetch abilities to verify connection
@@ -111,8 +157,8 @@ export default class Login extends BaseCommand {
       name: profileName,
       dashboardUrl: normalizedUrl,
       username,
-      skipSSLVerification: flags['skip-ssl-verify'],
       createdAt: new Date().toISOString(),
+      ...(flags['skip-ssl-verify'] ? { skipSSLVerification: true } : {}),
     };
 
     const profileStore = getProfileStore();
@@ -148,7 +194,19 @@ export default class Login extends BaseCommand {
           if (keychainResult.error) {
             lines.push(`  Reason: ${keychainResult.error}`);
           }
-          lines.push(`  Set MAINWP_APP_PASSWORD environment variable for persistent access.`);
+          lines.push(
+            '  Future commands must continue receiving MAINWP_APP_PASSWORD because plaintext credentials are not stored locally.'
+          );
+        }
+
+        if (skipSSLVerification) {
+          lines.push('');
+          lines.push(formatWarning('SSL verification is disabled. This is insecure.'));
+        }
+
+        if (normalizedUrl.startsWith('http://')) {
+          lines.push('');
+          lines.push(formatWarning('Using HTTP instead of HTTPS. Credentials may be exposed.'));
         }
 
         return lines.join('\n');
@@ -156,65 +214,4 @@ export default class Login extends BaseCommand {
     );
   }
 
-  /**
-   * Prompt for user input
-   */
-  private async prompt(message: string, hidden = false): Promise<string> {
-    const rl = createInterface({
-      input: process.stdin,
-      output: process.stdout,
-    });
-
-    return new Promise((resolve, reject) => {
-      if (hidden && process.stdin.isTTY) {
-        // For hidden input, we need to handle it differently
-        process.stdout.write(message);
-        let input = '';
-
-        const stdin = process.stdin;
-        stdin.setRawMode(true);
-        stdin.resume();
-        stdin.setEncoding('utf8');
-
-        const onData = (char: string): void => {
-          const charCode = char.charCodeAt(0);
-
-          if (charCode === 13 || charCode === 10) {
-            // Enter
-            stdin.setRawMode(false);
-            stdin.pause();
-            stdin.removeListener('data', onData);
-            process.stdout.write('\n');
-            rl.close();
-            resolve(input);
-          } else if (charCode === 3) {
-            // Ctrl+C
-            stdin.setRawMode(false);
-            stdin.pause();
-            stdin.removeListener('data', onData);
-            rl.close();
-            reject(new InputError(
-              'Login cancelled by user',
-              undefined,
-              'Press Ctrl+C to exit or provide credentials to continue'
-            ));
-          } else if (charCode === 127) {
-            // Backspace
-            if (input.length > 0) {
-              input = input.slice(0, -1);
-            }
-          } else {
-            input += char;
-          }
-        };
-
-        stdin.on('data', onData);
-      } else {
-        rl.question(message, (answer) => {
-          rl.close();
-          resolve(answer);
-        });
-      }
-    });
-  }
 }

@@ -15,12 +15,30 @@
     "node": true,
     "es2022": true
   },
-  "ignorePatterns": ["dist/", "node_modules/", "*.test.ts"],
+  "ignorePatterns": ["dist/", "node_modules/", "*.test.ts", "vitest.*.ts"],
   "rules": {
     "@typescript-eslint/no-unused-vars": ["error", { "argsIgnorePattern": "^_" }],
     "@typescript-eslint/explicit-function-return-type": "off",
     "@typescript-eslint/no-explicit-any": "warn",
     "no-console": "off",
     "no-constant-condition": ["error", { "checkLoops": false }]
-  }
+  },
+  "overrides": [
+    {
+      "files": ["src/utils/terminal-sanitizer.ts"],
+      "rules": {
+        "no-control-regex": "off"
+      }
+    },
+    {
+      "files": ["src/__tests__/**/*.ts"],
+      "parserOptions": {
+        "project": null
+      },
+      "rules": {
+        "@typescript-eslint/no-unused-vars": ["error", { "argsIgnorePattern": "^_" }],
+        "@typescript-eslint/no-explicit-any": "warn"
+      }
+    }
+  ]
 }

@@ -1,7 +1,7 @@
 {
   "name": "mainwpctl",
   "version": "1.0.0",
-  "description": "AI-first command-line interface for managing MainWP Dashboards",
+  "description": "Command-line interface for scripting and automating MainWP Dashboard operations",
   "type": "module",
   "exports": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -21,6 +21,9 @@
     "postpack": "rm -f oclif.manifest.json",
     "prepack": "npm run clean && npm run build && oclif manifest",
     "test": "vitest run",
+    "test:process": "npm run build && vitest run --config vitest.process.config.ts",
+    "test:live": "npm run build && MAINWP_LIVE_TEST=1 vitest run --config vitest.live.config.ts",
+    "test:all": "npm run test && npm run test:process",
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit",
     "pack": "oclif pack tarballs",
@@ -54,24 +57,28 @@
     "mainwp",
     "wordpress",
     "cli",
-    "management"
+    "automation",
+    "ci-cd",
+    "devops",
+    "scripting",
+    "mainwp-control"
   ],
   "license": "GPL-3.0-or-later",
-  "homepage": "https://github.com/mainwp/mainwpctl",
+  "homepage": "https://github.com/mainwp/mainwp-control",
   "repository": {
     "type": "git",
-    "url": "https://github.com/mainwp/mainwpctl.git"
+    "url": "https://github.com/mainwp/mainwp-control.git"
   },
   "bugs": {
-    "url": "https://github.com/mainwp/mainwpctl/issues"
+    "url": "https://github.com/mainwp/mainwp-control/issues"
   },
   "dependencies": {
-    "@oclif/core": "^4.0.0",
-    "@oclif/plugin-autocomplete": "^3.2.39",
-    "@oclif/plugin-help": "^6.0.0",
-    "ajv": "^8.17.0",
-    "keytar": "^7.9.0",
-    "undici": "^7.16.0"
+    "@oclif/core": "~4.0.0",
+    "@oclif/plugin-autocomplete": "~3.2.39",
+    "@oclif/plugin-help": "~6.0.0",
+    "ajv": "^8.18.0",
+    "keytar": "~7.9.0",
+    "undici": "^7.24.0"
   },
   "devDependencies": {
     "@oclif/test": "^4.0.0",

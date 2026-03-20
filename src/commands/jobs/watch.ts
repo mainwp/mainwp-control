@@ -16,14 +16,11 @@ import {
   formatProgressBar,
   formatElapsed,
 } from '../../output/formatter.js';
-import { InputError } from '../../utils/errors.js';
 import {
-  createBatchManager,
   type BatchManager,
   type JobStatus,
   type WatchResult,
 } from '../../core/batch-manager.js';
-import { getKeychain } from '../../config/keychain.js';
 
 /** Progress bar width in characters */
 const PROGRESS_BAR_WIDTH = 30;
@@ -79,11 +76,16 @@ export default class JobsWatch extends BaseCommand {
     }),
   };
 
-  private batchManager: BatchManager | undefined;
-
   async run(): Promise<void> {
     const { args, flags } = await this.parse(JobsWatch);
     await this.initCommon(flags);
+
+    this.debugLog('Watching batch job', {
+      jobId: args.id,
+      timeoutSeconds: flags.timeout,
+      initialDelayMs: flags['initial-delay'],
+      maxDelayMs: flags['max-delay'],
+    });
 
     // Initialize batch manager
     const manager = await this.getBatchManager();
@@ -116,31 +118,6 @@ export default class JobsWatch extends BaseCommand {
       process.off('SIGINT', handleSignal);
       process.off('SIGTERM', handleSignal);
     }
-  }
-
-  /**
-   * Get the batch manager (lazy initialization)
-   */
-  private async getBatchManager(): Promise<BatchManager> {
-    if (this.batchManager) {
-      return this.batchManager;
-    }
-
-    if (!this.currentProfile) {
-      throw new InputError('No profile loaded. Run `mainwpctl login` first.');
-    }
-
-    const keychain = getKeychain();
-    const appPassword = await keychain.getOrThrow(this.currentProfile.name);
-
-    this.batchManager = createBatchManager({
-      baseUrl: this.currentProfile.dashboardUrl,
-      username: this.currentProfile.username,
-      appPassword,
-      skipSSLVerification: this.currentProfile.skipSSLVerification,
-    });
-
-    return this.batchManager;
   }
 
   /**

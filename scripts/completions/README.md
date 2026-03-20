@@ -1,4 +1,4 @@
-# Shell Completion for mainwpctl
+# Shell Completion for MainWP Control
 
 This directory contains shell completion scripts for `mainwpctl`, providing tab completion for commands, flags, and dynamic data like profile names.
 

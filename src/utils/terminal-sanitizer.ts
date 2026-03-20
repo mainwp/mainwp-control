@@ -175,6 +175,15 @@ export function containsEscapeSequences(str: string): boolean {
     return false;
   }
 
+  // Reset lastIndex on global regexes before test() to avoid
+  // alternating true/false results from stateful .test() calls
+  ESCAPE_PATTERNS.csi.lastIndex = 0;
+  ESCAPE_PATTERNS.osc.lastIndex = 0;
+  ESCAPE_PATTERNS.singleEsc.lastIndex = 0;
+  ESCAPE_PATTERNS.c1.lastIndex = 0;
+  ESCAPE_PATTERNS.dcs.lastIndex = 0;
+  C0_UNSAFE.lastIndex = 0;
+
   return (
     ESCAPE_PATTERNS.csi.test(str) ||
     ESCAPE_PATTERNS.osc.test(str) ||

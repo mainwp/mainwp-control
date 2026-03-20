@@ -352,31 +352,3 @@ Or answer:
 \`\`\``;
 }
 
-/**
- * Extract multiple tool calls from response
- * (for providers that support parallel tool calls)
- */
-export function extractAllToolCalls(
-  response: LLMResponse,
-  options: ParserOptions = {}
-): ParsedResponse[] {
-  if (!response.toolCalls || response.toolCalls.length === 0) {
-    // Single response from content
-    const result = parseContentJson(response.content, options);
-    return [result.response];
-  }
-
-  // Multiple native tool calls
-  return response.toolCalls.map((tc) => {
-    const validation = validateToolCall(tc.name, tc.arguments, options);
-    if (validation) {
-      return { type: 'error' as const, error: validation, retryable: false };
-    }
-    return {
-      type: 'tool' as const,
-      tool: tc.name,
-      input: tc.arguments,
-      id: tc.id,
-    };
-  });
-}
