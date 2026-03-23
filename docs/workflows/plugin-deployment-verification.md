@@ -27,7 +27,7 @@ Before you start, make sure you have:
 | **MainWP Dashboard 6 or later**, installed and running | MainWP Control communicates with the Dashboard REST API, which requires Dashboard 6+. |
 | **WordPress admin access** to your Dashboard site | You need to create an Application Password (explained below). |
 | **Node.js 20 or later** installed on your local machine | MainWP Control is a Node.js application. You only need Node.js locally for the initial verification steps; the GitHub Actions runner provides its own. |
-| **A GitHub repository** | Any repository works. The workflow does not need your application code -- it just needs a place to live. You can use an existing repo or create a new empty one. |
+| **A GitHub repository** | Any repository works. The workflow does not need your application code, it only needs a place to live. You can use an existing repo or create a new empty one. |
 
 If you do not have Node.js installed, visit [https://nodejs.org](https://nodejs.org) and download the **LTS** version (20 or later). The installer handles everything.
 
@@ -35,7 +35,7 @@ If you do not have Node.js installed, visit [https://nodejs.org](https://nodejs.
 
 ## Step 1: Create an Application Password
 
-An **Application Password** is a special password that WordPress generates for external tools. It lets MainWP Control authenticate with your Dashboard without using your regular login password. Application Passwords can be revoked individually, so if you ever want to cut off access you can delete just this password without changing your main credentials.
+An **Application Password** is a special password that WordPress generates for external tools. It lets MainWP Control authenticate with your Dashboard without using your regular login password. Application Passwords can be revoked individually, so if you ever want to cut off access you can delete this password alone without changing your main credentials.
 
 1. Log in to your WordPress Dashboard site (the site where MainWP Dashboard is installed).
 2. In the left sidebar, go to **Users** then click **Your Profile** (or **Profile**).
@@ -62,7 +62,7 @@ Open a **terminal**. On macOS, open the built-in Terminal app (search for "Termi
 Install MainWP Control globally using npm (npm is the package manager that comes with Node.js):
 
 ```bash
-npm install -g mainwpctl
+npm install -g @mainwp/control
 ```
 
 This downloads MainWP Control and makes the `mainwpctl` command available anywhere on your machine.
@@ -230,14 +230,14 @@ jobs:
           node-version: '20'
 
       - name: Install mainwpctl
-        run: npm install -g mainwpctl
+        run: npm install -g @mainwp/control
 ```
 
 - `jobs:` defines the work to perform. A workflow can have multiple jobs, but this one only needs one, called `verify`.
 - `runs-on: ubuntu-latest` tells GitHub to run this job on a fresh Ubuntu Linux virtual machine. GitHub provides these machines for free (with usage limits for public repositories).
 - `steps:` lists the actions to perform, in order.
 - `actions/setup-node@v4` is a prebuilt action from GitHub that installs Node.js. The `node-version: '20'` line tells it to install version 20.
-- The second step installs MainWP Control globally, just like you did on your local machine in Step 2.
+- The second step installs MainWP Control globally, the same way you did on your local machine in Step 2.
 
 ---
 
@@ -286,7 +286,7 @@ This is the core of the workflow. Here is what each piece does:
 
 - **`mainwpctl abilities run list-sites-v1 --json`** calls the MainWP API to fetch a list of all connected sites. The `--json` flag tells mainwpctl to output structured JSON instead of human-readable text.
 
-- **`jq -r '.data.data.items[].id'`** extracts just the site IDs from the JSON response. `jq` is a command-line JSON processor (it comes pre-installed on GitHub's Ubuntu runners). The `-r` flag outputs raw text without quotes. `.data.data.items[].id` is a jq filter that means "from the outer `data` object, navigate into the inner `data` object, get the `items` array, and for each element, extract the `id` field."
+- **`jq -r '.data.data.items[].id'`** extracts the site IDs from the JSON response. `jq` is a command-line JSON processor (it comes pre-installed on GitHub's Ubuntu runners). The `-r` flag outputs raw text without quotes. `.data.data.items[].id` is a jq filter that means "from the outer `data` object, navigate into the inner `data` object, get the `items` array, and for each element, extract the `id` field."
 
 - **`| while read SITE_ID; do ... done`** is a shell loop. The `|` (pipe) sends the list of site IDs into the loop, which processes them one at a time. Each iteration stores one site ID in the variable `SITE_ID`.
 
@@ -328,7 +328,7 @@ jobs:
           node-version: '20'
 
       - name: Install mainwpctl
-        run: npm install -g mainwpctl
+        run: npm install -g @mainwp/control
 
       - name: Authenticate
         run: >

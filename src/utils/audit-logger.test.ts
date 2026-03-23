@@ -2,7 +2,11 @@
  * Tests for audit-logger
  */
 
+import { join } from 'node:path';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+
+/** Platform-aware expected path for audit.log (matches production join()) */
+const MOCK_LOG = join('/mock/config', 'audit.log');
 
 // Mock dependencies before importing the module under test
 const mockMkdir = vi.fn();
@@ -38,7 +42,6 @@ vi.mock('../validation/input-sanitizer.js', () => ({
 
 import {
   AuditLogger,
-  createAuditLogger,
   getAuditLogger,
   getAuditLogPath,
   logDestructiveActionSafe,
@@ -58,7 +61,7 @@ describe('AuditLogger', () => {
     mockAccess.mockResolvedValue(undefined);
     mockAppendFile.mockResolvedValue(undefined);
 
-    logger = createAuditLogger();
+    logger = new AuditLogger();
   });
 
   afterEach(() => {
@@ -67,7 +70,7 @@ describe('AuditLogger', () => {
 
   describe('getAuditLogPath', () => {
     it('returns path inside config directory', () => {
-      expect(getAuditLogPath()).toBe('/mock/config/audit.log');
+      expect(getAuditLogPath()).toBe(MOCK_LOG);
     });
   });
 
@@ -92,7 +95,7 @@ describe('AuditLogger', () => {
 
       expect(mockAppendFile).toHaveBeenCalledTimes(1);
       const [path, content] = mockAppendFile.mock.calls[0]!;
-      expect(path).toBe('/mock/config/audit.log');
+      expect(path).toBe(MOCK_LOG);
 
       const entry = JSON.parse(content.trim());
       expect(entry.timestamp).toBe('2026-03-18T12:00:00.000Z');
@@ -180,7 +183,7 @@ describe('AuditLogger', () => {
 
       await logger.logDestructiveAction(baseInput);
 
-      expect(mockOpen).toHaveBeenCalledWith('/mock/config/audit.log', 'w', 0o600);
+      expect(mockOpen).toHaveBeenCalledWith(MOCK_LOG, 'w', 0o600);
       expect(mockFd.close).toHaveBeenCalled();
     });
   });
@@ -211,14 +214,14 @@ describe('AuditLogger', () => {
       });
 
       // Deletes oldest (audit.log.5)
-      expect(mockUnlink).toHaveBeenCalledWith('/mock/config/audit.log.5');
+      expect(mockUnlink).toHaveBeenCalledWith(`${MOCK_LOG}.5`);
       // Renames 4→5, 3→4, 2→3, 1→2
-      expect(mockRename).toHaveBeenCalledWith('/mock/config/audit.log.4', '/mock/config/audit.log.5');
-      expect(mockRename).toHaveBeenCalledWith('/mock/config/audit.log.3', '/mock/config/audit.log.4');
-      expect(mockRename).toHaveBeenCalledWith('/mock/config/audit.log.2', '/mock/config/audit.log.3');
-      expect(mockRename).toHaveBeenCalledWith('/mock/config/audit.log.1', '/mock/config/audit.log.2');
+      expect(mockRename).toHaveBeenCalledWith(`${MOCK_LOG}.4`, `${MOCK_LOG}.5`);
+      expect(mockRename).toHaveBeenCalledWith(`${MOCK_LOG}.3`, `${MOCK_LOG}.4`);
+      expect(mockRename).toHaveBeenCalledWith(`${MOCK_LOG}.2`, `${MOCK_LOG}.3`);
+      expect(mockRename).toHaveBeenCalledWith(`${MOCK_LOG}.1`, `${MOCK_LOG}.2`);
       // Renames current → .1
-      expect(mockRename).toHaveBeenCalledWith('/mock/config/audit.log', '/mock/config/audit.log.1');
+      expect(mockRename).toHaveBeenCalledWith(MOCK_LOG, `${MOCK_LOG}.1`);
     });
 
     it('does not rotate when file does not exist', async () => {

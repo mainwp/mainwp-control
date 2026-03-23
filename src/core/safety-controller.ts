@@ -61,6 +61,13 @@ export type ExecutionIntent =
  * 2. dry_run and confirm are MUTUALLY EXCLUSIVE
  * 3. Safety check happens BEFORE any network call
  */
+/** Default annotations for abilities without explicit metadata */
+const DEFAULT_ANNOTATIONS: AbilityAnnotations = {
+  readonly: false,
+  destructive: false,
+  idempotent: false,
+};
+
 export class SafetyController {
   /**
    * Classify an ability's safety requirements
@@ -70,7 +77,7 @@ export class SafetyController {
    */
   classify(ability: Ability): SafetyClassification {
     const annotations = this.validateAnnotations(
-      ability.meta?.annotations ?? this.getDefaultAnnotations()
+      ability.meta?.annotations ?? DEFAULT_ANNOTATIONS
     );
 
     // SECURITY: Defense-in-depth — force destructive classification for
@@ -113,7 +120,7 @@ export class SafetyController {
    * - Contradictory annotations (destructive + readonly) → warn and treat as destructive.
    */
   private validateAnnotations(annotations: AbilityAnnotations): AbilityAnnotations {
-    const defaults = this.getDefaultAnnotations();
+    const defaults = DEFAULT_ANNOTATIONS;
 
     const destructive = typeof annotations.destructive === 'boolean'
       ? annotations.destructive : defaults.destructive;
@@ -277,51 +284,26 @@ export class SafetyController {
     return [];
   }
 
+  /** Ability name keywords → past-tense action verbs */
+  private static readonly ACTION_VERBS: [string, string][] = [
+    ['delete', 'deleted'], ['remove', 'removed'], ['update', 'updated'],
+    ['deactivate', 'deactivated'], ['activate', 'activated'],
+    ['suspend', 'suspended'], ['disconnect', 'disconnected'],
+  ];
+
   /**
    * Generate human-readable preview summary
    */
   private generatePreviewSummary(ability: Ability, affected: unknown[]): string {
     const count = affected.length;
-    const action = this.getActionVerb(ability.name);
+    const name = ability.name.toLowerCase();
+    const action = SafetyController.ACTION_VERBS.find(([k]) => name.includes(k))?.[1] ?? 'affected';
 
-    if (count === 0) {
-      return `No items would be ${action}.`;
-    }
-
-    if (count === 1) {
-      return `1 item would be ${action}.`;
-    }
-
+    if (count === 0) return `No items would be ${action}.`;
+    if (count === 1) return `1 item would be ${action}.`;
     return `${count} items would be ${action}.`;
   }
 
-  /**
-   * Get action verb from ability name
-   */
-  private getActionVerb(abilityName: string): string {
-    const name = abilityName.toLowerCase();
-
-    if (name.includes('delete')) return 'deleted';
-    if (name.includes('remove')) return 'removed';
-    if (name.includes('update')) return 'updated';
-    if (name.includes('activate')) return 'activated';
-    if (name.includes('deactivate')) return 'deactivated';
-    if (name.includes('suspend')) return 'suspended';
-    if (name.includes('disconnect')) return 'disconnected';
-
-    return 'affected';
-  }
-
-  /**
-   * Get default annotations for abilities without explicit annotations
-   */
-  private getDefaultAnnotations(): AbilityAnnotations {
-    return {
-      readonly: false,
-      destructive: false,
-      idempotent: false,
-    };
-  }
 }
 
 /**
@@ -339,9 +321,3 @@ export function getSafetyController(): SafetyController {
   return instance;
 }
 
-/**
- * Create a new safety controller (for testing)
- */
-export function createSafetyController(): SafetyController {
-  return new SafetyController();
-}

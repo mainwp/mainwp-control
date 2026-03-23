@@ -211,12 +211,6 @@ export function getAuditLogger(): AuditLogger {
   return instance;
 }
 
-/**
- * Create a new audit logger (for testing)
- */
-export function createAuditLogger(): AuditLogger {
-  return new AuditLogger();
-}
 
 /**
  * Fire-and-forget wrapper for logDestructiveAction.

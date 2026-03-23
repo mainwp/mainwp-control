@@ -12,7 +12,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import {
   SafetyController,
-  createSafetyController,
 } from './safety-controller.js';
 import { MutualExclusionError, ConfirmationRequiredError } from '../utils/errors.js';
 import type { Ability } from './abilities-executor.js';
@@ -43,7 +42,7 @@ describe('Golden Test: Mutual Exclusion (dry_run XOR confirm)', () => {
   let controller: SafetyController;
 
   beforeEach(() => {
-    controller = createSafetyController();
+    controller = new SafetyController();
   });
 
   /**
@@ -105,7 +104,7 @@ describe('Golden Test: Destructive Preview Requirement', () => {
   let controller: SafetyController;
 
   beforeEach(() => {
-    controller = createSafetyController();
+    controller = new SafetyController();
   });
 
   /**
@@ -162,7 +161,7 @@ describe('Golden Test: Safety Classification', () => {
   let controller: SafetyController;
 
   beforeEach(() => {
-    controller = createSafetyController();
+    controller = new SafetyController();
   });
 
   /**
@@ -238,7 +237,7 @@ describe('Golden Test: Execution Intent', () => {
   let controller: SafetyController;
 
   beforeEach(() => {
-    controller = createSafetyController();
+    controller = new SafetyController();
   });
 
   it('determines preview intent from dry_run flag', () => {
@@ -266,7 +265,7 @@ describe('Golden Test: Direct Execution Decision', () => {
   let controller: SafetyController;
 
   beforeEach(() => {
-    controller = createSafetyController();
+    controller = new SafetyController();
   });
 
   it('executes readonly abilities directly', () => {
@@ -294,7 +293,7 @@ describe('Annotation Validation (F2)', () => {
   let controller: SafetyController;
 
   beforeEach(() => {
-    controller = createSafetyController();
+    controller = new SafetyController();
   });
 
   it('falls back to safe defaults for non-boolean annotation values', () => {
@@ -363,7 +362,7 @@ describe('M6: Known-destructive pattern defense-in-depth', () => {
   let controller: SafetyController;
 
   beforeEach(() => {
-    controller = createSafetyController();
+    controller = new SafetyController();
   });
 
   it('forces destructive classification for delete-* even when API says readonly', () => {
@@ -427,5 +426,23 @@ describe('M6: Known-destructive pattern defense-in-depth', () => {
     const classification = controller.classify(ability);
     expect(classification.isDestructive).toBe(true);
     expect(classification.requiresSafetyFlow).toBe(true);
+  });
+});
+
+describe('ACTION_VERBS substring ordering', () => {
+  it('uses "deactivated" verb for deactivate abilities, not "activated"', () => {
+    const controller = new SafetyController();
+    const ability = createTestAbility('mainwp/deactivate-site-plugins-v1', {
+      destructive: true,
+    });
+    const result = controller.formatPreviewResult(ability, {}, {
+      success: true,
+      data: { affected: [{ id: 1 }] },
+    });
+    expect(result.summary).toContain('deactivated');
+    // Ensure it matched "deactivate" not "activate" — the word before
+    // "activated" must be "de" (i.e., only "deactivated" appears, not
+    // a separate "activated" match)
+    expect(result.summary).not.toMatch(/(?<!de)activated/);
   });
 });

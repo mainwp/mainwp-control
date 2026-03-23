@@ -17,6 +17,8 @@ const Ajv = AjvModule.default ?? AjvModule;
 export interface ValidationResult {
   valid: boolean;
   errors?: ValidationError[];
+  /** Coerced copy of input after AJV applies type coercion and defaults */
+  coerced?: Record<string, unknown>;
 }
 
 /**
@@ -63,14 +65,16 @@ export class SchemaValidator {
     schemaId?: string
   ): ValidationResult {
     const validate = this.getCompiledSchema(schema, schemaId);
-    const valid = validate(input);
+    // Clone input so AJV coerceTypes/useDefaults mutates the clone, not the caller's object
+    const coerced = structuredClone(input);
+    const valid = validate(coerced);
 
     if (valid) {
-      return { valid: true };
+      return { valid: true, coerced };
     }
 
     const errors = this.formatErrors(validate.errors ?? []);
-    return { valid: false, errors };
+    return { valid: false, errors, coerced };
   }
 
   /**
@@ -85,7 +89,7 @@ export class SchemaValidator {
     input: Record<string, unknown>,
     schema: Record<string, unknown>,
     abilityName: string
-  ): void {
+  ): ValidationResult {
     const result = this.validate(input, schema, abilityName);
 
     if (!result.valid && result.errors) {
@@ -96,6 +100,8 @@ export class SchemaValidator {
         `Check the ability schema with \`mainwpctl abilities info ${abilityName}\` for required fields and types`
       );
     }
+
+    return result;
   }
 
   /**
@@ -107,7 +113,7 @@ export class SchemaValidator {
     schemaId?: string
   ): boolean {
     const validate = this.getCompiledSchema(schema, schemaId);
-    return validate(input) as boolean;
+    return validate(structuredClone(input)) as boolean;
   }
 
   /**
@@ -211,9 +217,3 @@ export function getSchemaValidator(): SchemaValidator {
   return instance;
 }
 
-/**
- * Create a new schema validator (for testing)
- */
-export function createSchemaValidator(): SchemaValidator {
-  return new SchemaValidator();
-}

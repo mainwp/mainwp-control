@@ -3,10 +3,10 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { createInputSanitizer } from './input-sanitizer.js';
+import { InputSanitizer } from './input-sanitizer.js';
 
 describe('InputSanitizer — isSensitiveKey', () => {
-  const sanitizer = createInputSanitizer();
+  const sanitizer = new InputSanitizer();
 
   it('detects signing_key variants', () => {
     expect(sanitizer.isSensitiveKey('signing_key')).toBe(true);
@@ -38,7 +38,7 @@ describe('InputSanitizer — isSensitiveKey', () => {
 });
 
 describe('InputSanitizer — redactSensitive', () => {
-  const sanitizer = createInputSanitizer();
+  const sanitizer = new InputSanitizer();
 
   it('redacts signing_key and encryption_key fields', () => {
     const data = {

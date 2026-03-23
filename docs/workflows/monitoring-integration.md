@@ -2,7 +2,7 @@
 
 > Send MainWP site metrics to your monitoring system (Datadog, StatsD, or similar) so you can track site health over time and set up alerts.
 
-Managing a network of WordPress sites generates useful numbers — how many sites you have, how many need updates, how many are disconnected. These numbers are valuable for spotting trends and catching problems early, but only if they are tracked over time in a monitoring system.
+Managing a network of WordPress sites generates useful numbers: how many sites you have, how many need updates, how many are disconnected. These numbers are valuable for spotting trends and catching problems early, but only if they are tracked over time in a monitoring system.
 
 This guide walks you through extracting metrics from your MainWP Dashboard using MainWP Control, sending them to a StatsD-compatible monitoring service, and scheduling the whole thing to run automatically. You do not need any prior experience with scripting, monitoring protocols, or the command line. Every concept is explained before it is used.
 
@@ -24,8 +24,8 @@ Before you begin, make sure you have the following:
 
 - **MainWP Dashboard 6 or later**, installed and running on a WordPress site. This is the central hub that manages your connected sites.
 - **WordPress admin access** to your Dashboard site. You will need to create an Application Password for CLI authentication.
-- **Node.js 20 or later** installed on the machine that will run MainWP Control. This is the machine where the monitoring script will execute — it does not need to be the same server as your Dashboard.
-- **A StatsD-compatible monitoring service** (Datadog Agent, Telegraf, Graphite, etc.) listening on UDP port 8125. If you use a different monitoring tool, the concepts are the same — you will just need to adapt the "send" step for your tool's protocol.
+- **Node.js 20 or later** installed on the machine that will run MainWP Control. This is the machine where the monitoring script will execute. It does not need to be the same server as your Dashboard.
+- **A StatsD-compatible monitoring service** (Datadog Agent, Telegraf, Graphite, etc.) listening on UDP port 8125. If you use a different monitoring tool, the concepts are the same. You will need to adapt the "send" step for your tool's protocol.
 
 ---
 
@@ -34,9 +34,9 @@ Before you begin, make sure you have the following:
 Application Passwords are a WordPress feature that lets external tools (like MainWP Control) authenticate with your site without using your main login credentials. Each Application Password is a separate credential you can revoke independently.
 
 1. Log in to your WordPress Dashboard site as an administrator.
-2. Navigate to **Users → Your Profile** (or click your name in the top-right corner and select "Edit Profile").
+2. Navigate to **Users > Your Profile** (or click your name in the top-right corner and select "Edit Profile").
 3. Scroll down to the **Application Passwords** section near the bottom of the page.
-4. In the **"New Application Password Name"** field, type a name to identify this credential — for example, `mainwpctl`.
+4. In the **"New Application Password Name"** field, type a name to identify this credential, for example `mainwpctl`.
 5. Click **"Add New Application Password"**.
 6. WordPress will display a generated password. It looks something like this:
 
@@ -45,7 +45,7 @@ Application Passwords are a WordPress feature that lets external tools (like Mai
    ```
 
 7. **Copy this password immediately.** WordPress will not show it again. If you lose it, you will need to create a new one.
-8. Store it somewhere secure — a password manager, a CI/CD secret store, or a secure note. You will need it in Step 3.
+8. Store it somewhere secure: a password manager, a CI/CD secret store, or a secure note. You will need it in Step 3.
 
 ---
 
@@ -60,7 +60,7 @@ MainWP Control is a command-line tool distributed as an npm package. npm is the 
 A global install makes `mainwpctl` available as a command anywhere on your system:
 
 ```bash
-npm install -g mainwpctl
+npm install -g @mainwp/control
 ```
 
 ### Option B: Run without installing (npx)
@@ -101,9 +101,9 @@ mainwpctl login
 
 You will be prompted for three pieces of information:
 
-1. **Dashboard URL** — The full URL of your MainWP Dashboard site (e.g., `https://manage.example.com`).
-2. **Username** — Your WordPress admin username on the Dashboard site.
-3. **Application Password** — The password you created in Step 1. Paste it in when prompted (the spaces in the password are fine — include them or omit them, both work).
+1. **Dashboard URL:** The full URL of your MainWP Dashboard site (e.g., `https://manage.example.com`).
+2. **Username:** Your WordPress admin username on the Dashboard site.
+3. **Application Password:** The password you created in Step 1. Paste it in when prompted. The spaces in the password are fine; include them or omit them, both work.
 
 After entering these, MainWP Control stores your credentials in your system's keychain when one is available (macOS Keychain, Linux secret service, or Windows Credential Manager). If the machine cannot use a keychain, keep `MAINWP_APP_PASSWORD` available in the environment for future runs.
 
@@ -210,7 +210,7 @@ Expected output (abbreviated):
 }
 ```
 
-The exact sites will match your Dashboard. Now extract just the count using jq:
+The exact sites will match your Dashboard. Now extract the count using jq:
 
 ```bash
 mainwpctl abilities run list-sites-v1 --json | jq '.data.data.items | length'
@@ -218,8 +218,8 @@ mainwpctl abilities run list-sites-v1 --json | jq '.data.data.items | length'
 
 Here is what the jq expression means:
 
-- `.data.data.items` — Navigate into the JSON: start at the root, go into the outer `data` object, then the inner `data` object, then `items` (which is an array of sites).
-- `| length` — Count how many items are in that array.
+- `.data.data.items`: Navigate into the JSON. Start at the root, go into the outer `data` object, then the inner `data` object, then `items` (which is an array of sites).
+- `| length`: Count how many items are in that array.
 
 The `|` between commands is a **pipe**. It takes the output of the command on the left and feeds it as input to the command on the right.
 
@@ -237,7 +237,7 @@ The number will match how many sites are connected to your Dashboard.
 mainwpctl abilities run list-updates-v1 --json | jq '.data.data.total // 0'
 ```
 
-The jq expression `.data.data.total // 0` means: "get the `total` field from the inner `data` object, or use `0` if it does not exist." The `//` operator is jq's alternative operator — it provides a fallback value when a field is missing or null.
+The jq expression `.data.data.total // 0` means: "get the `total` field from the inner `data` object, or use `0` if it does not exist." The `//` operator is jq's alternative operator, providing a fallback value when a field is missing or null.
 
 Expected output:
 
@@ -255,9 +255,9 @@ mainwpctl abilities run list-sites-v1 --json | jq '[.data.data.items[] | select(
 
 This jq expression is more involved, so here is what each part does:
 
-- `.data.data.items[]` — Iterate over every item in the `items` array.
-- `select(.status != "connected")` — Keep only the sites whose `status` field is not `"connected"`.
-- `[...] | length` — Wrap the filtered results in an array and count how many items are in it.
+- `.data.data.items[]`: Iterate over every item in the `items` array.
+- `select(.status != "connected")`: Keep only the sites whose `status` field is not `"connected"`.
+- `[...] | length`: Wrap the filtered results in an array and count how many items are in it.
 
 Expected output if all sites are connected:
 
@@ -279,7 +279,7 @@ Now that you know how to extract metrics, the next step is sending them to your 
 
 ### What is StatsD?
 
-StatsD is a protocol for sending metrics to monitoring systems. It is text-based and simple — you send a string like `metric.name:value|type` over UDP to port 8125. Datadog, Graphite, Telegraf, and many other monitoring tools understand this protocol. If your tool accepts StatsD metrics, these examples will work as-is.
+StatsD is a protocol for sending metrics to monitoring systems. It is text-based and straightforward: you send a string like `metric.name:value|type` over UDP to port 8125. Datadog, Graphite, Telegraf, and many other monitoring tools understand this protocol. If your tool accepts StatsD metrics, these examples will work as-is.
 
 ### What is netcat (nc)?
 
@@ -287,7 +287,7 @@ StatsD is a protocol for sending metrics to monitoring systems. It is text-based
 
 ### Building the one-liner piece by piece
 
-Start with just getting the count and printing it:
+Start with getting the count and printing it:
 
 ```bash
 SITE_COUNT=$(mainwpctl abilities run list-sites-v1 --json | jq '.data.data.items | length')
@@ -317,9 +317,9 @@ mainwp.sites.total:12|g
 
 Here is what this string means:
 
-- `mainwp.sites.total` — The metric name. You choose this. Use dots to create a hierarchy (like a folder structure) in your monitoring dashboard.
-- `:${SITE_COUNT}` — The value. The `${}` syntax inserts the variable's value into the string.
-- `|g` — The metric type. `g` stands for **gauge**, which is a value that goes up and down (like a count). Other types include `c` for counter (increments only) and `ms` for timing.
+- `mainwp.sites.total`: The metric name. You choose this. Use dots to create a hierarchy (like a folder structure) in your monitoring dashboard.
+- `:${SITE_COUNT}`: The value. The `${}` syntax inserts the variable's value into the string.
+- `|g`: The metric type. `g` stands for **gauge**, a value that goes up and down (like a count). Other types include `c` for counter (increments only) and `ms` for timing.
 
 Finally, send it to StatsD:
 
@@ -332,12 +332,12 @@ mainwpctl abilities run list-sites-v1 --json | \
 
 Each line in this pipeline does one thing:
 
-1. `mainwpctl abilities run list-sites-v1 --json` — Fetches the site data as JSON from your MainWP Dashboard.
-2. `jq '.data.data.items | length'` — Extracts the site count from the JSON.
-3. `xargs -I {} echo "mainwp.sites.total:{}|g"` — Formats the count as a StatsD metric string. `xargs` takes the input (the count) and passes it to the `echo` command. `-I {}` means "replace `{}` with the input value."
-4. `nc -u -w1 localhost 8125` — Sends the formatted string via UDP (`-u`) to localhost port 8125 with a 1-second timeout (`-w1`).
+1. `mainwpctl abilities run list-sites-v1 --json`: Fetches the site data as JSON from your MainWP Dashboard.
+2. `jq '.data.data.items | length'`: Extracts the site count from the JSON.
+3. `xargs -I {} echo "mainwp.sites.total:{}|g"`: Formats the count as a StatsD metric string. `xargs` takes the input (the count) and passes it to the `echo` command. `-I {}` means "replace `{}` with the input value."
+4. `nc -u -w1 localhost 8125`: Sends the formatted string via UDP (`-u`) to localhost port 8125 with a 1-second timeout (`-w1`).
 
-The `\` at the end of each line tells the shell that the command continues on the next line. This is purely for readability — you could write the entire command on one line.
+The `\` at the end of each line tells the shell that the command continues on the next line. This is for readability only; you could write the entire command on one line.
 
 There is no output from this command if it succeeds. The metric is sent silently to StatsD.
 
@@ -364,7 +364,7 @@ The only differences from the previous step:
 
 ## Step 7: Add Error Detection
 
-What happens when MainWP Control fails — for example, if your Dashboard is unreachable or your credentials have expired? The jq parsing will fail or produce garbage, and you will send a wrong metric value to your monitoring system without knowing.
+What happens when MainWP Control fails, for example if your Dashboard is unreachable or your credentials have expired? The jq parsing will fail or produce garbage, and you will send a wrong metric value to your monitoring system without knowing.
 
 Error handling fixes this. Here is a version that detects failure and sends a different metric to alert you:
 
@@ -382,12 +382,12 @@ fi
 
 Here is what is new:
 
-- `2>/dev/null` — Redirects error messages (called **stderr**, or "standard error") to `/dev/null`, which discards them. This keeps the captured output clean — only JSON goes into `RESULT`.
-- `EXIT=$?` — The special variable `$?` contains the **exit code** of the most recently run command. An exit code of `0` means success. Any other number means something went wrong.
-- `if [ $EXIT -ne 0 ]; then` — This is a **conditional**. `-ne` means "not equal to." So this reads: "if the exit code is not equal to zero, then..."
-- `echo "mainwp.check.failed:1|c"` — Notice the metric type is `|c` instead of `|g`. The `c` stands for **counter**. Unlike a gauge, a counter increments: each time this line runs, the count goes up by 1. This lets you set up alerts in your monitoring dashboard like "alert me if `mainwp.check.failed` increments more than 3 times in the last hour."
-- `else` — Runs the normal metric-sending code when the command succeeds.
-- `fi` — Marks the end of the `if` block.
+- `2>/dev/null`: Redirects error messages (called **stderr**, or "standard error") to `/dev/null`, which discards them. This keeps the captured output clean, so only JSON goes into `RESULT`.
+- `EXIT=$?`: The special variable `$?` contains the **exit code** of the most recently run command. An exit code of `0` means success. Any other number means something went wrong.
+- `if [ $EXIT -ne 0 ]; then`: This is a **conditional**. `-ne` means "not equal to." So this reads: "if the exit code is not equal to zero, then..."
+- `echo "mainwp.check.failed:1|c"`: Notice the metric type is `|c` instead of `|g`. The `c` stands for **counter**. Unlike a gauge, a counter increments: each time this line runs, the count goes up by 1. This lets you set up alerts in your monitoring dashboard like "alert me if `mainwp.check.failed` increments more than 3 times in the last hour."
+- `else`: Runs the normal metric-sending code when the command succeeds.
+- `fi`: Marks the end of the `if` block.
 
 ---
 
@@ -407,7 +407,7 @@ Start with this skeleton:
 
 ```bash
 #!/bin/bash
-# mainwp-metrics.sh — Send MainWP metrics to StatsD/Datadog
+# mainwp-metrics.sh - Send MainWP metrics to StatsD/Datadog
 
 STATSD_HOST="localhost"
 STATSD_PORT="8125"
@@ -419,9 +419,9 @@ send_metric() {
 
 Here is what each part does:
 
-- `#!/bin/bash` — The **shebang** line. It tells your operating system to run this script using Bash.
-- `STATSD_HOST` and `STATSD_PORT` — Configuration variables. If your StatsD agent runs on a different host or port, change these values here instead of hunting through the script.
-- `send_metric()` — A **function**. It is a reusable shortcut so you do not repeat the `nc` command every time you send a metric. When you call `send_metric "mainwp.sites.total:12|g"`, the `$1` inside the function is replaced with that string.
+- `#!/bin/bash`: The **shebang** line. It tells your operating system to run this script using Bash.
+- `STATSD_HOST` and `STATSD_PORT`: Configuration variables. If your StatsD agent runs on a different host or port, change these values here instead of hunting through the script.
+- `send_metric()`: A **function**. It is a reusable shortcut so you do not repeat the `nc` command every time you send a metric. When you call `send_metric "mainwp.sites.total:12|g"`, the `$1` inside the function is replaced with that string.
 
 ### 8b: Add site metrics
 
@@ -440,9 +440,9 @@ else
 fi
 ```
 
-Notice that we call `mainwpctl abilities run list-sites-v1` only once and extract two metrics (total count and disconnected count) from the same response. This is efficient — each API call takes a few seconds, so reusing the result saves time.
+Notice that we call `mainwpctl abilities run list-sites-v1` only once and extract two metrics (total count and disconnected count) from the same response. This is efficient: each API call takes a few seconds, so reusing the result saves time.
 
-The `$? -eq 0` check means "the exit code equals zero" — i.e., the command succeeded. `-eq` means "equal to."
+The `$? -eq 0` check means "the exit code equals zero," i.e., the command succeeded. `-eq` means "equal to."
 
 ### 8c: Add update metrics
 
@@ -465,7 +465,7 @@ Here is the complete script with all sections combined:
 
 ```bash
 #!/bin/bash
-# mainwp-metrics.sh — Send MainWP metrics to StatsD/Datadog
+# mainwp-metrics.sh - Send MainWP metrics to StatsD/Datadog
 
 STATSD_HOST="localhost"
 STATSD_PORT="8125"
@@ -564,7 +564,7 @@ Run through this checklist to confirm everything is connected:
    ./mainwp-metrics.sh
    ```
 
-   The script produces no terminal output on success — it sends metrics silently to StatsD.
+   The script produces no terminal output on success. It sends metrics silently to StatsD.
 
 2. **Check your monitoring dashboard** for the new metrics:
    - `mainwp.sites.total`
@@ -687,7 +687,7 @@ Look at the actual structure and adjust the jq expressions accordingly.
 
   The `/opt/homebrew/bin` entry is for macOS with Homebrew on Apple Silicon.
 
-- **On macOS**, you may need to grant Terminal (or your terminal app) **Full Disk Access** in **System Settings → Privacy & Security → Full Disk Access**. Without this, cron may be silently blocked from running scripts.
+- **On macOS**, you may need to grant Terminal (or your terminal app) **Full Disk Access** in **System Settings > Privacy & Security > Full Disk Access**. Without this, cron may be silently blocked from running scripts.
 
 ### Authentication errors in cron
 

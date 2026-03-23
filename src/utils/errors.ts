@@ -189,17 +189,3 @@ export function isMainWPCTLError(error: unknown): error is MainWPCTLError {
   return error instanceof MainWPCTLError;
 }
 
-/**
- * Convert any error to a MainWPCTLError
- */
-export function toMainWPCTLError(error: unknown): MainWPCTLError {
-  if (isMainWPCTLError(error)) {
-    return error;
-  }
-
-  if (error instanceof Error) {
-    return new InternalError(error.message, error);
-  }
-
-  return new InternalError(String(error));
-}

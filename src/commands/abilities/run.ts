@@ -9,6 +9,7 @@
 
 import { Args, Flags } from '@oclif/core';
 import { readFile } from 'node:fs/promises';
+import { resolve } from 'node:path';
 import { BaseCommand, commonFlags } from '../../lib/base-command.js';
 import {
   formatSuccess,
@@ -130,7 +131,9 @@ export default class AbilitiesRun extends BaseCommand {
 
     // Validate input against schema if available
     if (ability.input_schema) {
-      schemaValidator.validateOrThrow(input, ability.input_schema, ability.name);
+      const validated = schemaValidator.validateOrThrow(input, ability.input_schema, ability.name);
+      // Use coerced values (type coercion, defaults applied) from validated clone
+      input = validated.coerced ?? input;
     }
 
     // Safety validation BEFORE any network call
@@ -287,7 +290,7 @@ export default class AbilitiesRun extends BaseCommand {
       success: result.success,
     };
     if (result.error?.message) {
-      executionResult.error = result.error.message;
+      executionResult.error = getInputSanitizer().sanitizeErrorMessage(result.error.message);
     }
 
     // Log audit entry (fire-and-forget, covers both success and failure)
@@ -490,8 +493,14 @@ export default class AbilitiesRun extends BaseCommand {
   ): Promise<string> {
     // --input-file takes priority when provided
     if (inputFilePath) {
+      // SECURITY: Reject null bytes before any path processing
+      if (inputFilePath.includes('\0')) {
+        throw new InputError('Invalid file path: contains null bytes');
+      }
+      const resolvedPath = resolve(inputFilePath);
+
       try {
-        return await readFile(inputFilePath, 'utf-8');
+        return await readFile(resolvedPath, 'utf-8');
       } catch (error) {
         if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
           throw new InputError(`Input file not found: ${inputFilePath}`);

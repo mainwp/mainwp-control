@@ -5,8 +5,12 @@
  * INVARIANT: All HTTP requests MUST go through this module.
  */
 
+import { createRequire } from 'node:module';
 import { Agent } from 'undici';
 import { NetworkError, TLSError, APIError, AuthError } from '../utils/errors.js';
+
+const require = createRequire(import.meta.url);
+const { version: PKG_VERSION } = require('../../package.json') as { version: string };
 
 /**
  * Request options
@@ -218,7 +222,14 @@ export class HttpClient {
 
       let data: T;
       try {
-        data = text ? (JSON.parse(text) as T) : ({} as T);
+        // SECURITY: Strip __proto__ and constructor keys to prevent prototype
+        // pollution from untrusted API responses
+        data = text ? (JSON.parse(text, (key, value) => {
+          if (key === '__proto__' || key === 'constructor') {
+            return undefined;
+          }
+          return value;
+        }) as T) : ({} as T);
       } catch {
         // If not JSON, wrap as string
         data = text as unknown as T;
@@ -329,7 +340,7 @@ export class HttpClient {
       Authorization: this.authHeader,
       'Content-Type': 'application/json',
       Accept: 'application/json',
-      'User-Agent': 'mainwpctl/1.0.0',
+      'User-Agent': `mainwpctl/${PKG_VERSION}`,
       ...custom,
     };
   }
@@ -382,51 +393,57 @@ export class HttpClient {
     }
   }
 
+  /** Error code → typed error mappings */
+  private static readonly ERROR_CODE_MAP: Record<string, () => Error> = {
+    ECONNREFUSED: () => new NetworkError(
+      'Connection refused. Is the Dashboard running?',
+      undefined,
+      'Verify the Dashboard is running and the URL is correct'
+    ),
+    ENOTFOUND: () => new NetworkError(
+      'Host not found. Check the Dashboard URL.',
+      undefined,
+      'Check the Dashboard URL in your profile with `mainwpctl config show`'
+    ),
+    CERT_HAS_EXPIRED: () => new TLSError(
+      'SSL certificate error. Use --skip-ssl-verify if needed.',
+      undefined,
+      'Use --skip-ssl-verify flag if using self-signed certificates (not recommended for production)'
+    ),
+    UNABLE_TO_VERIFY_LEAF_SIGNATURE: () => new TLSError(
+      'SSL certificate error. Use --skip-ssl-verify if needed.',
+      undefined,
+      'Use --skip-ssl-verify flag if using self-signed certificates (not recommended for production)'
+    ),
+  };
+
+  /** Known MainWPCTL error names that should pass through unchanged */
+  private static readonly KNOWN_ERROR_NAMES = new Set([
+    'NetworkError', 'TLSError', 'APIError', 'AuthError',
+  ]);
+
   /**
    * Normalize errors to MainWPCTLError types
    */
   private normalizeError(error: unknown): Error {
-    if (error instanceof Error) {
-      // Check for abort/timeout
-      if (error.name === 'AbortError') {
-        return new NetworkError(
-          'Request timed out',
-          undefined,
-          'Increase timeout with --timeout flag or check network connection'
-        );
-      }
+    if (!(error instanceof Error)) {
+      return new NetworkError(String(error));
+    }
 
-      // Check for network errors (check both error and cause chain)
-      const errorCode = this.extractErrorCode(error);
-      if (errorCode) {
-        if (errorCode === 'ECONNREFUSED') {
-          return new NetworkError(
-            'Connection refused. Is the Dashboard running?',
-            undefined,
-            'Verify the Dashboard is running and the URL is correct'
-          );
-        }
-        if (errorCode === 'ENOTFOUND') {
-          return new NetworkError(
-            'Host not found. Check the Dashboard URL.',
-            undefined,
-            'Check the Dashboard URL in your profile with `mainwpctl config show`'
-          );
-        }
-        if (errorCode === 'CERT_HAS_EXPIRED' || errorCode === 'UNABLE_TO_VERIFY_LEAF_SIGNATURE') {
-          return new TLSError(
-            'SSL certificate error. Use --skip-ssl-verify if needed.',
-            undefined,
-            'Use --skip-ssl-verify flag if using self-signed certificates (not recommended for production)'
-          );
-        }
-      }
+    if (error.name === 'AbortError') {
+      return new NetworkError(
+        'Request timed out',
+        undefined,
+        'Increase timeout with --timeout flag or check network connection'
+      );
+    }
 
-      // Already a MainWPCTL error or known network error type
-      if (error.name === 'NetworkError' || error.name === 'TLSError' ||
-          error.name === 'APIError' || error.name === 'AuthError') {
-        return error;
-      }
+    const errorCode = this.extractErrorCode(error);
+    const mapped = errorCode ? HttpClient.ERROR_CODE_MAP[errorCode] : undefined;
+    if (mapped) return mapped();
+
+    if (HttpClient.KNOWN_ERROR_NAMES.has(error.name)) {
+      return error;
     }
 
     return new NetworkError(String(error));
@@ -457,10 +474,17 @@ export class HttpClient {
     if (Array.isArray(data)) return data.map(item => this.sanitizeErrorData(item));
 
     const sanitized: Record<string, unknown> = {};
-    const sensitiveFields = ['password', 'token', 'secret', 'authorization', 'cookie'];
+    // Substring matching catches camelCase, snake_case, and header variants
+    // (e.g., accessToken, private_key, set-cookie, refreshToken)
+    const sensitiveSubstrings = [
+      'password', 'token', 'secret', 'authorization', 'cookie',
+      'apikey', 'api_key', 'bearer', 'credential', 'private_key',
+      'signing_key',
+    ];
 
     for (const [key, value] of Object.entries(data)) {
-      if (sensitiveFields.includes(key.toLowerCase())) {
+      const keyLower = key.toLowerCase();
+      if (sensitiveSubstrings.some(s => keyLower.includes(s))) {
         sanitized[key] = '[REDACTED]';
       } else {
         sanitized[key] = this.sanitizeErrorData(value);

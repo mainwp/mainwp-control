@@ -5,6 +5,8 @@ export default defineConfig({
     globals: true,
     environment: 'node',
     include: ['src/**/*.test.ts'],
+    // Process tests spawn CLI as child process; Windows CI needs extra time
+    testTimeout: 30_000,
     coverage: {
       provider: 'v8',
       reporter: ['text', 'html'],
