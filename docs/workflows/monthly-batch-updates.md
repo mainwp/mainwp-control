@@ -9,6 +9,8 @@ This guide covers two ways to automate monthly updates for every WordPress site 
 
 Both options follow the same pattern: preview what will change, apply the updates, and verify the result. You only need to pick one, but the guide builds the concepts incrementally so Option B builds on what you learn in Option A.
 
+**Already using MainWP Control?** If `mainwpcontrol doctor` shows "System is ready", skip to [Understanding the Safety Model](#understanding-the-safety-model).
+
 ---
 
 ## What You'll Set Up
@@ -166,6 +168,8 @@ The typical flow in any script is:
 > **Note:** Some destructive abilities (like `delete-site-v1`) support `--dry-run` for a server-side preview. For updates, use `list-updates-v1` to preview what is pending before applying with `run-updates-v1`.
 
 ---
+
+> **Windows users:** Option A builds a bash script with cron, which needs macOS or Linux. If you're on Windows, skip to **Option B: GitHub Actions**. It runs on Linux in the cloud and works regardless of your local OS.
 
 ## Option A: Scripted Updates
 

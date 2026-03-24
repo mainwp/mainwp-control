@@ -16,6 +16,17 @@ By the end of this guide you will have:
 - **One-liners** that send these metrics to StatsD/Datadog
 - **A monitoring script** that combines multiple metrics, handles errors, and runs on a schedule
 
+> **Windows users:** This guide builds a bash script that uses `jq`, `nc` (netcat), and cron. None of these are available natively on Windows.
+>
+> Your best options:
+> - **Git Bash** (comes with Git for Windows) lets you run the individual `mainwpcontrol` commands, but you'll still need to install `jq` and `nc` separately.
+> - **GitHub Actions** handles everything in the cloud on Linux. See the [Monthly Batch Updates](monthly-batch-updates.md) guide (Option B) for the pattern, and adapt the metric-sending steps for your monitoring tool's API.
+> - **WSL** lets you follow this guide as-is, but cron jobs inside WSL may not fire reliably unless you configure WSL to auto-start.
+>
+> The `mainwpcontrol` commands themselves work fine on Windows. It's the surrounding tools and scheduling that differ.
+
+**Already using MainWP Control?** If `mainwpcontrol doctor` shows "System is ready", skip to [Step 4: Understand the Metrics You Can Extract](#step-4-understand-the-metrics-you-can-extract).
+
 ---
 
 ## Prerequisites
