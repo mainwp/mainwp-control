@@ -16,6 +16,24 @@ export function isInteractive(): boolean {
 }
 
 /**
+ * Ask a single question via readline, returning the raw answer.
+ * Handles interface creation and cleanup.
+ */
+function ask(promptText: string): Promise<string> {
+  const rl = readline.createInterface({
+    input: process.stdin,
+    output: process.stdout,
+  });
+
+  return new Promise((resolve) => {
+    rl.question(promptText, (answer) => {
+      rl.close();
+      resolve(answer);
+    });
+  });
+}
+
+/**
  * Prompt for yes/no confirmation
  *
  * @param question - The question to ask
@@ -26,33 +44,18 @@ export async function promptForConfirmation(
   question: string,
   defaultAnswer = false
 ): Promise<boolean> {
-  // Non-interactive mode: return default (false = safe)
   if (!isInteractive()) {
     return defaultAnswer;
   }
 
-  const rl = readline.createInterface({
-    input: process.stdin,
-    output: process.stdout,
-  });
-
   const hint = defaultAnswer ? '[Y/n]' : '[y/N]';
   const prompt = color('? ', colors.yellow) + question + ' ' + color(hint, colors.dim) + ' ';
 
-  return new Promise((resolve) => {
-    rl.question(prompt, (answer) => {
-      rl.close();
+  const answer = await ask(prompt);
+  const normalized = answer.trim().toLowerCase();
 
-      const normalized = answer.trim().toLowerCase();
-
-      if (normalized === '') {
-        resolve(defaultAnswer);
-        return;
-      }
-
-      resolve(normalized === 'y' || normalized === 'yes');
-    });
-  });
+  if (normalized === '') return defaultAnswer;
+  return normalized === 'y' || normalized === 'yes';
 }
 
 /**
@@ -70,20 +73,11 @@ export async function promptForInput(
     return defaultValue ?? '';
   }
 
-  const rl = readline.createInterface({
-    input: process.stdin,
-    output: process.stdout,
-  });
-
   const defaultHint = defaultValue ? color(` (${defaultValue})`, colors.dim) : '';
   const prompt = color('? ', colors.yellow) + question + defaultHint + ' ';
 
-  return new Promise((resolve) => {
-    rl.question(prompt, (answer) => {
-      rl.close();
-      resolve(answer.trim() || defaultValue || '');
-    });
-  });
+  const answer = await ask(prompt);
+  return answer.trim() || defaultValue || '';
 }
 
 /**

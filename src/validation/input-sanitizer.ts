@@ -268,9 +268,3 @@ export function getInputSanitizer(): InputSanitizer {
   return instance;
 }
 
-/**
- * Create a new input sanitizer (for testing)
- */
-export function createInputSanitizer(options?: SanitizeOptions): InputSanitizer {
-  return new InputSanitizer(options);
-}

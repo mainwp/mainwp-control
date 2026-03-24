@@ -2,7 +2,7 @@
 
 > Automatically check your MainWP sites every day and get a Slack alert when something goes wrong.
 
-Managing a network of WordPress sites means things can break silently — a site goes offline, a connection drops, a server becomes unreachable. This guide walks you through setting up a fully automated daily check that monitors every site connected to your MainWP Dashboard and sends you a Slack notification when something needs attention.
+Managing a network of WordPress sites means things can break silently. A site goes offline, a connection drops, a server becomes unreachable. This guide walks you through setting up a fully automated daily check that monitors every site connected to your MainWP Dashboard and sends you a Slack notification when something needs attention.
 
 You do not need any prior experience with scripting, cron jobs, or the command line. Every concept is explained before it is used.
 
@@ -14,7 +14,7 @@ By the end of this guide you will have:
 
 - **A bash script** that checks all your MainWP-connected sites for connectivity issues
 - **Slack notifications** when any site is disconnected or unreachable
-- **A cron job** that runs this check automatically every day without any manual intervention
+- **A cron job** that runs this check automatically every day
 
 ---
 
@@ -24,7 +24,7 @@ Before you begin, make sure you have the following:
 
 - **MainWP Dashboard 6 or later**, installed and running on a WordPress site. This is the central hub that manages your connected sites.
 - **WordPress admin access** to your Dashboard site. You will need to create an Application Password for CLI authentication.
-- **Node.js 20 or later** installed on the machine that will run MainWP Control. This is the machine where the daily health check will execute — it does not need to be the same server as your Dashboard.
+- **Node.js 20 or later** installed on the machine that will run MainWP Control. This is the machine where the daily health check will execute. It does not need to be the same server as your Dashboard.
 
 ---
 
@@ -33,9 +33,9 @@ Before you begin, make sure you have the following:
 Application Passwords are a WordPress feature that lets external tools (like MainWP Control) authenticate with your site without using your main login credentials. Each Application Password is a separate credential you can revoke independently.
 
 1. Log in to your WordPress Dashboard site as an administrator.
-2. Navigate to **Users → Your Profile** (or click your name in the top-right corner and select "Edit Profile").
+2. Navigate to **Users > Your Profile** (or click your name in the top-right corner and select "Edit Profile").
 3. Scroll down to the **Application Passwords** section near the bottom of the page.
-4. In the **"New Application Password Name"** field, type a name to identify this credential — for example, `mainwpctl`.
+4. In the **"New Application Password Name"** field, type a name to identify this credential, for example `mainwpctl`.
 5. Click **"Add New Application Password"**.
 6. WordPress will display a generated password. It looks something like this:
 
@@ -44,7 +44,7 @@ Application Passwords are a WordPress feature that lets external tools (like Mai
    ```
 
 7. **Copy this password immediately.** WordPress will not show it again. If you lose it, you will need to create a new one.
-8. Store it somewhere secure — a password manager, a CI/CD secret store, or a secure note. You will need it in Step 3.
+8. Store it somewhere secure: a password manager, a CI/CD secret store, or a secure note. You will need it in Step 3.
 
 ---
 
@@ -59,7 +59,7 @@ MainWP Control is a command-line tool distributed as an npm package. npm is the 
 A global install makes `mainwpctl` available as a command anywhere on your system:
 
 ```bash
-npm install -g mainwpctl
+npm install -g @mainwp/control
 ```
 
 ### Option B: Run without installing (npx)
@@ -75,7 +75,7 @@ npx mainwpctl
 If you are integrating MainWP Control into an existing project:
 
 ```bash
-npm install mainwpctl
+npm install @mainwp/control
 ```
 
 Then run it with `npx mainwpctl` from that project directory.
@@ -110,9 +110,9 @@ mainwpctl login
 
 You will be prompted for three pieces of information:
 
-1. **Dashboard URL** — The full URL of your MainWP Dashboard site (e.g., `https://manage.example.com`).
-2. **Username** — Your WordPress admin username on the Dashboard site.
-3. **Application Password** — The password you created in Step 1. Paste it in when prompted (the spaces in the password are fine — include them or omit them, both work).
+1. **Dashboard URL:** The full URL of your MainWP Dashboard site (e.g., `https://manage.example.com`).
+2. **Username:** Your WordPress admin username on the Dashboard site.
+3. **Application Password:** The password you created in Step 1. Paste it in when prompted. The spaces in the password are fine; include them or omit them, both work.
 
 After entering these, MainWP Control stores your credentials in your system's keychain when one is available (macOS Keychain, Linux secret service, or Windows Credential Manager). If the machine cannot use a keychain, keep `MAINWP_APP_PASSWORD` available in the environment for future runs.
 
@@ -204,7 +204,7 @@ If you see an error or the message does not appear, double-check that you copied
 
 A **bash script** is a plain text file containing a sequence of commands that your computer executes one after another. Instead of typing commands manually each time, you write them in a file and run that file.
 
-We will build the script step by step, adding one capability at a time. Create a new file called `mainwp-health-check.sh` in a location you will remember — your home directory or a scripts folder works well.
+We will build the script step by step, adding one capability at a time. Create a new file called `mainwp-health-check.sh` in a location you will remember. Your home directory or a scripts folder works well.
 
 You can create the file using any text editor. If you are unsure, use `nano` in your terminal:
 
@@ -218,7 +218,7 @@ Enter the following content:
 
 ```bash
 #!/bin/bash
-# mainwp-health-check.sh — Check MainWP site connectivity
+# mainwp-health-check.sh - Check MainWP site connectivity
 
 RESULT=$(mainwpctl abilities run list-sites-v1 --json 2>/dev/null)
 echo "$RESULT"
@@ -226,10 +226,10 @@ echo "$RESULT"
 
 Here is what each line does:
 
-- `#!/bin/bash` — This is called a **shebang**. It tells your operating system which program to use to run this script. `/bin/bash` is the Bash shell, which is available on macOS and virtually all Linux systems.
-- `# mainwp-health-check.sh ...` — Lines starting with `#` are **comments**. They are ignored when the script runs and exist only to help humans understand the code.
-- `RESULT=$(mainwpctl abilities run list-sites-v1 --json 2>/dev/null)` — This runs the MainWP Control command that lists all sites, captures its output into a **variable** called `RESULT`. The `--json` flag tells MainWP Control to output structured JSON data instead of human-readable text. The `2>/dev/null` part hides any warning messages so only the JSON output is captured.
-- `echo "$RESULT"` — This prints the captured output to the terminal so you can see it.
+- `#!/bin/bash`: This is called a **shebang**. It tells your operating system which program to use to run this script. `/bin/bash` is the Bash shell, which is available on macOS and virtually all Linux systems.
+- `# mainwp-health-check.sh ...`: Lines starting with `#` are **comments**. They are ignored when the script runs and exist only to help humans understand the code.
+- `RESULT=$(mainwpctl abilities run list-sites-v1 --json 2>/dev/null)`: This runs the MainWP Control command that lists all sites, captures its output into a **variable** called `RESULT`. The `--json` flag tells MainWP Control to output structured JSON data instead of human-readable text. The `2>/dev/null` part hides any warning messages so only the JSON output is captured.
+- `echo "$RESULT"`: This prints the captured output to the terminal so you can see it.
 
 Save the file (in nano: press `Ctrl+O`, then `Enter`, then `Ctrl+X` to exit).
 
@@ -279,7 +279,7 @@ Update your script to check whether the mainwpctl command succeeded:
 
 ```bash
 #!/bin/bash
-# mainwp-health-check.sh — Check MainWP site connectivity
+# mainwp-health-check.sh - Check MainWP site connectivity
 
 RESULT=$(mainwpctl abilities run list-sites-v1 --json 2>/dev/null)
 EXIT=$?
@@ -294,11 +294,11 @@ echo "Command succeeded. Site data retrieved."
 
 New lines explained:
 
-- `EXIT=$?` — Captures the exit code of the mainwpctl command into a variable called `EXIT`.
-- `if [ $EXIT -ne 0 ]; then` — This is a **conditional**. `-ne` means "not equal to". So this reads: "if the exit code is not equal to zero, then..."
-- `echo "Health check command failed with exit code $EXIT"` — Prints an error message that includes the actual exit code.
-- `exit 1` — Stops the script immediately and reports failure (exit code 1).
-- `fi` — Marks the end of the `if` block.
+- `EXIT=$?`: Captures the exit code of the mainwpctl command into a variable called `EXIT`.
+- `if [ $EXIT -ne 0 ]; then`: This is a **conditional**. `-ne` means "not equal to". So this reads: "if the exit code is not equal to zero, then..."
+- `echo "Health check command failed with exit code $EXIT"`: Prints an error message that includes the actual exit code.
+- `exit 1`: Stops the script immediately and reports failure (exit code 1).
+- `fi`: Marks the end of the `if` block.
 
 Save and run:
 
@@ -320,7 +320,7 @@ Health check command failed with exit code 3
 
 ### 5c: Parse with jq
 
-The JSON output from MainWP Control contains structured data, but we need to extract specific information from it — namely, how many sites are not connected. For this we use **jq**, a command-line tool designed for reading and filtering JSON data.
+The JSON output from MainWP Control contains structured data, but we need to extract specific information from it, namely how many sites are not connected. For this we use **jq**, a command-line tool designed for reading and filtering JSON data.
 
 **Install jq** if you do not already have it:
 
@@ -346,7 +346,7 @@ Now update the script to count disconnected sites:
 
 ```bash
 #!/bin/bash
-# mainwp-health-check.sh — Check MainWP site connectivity
+# mainwp-health-check.sh - Check MainWP site connectivity
 
 RESULT=$(mainwpctl abilities run list-sites-v1 --json 2>/dev/null)
 EXIT=$?
@@ -362,11 +362,11 @@ echo "$DISCONNECTED site(s) disconnected"
 
 The new jq line explained:
 
-- `echo "$RESULT"` — Sends the JSON output to jq.
-- `|` — This is a **pipe**. It takes the output of the command on the left and feeds it as input to the command on the right.
-- `.data.data.items[]` — Navigates into the JSON: start at the root, go into the outer `data` object, then the inner `data` object, then `items`, and iterate over every item in the array.
-- `select(.status != "connected")` — Keeps only the sites whose `status` field is not `"connected"`.
-- `[...] | length` — Wraps the filtered results in an array and counts how many items are in it.
+- `echo "$RESULT"`: Sends the JSON output to jq.
+- `|`: This is a **pipe**. It takes the output of the command on the left and feeds it as input to the command on the right.
+- `.data.data.items[]`: Navigates into the JSON. Start at the root, go into the outer `data` object, then the inner `data` object, then `items`, and iterate over every item in the array.
+- `select(.status != "connected")`: Keeps only the sites whose `status` field is not `"connected"`.
+- `[...] | length`: Wraps the filtered results in an array and counts how many items are in it.
 - The final result is a single number: the count of disconnected sites.
 
 Save and run:
@@ -389,11 +389,11 @@ If two sites are disconnected:
 
 ### 5d: Add Slack alerting
 
-Now we bring it all together — when the health check fails or finds disconnected sites, the script sends an alert to Slack. Update your script to the final version:
+Now we bring it all together. When the health check fails or finds disconnected sites, the script sends an alert to Slack. Update your script to the final version:
 
 ```bash
 #!/bin/bash
-# mainwp-health-check.sh — Daily MainWP site connectivity check
+# mainwp-health-check.sh - Daily MainWP site connectivity check
 # Sends a Slack alert if any sites are disconnected or if the check itself fails.
 
 SLACK_WEBHOOK_URL="https://hooks.slack.com/services/YOUR/WEBHOOK/URL"
@@ -424,11 +424,11 @@ fi
 
 What changed:
 
-- `SLACK_WEBHOOK_URL="..."` — Stores the webhook URL in a variable so it is easy to find and change.
+- `SLACK_WEBHOOK_URL="..."`: Stores the webhook URL in a variable so it is easy to find and change.
 - The first `curl` block runs when the MainWP Control command itself fails (network issue, auth failure, etc.). It sends a Slack message with the exit code and then stops the script.
 - The second `curl` block runs when disconnected sites are detected. `-gt 0` means "greater than zero". If the disconnected count is more than zero, it sends an alert.
-- `curl -s` — The `-s` flag means "silent" — it suppresses progress output from curl so it does not clutter logs.
-- The `\` at the end of a line means the command continues on the next line. This is just for readability.
+- `curl -s`: The `-s` flag means "silent." It suppresses progress output from curl so it does not clutter logs.
+- The `\` at the end of a line means the command continues on the next line. This is for readability.
 - If all sites are connected, the script finishes without sending any Slack message. No news is good news.
 
 ---
@@ -475,13 +475,13 @@ to:
 if [ "$DISCONNECTED" -eq 0 ]; then
 ```
 
-This inverts the condition — it alerts when zero sites are disconnected (which is the normal state). Run the script, confirm the Slack message arrives, then change the condition back to `-gt 0`.
+This inverts the condition: it alerts when zero sites are disconnected (which is the normal state). Run the script, confirm the Slack message arrives, then change the condition back to `-gt 0`.
 
 ---
 
 ## Step 8: Schedule with Cron
 
-**Cron** is a built-in job scheduler available on macOS and Linux. It lets you run commands automatically on a schedule — every minute, every hour, every day, or on any pattern you define. Each scheduled task is called a **cron job**.
+**Cron** is a built-in job scheduler available on macOS and Linux. It runs commands automatically on a schedule: every minute, every hour, every day, or on any pattern you define. Each scheduled task is called a **cron job**.
 
 ### Open the crontab
 
@@ -503,13 +503,13 @@ minute  hour  day-of-month  month  day-of-week  command
 
 | Field         | Values  | Meaning                          |
 |---------------|---------|----------------------------------|
-| minute        | 0–59    | Minute of the hour               |
-| hour          | 0–23    | Hour of the day (24-hour format) |
-| day-of-month  | 1–31    | Day of the month                 |
-| month         | 1–12    | Month of the year                |
-| day-of-week   | 0–6     | Day of the week (0 = Sunday)     |
+| minute        | 0-59    | Minute of the hour               |
+| hour          | 0-23    | Hour of the day (24-hour format) |
+| day-of-month  | 1-31    | Day of the month                 |
+| month         | 1-12    | Month of the year                |
+| day-of-week   | 0-6     | Day of the week (0 = Sunday)     |
 
-An asterisk (`*`) means "every" — so `* * * * *` means every minute of every hour of every day.
+An asterisk (`*`) means "every," so `* * * * *` means every minute of every hour of every day.
 
 ### Add the daily job
 
@@ -531,7 +531,7 @@ For example, if the script is in your home directory, the line might be:
 0 7 * * * /Users/yourname/mainwp-health-check.sh
 ```
 
-**Note on PATH:** Cron runs in a minimal environment — it does not load your shell profile, so commands like `mainwpctl` or `jq` may not be found by their short names. If you encounter issues, add a `PATH` line at the top of your crontab:
+**Note on PATH:** Cron runs in a minimal environment. It does not load your shell profile, so commands like `mainwpctl` or `jq` may not be found by their short names. If you encounter issues, add a `PATH` line at the top of your crontab:
 
 ```
 PATH=/usr/local/bin:/usr/bin:/bin:/opt/homebrew/bin
@@ -609,8 +609,8 @@ jq is not installed on your system. Install it:
 
   You should see `ok` in the terminal and a message in Slack.
 
-- **Check the channel** — each webhook is tied to a specific Slack channel. Make sure you are looking in the right one.
-- **Ensure the Slack app is still active** — if someone disabled or deleted the app, the webhook will stop working. Check your Slack app settings at [https://api.slack.com/apps](https://api.slack.com/apps).
+- **Check the channel.** Each webhook is tied to a specific Slack channel. Make sure you are looking in the right one.
+- **Ensure the Slack app is still active.** If someone disabled or deleted the app, the webhook will stop working. Check your Slack app settings at [https://api.slack.com/apps](https://api.slack.com/apps).
 
 ### Cron job not running
 
@@ -618,9 +618,9 @@ jq is not installed on your system. Install it:
   - On Linux: `grep CRON /var/log/syslog`
   - On macOS: `log show --predicate 'process == "cron"' --last 1h`
 
-- **Make sure you used full paths** — both for the script and for any commands inside it (mainwpctl, jq, curl). Cron does not load your shell profile, so it may not find programs by their short names. Adding a `PATH` line to the top of your crontab (as shown in Step 8) usually resolves this.
+- **Make sure you used full paths** for both the script and any commands inside it (mainwpctl, jq, curl). Cron does not load your shell profile, so it may not find programs by their short names. Adding a `PATH` line to the top of your crontab (as shown in Step 8) usually resolves this.
 
-- **On macOS**, you may need to grant Terminal (or your terminal app) **Full Disk Access** in **System Settings → Privacy & Security → Full Disk Access**. Without this, cron may be silently blocked from running scripts.
+- **On macOS**, you may need to grant Terminal (or your terminal app) **Full Disk Access** in **System Settings > Privacy & Security > Full Disk Access**. Without this, cron may be silently blocked from running scripts.
 
 ### Permission denied when running the script
 

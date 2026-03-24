@@ -402,6 +402,60 @@ describe('E2E: Login → Abilities Flow', () => {
   });
 
   // ==========================================================================
+  // Keychain Timeout Tests
+  // ==========================================================================
+
+  describe('Keychain Timeout Handling', () => {
+    beforeEach(() => {
+      vi.clearAllMocks();
+      vi.useFakeTimers();
+    });
+
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    it('set() returns failure when keytar hangs', async () => {
+      // Simulate a keytar call that never resolves (blocked on system dialog)
+      mockKeytarSetPassword.mockReturnValue(new Promise(() => {}));
+
+      const testKeychain = new Keychain();
+      const resultPromise = testKeychain.set('test-profile', 'password');
+
+      // Advance past the 5s timeout
+      await vi.advanceTimersByTimeAsync(5_000);
+
+      const result = await resultPromise;
+      expect(result.stored).toBe(false);
+      expect(result.error).toContain('timed out');
+    });
+
+    it('get() falls back to env var when keytar hangs', async () => {
+      setEnvVar('MAINWP_APP_PASSWORD', 'env-password');
+      mockKeytarGetPassword.mockReturnValue(new Promise(() => {}));
+
+      const testKeychain = new Keychain();
+      const resultPromise = testKeychain.get('test-profile');
+
+      await vi.advanceTimersByTimeAsync(5_000);
+
+      const result = await resultPromise;
+      expect(result).toBe('env-password');
+    });
+
+    it('delete() completes silently when keytar hangs', async () => {
+      mockKeytarDeletePassword.mockReturnValue(new Promise(() => {}));
+
+      const testKeychain = new Keychain();
+      const resultPromise = testKeychain.delete('test-profile');
+
+      await vi.advanceTimersByTimeAsync(5_000);
+
+      await expect(resultPromise).resolves.toBeUndefined();
+    });
+  });
+
+  // ==========================================================================
   // Profile Management Tests
   // ==========================================================================
 

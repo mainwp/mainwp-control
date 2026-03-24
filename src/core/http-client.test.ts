@@ -661,6 +661,120 @@ describe('HttpClient buildUrl Origin Validation', () => {
   });
 });
 
+describe('HttpClient Prototype Pollution Protection', () => {
+  const baseConfig: HttpClientConfig = {
+    baseUrl: 'https://dashboard.example.com',
+    username: 'admin',
+    appPassword: 'test-password',
+  };
+
+  beforeEach(() => {
+    mockFetch.mockReset();
+  });
+
+  it('strips __proto__ keys from API response JSON', async () => {
+    mockFetch.mockResolvedValueOnce({
+      status: 200,
+      ok: true,
+      statusText: 'OK',
+      headers: new Headers({ 'content-type': 'application/json' }),
+      text: () => Promise.resolve('{"name":"test","__proto__":{"isAdmin":true}}'),
+    });
+
+    const client = createHttpClient(baseConfig);
+    const response = await client.get('/test');
+    const data = response.data as Record<string, unknown>;
+
+    expect(data.name).toBe('test');
+    // __proto__ key should be stripped
+    expect(data).not.toHaveProperty('__proto__');
+    // Prototype should not be polluted
+    expect(({} as any).isAdmin).toBeUndefined();
+  });
+
+  it('strips constructor keys from API response JSON', async () => {
+    mockFetch.mockResolvedValueOnce({
+      status: 200,
+      ok: true,
+      statusText: 'OK',
+      headers: new Headers({ 'content-type': 'application/json' }),
+      text: () => Promise.resolve('{"name":"test","constructor":{"prototype":{"polluted":true}}}'),
+    });
+
+    const client = createHttpClient(baseConfig);
+    const response = await client.get('/test');
+    const data = response.data as Record<string, unknown>;
+
+    expect(data.name).toBe('test');
+    expect(data).not.toHaveProperty('constructor');
+  });
+});
+
+describe('HttpClient sanitizeErrorData — Extended Sensitive Fields', () => {
+  const baseConfig: HttpClientConfig = {
+    baseUrl: 'https://dashboard.example.com',
+    username: 'admin',
+    appPassword: 'test-password',
+  };
+
+  beforeEach(() => {
+    mockFetch.mockReset();
+  });
+
+  async function triggerErrorWithData(data: unknown): Promise<Error> {
+    mockFetch.mockResolvedValueOnce({
+      status: 500,
+      ok: false,
+      statusText: 'Internal Server Error',
+      headers: new Headers({ 'content-type': 'application/json' }),
+      text: () => Promise.resolve(JSON.stringify(data)),
+    });
+
+    const client = createHttpClient(baseConfig);
+    try {
+      await client.get('/test');
+      throw new Error('Expected error to be thrown');
+    } catch (error) {
+      return error as Error;
+    }
+  }
+
+  it('redacts appPassword and apiKey fields', async () => {
+    const error = await triggerErrorWithData({
+      appPassword: 'secret-app-pw',
+      apiKey: 'sk-1234',
+      message: 'visible',
+    });
+
+    const errorData = (error as any).details;
+    expect(errorData.appPassword).toBe('[REDACTED]');
+    expect(errorData.apiKey).toBe('[REDACTED]');
+    expect(errorData.message).toBe('visible');
+  });
+
+  it('redacts api_key and app_password fields', async () => {
+    const error = await triggerErrorWithData({
+      api_key: 'key-5678',
+      app_password: 'pw-9999',
+    });
+
+    const errorData = (error as any).details;
+    expect(errorData.api_key).toBe('[REDACTED]');
+    expect(errorData.app_password).toBe('[REDACTED]');
+  });
+
+  it('redacts bearer and credential fields', async () => {
+    const error = await triggerErrorWithData({
+      bearer: 'tok-abc',
+      credential: 'cred-xyz',
+    });
+
+    const errorData = (error as any).details;
+    expect(errorData.bearer).toBe('[REDACTED]');
+    expect(errorData.credential).toBe('[REDACTED]');
+  });
+});
+
 describe('HttpClient Manual Redirect Mode', () => {
   beforeEach(() => {
     mockFetch.mockReset();

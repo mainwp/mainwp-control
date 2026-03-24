@@ -1,5 +1,7 @@
 #!/usr/bin/env node
 
+import { drainAndExit } from './_exit.js';
 import { execute } from '@oclif/core';
 
 await execute({ dir: import.meta.url });
+await drainAndExit();

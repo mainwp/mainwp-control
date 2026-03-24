@@ -16,6 +16,7 @@ import {
   formatProgressBar,
   formatElapsed,
 } from '../../output/formatter.js';
+import { safeString } from '../../utils/terminal-sanitizer.js';
 import {
   type BatchManager,
   type JobStatus,
@@ -301,10 +302,10 @@ export default class JobsWatch extends BaseCommand {
       for (const item of preview) {
         if (typeof item === 'object' && item !== null) {
           const obj = item as Record<string, unknown>;
-          const label = obj['name'] ?? obj['url'] ?? obj['id'] ?? JSON.stringify(obj);
+          const label = safeString(obj['name'] ?? obj['url'] ?? obj['id'] ?? JSON.stringify(obj));
           lines.push(`  - ${label}`);
         } else {
-          lines.push(`  - ${item}`);
+          lines.push(`  - ${safeString(item)}`);
         }
       }
 
@@ -319,10 +320,10 @@ export default class JobsWatch extends BaseCommand {
       lines.push(formatHeading('Errors:'));
 
       for (const error of status.errors) {
-        const prefix = error.code ? `[${error.code}] ` : '';
-        lines.push(formatWarning(`  ${prefix}${error.message}`));
+        const prefix = error.code ? `[${safeString(error.code)}] ` : '';
+        lines.push(formatWarning(`  ${prefix}${safeString(error.message)}`));
         if (error.item) {
-          lines.push(`    Item: ${JSON.stringify(error.item)}`);
+          lines.push(`    Item: ${safeString(JSON.stringify(error.item))}`);
         }
       }
     }

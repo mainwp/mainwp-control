@@ -5,6 +5,8 @@
  * combined abort signals, JSON POST, error handling.
  */
 
+import { stripControlChars } from '../../utils/terminal-sanitizer.js';
+
 export async function makeProviderRequest<T>(options: {
   url: string;
   headers: Record<string, string>;
@@ -29,8 +31,12 @@ export async function makeProviderRequest<T>(options: {
     });
 
     if (!response.ok) {
-      const error = await response.text();
-      throw new Error(`${options.providerName} API error: ${response.status} ${error}`);
+      const errorText = await response.text();
+      // SECURITY: Strip control characters and truncate to prevent exfiltration
+      // of large payloads from untrusted API error bodies
+      const sanitized = stripControlChars(errorText);
+      const truncated = sanitized.length > 500 ? sanitized.slice(0, 500) + '...' : sanitized;
+      throw new Error(`${options.providerName} API error: ${response.status} ${truncated}`);
     }
 
     return (await response.json()) as T;

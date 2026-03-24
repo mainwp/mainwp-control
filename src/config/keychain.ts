@@ -22,6 +22,26 @@ const SERVICE_NAME = 'mainwpctl';
 const ENV_VAR = 'MAINWP_APP_PASSWORD';
 
 /**
+ * Timeout for keytar operations (ms). If macOS shows a blocking keychain
+ * dialog, this prevents the CLI from hanging indefinitely.
+ */
+const KEYTAR_TIMEOUT_MS = 5_000;
+
+function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(
+      () => reject(new Error('Keychain access timed out — the system keychain may be locked or unavailable')),
+      ms,
+    );
+    timer.unref();
+    promise.then(
+      (val) => { clearTimeout(timer); resolve(val); },
+      (err) => { clearTimeout(timer); reject(err); },
+    );
+  });
+}
+
+/**
  * Keytar module (lazy loaded)
  */
 let keytar: typeof import('keytar') | null = null;
@@ -39,8 +59,26 @@ async function loadKeytar(): Promise<typeof import('keytar') | null> {
     return null;
   }
 
+  // Allow explicit opt-out for CI/containers where native keychain is unavailable
+  if (process.env['MAINWPCTL_NO_KEYTAR'] === '1') {
+    keytarAvailable = false;
+    return null;
+  }
+
   try {
-    keytar = await import('keytar');
+    const mod = await import('keytar');
+    // CJS/ESM interop: on newer Node versions, CJS exports are nested under .default.
+    // Check for the expected API on mod first; only unwrap .default if needed.
+    keytar = typeof mod.setPassword === 'function'
+      ? mod
+      : typeof (mod as any).default?.setPassword === 'function'
+        ? (mod as any).default
+        : undefined;
+
+    if (!keytar) {
+      keytarAvailable = false;
+      return null;
+    }
     keytarAvailable = true;
     return keytar;
   } catch {
@@ -83,7 +121,7 @@ export class Keychain {
 
     if (kt) {
       try {
-        await kt.setPassword(SERVICE_NAME, profileName, password);
+        await withTimeout(kt.setPassword(SERVICE_NAME, profileName, password), KEYTAR_TIMEOUT_MS);
         return { stored: true, location: 'keychain' };
       } catch (error) {
         const errorMessage = (error as Error).message;
@@ -111,7 +149,7 @@ export class Keychain {
 
     if (kt) {
       try {
-        const password = await kt.getPassword(SERVICE_NAME, profileName);
+        const password = await withTimeout(kt.getPassword(SERVICE_NAME, profileName), KEYTAR_TIMEOUT_MS);
         if (password) {
           return password;
         }
@@ -137,9 +175,11 @@ export class Keychain {
 
     if (kt) {
       try {
-        await kt.deletePassword(SERVICE_NAME, profileName);
-      } catch {
-        // Ignore delete failures
+        await withTimeout(kt.deletePassword(SERVICE_NAME, profileName), KEYTAR_TIMEOUT_MS);
+      } catch (error) {
+        if (process.stderr.isTTY) {
+          console.error(`Warning: Failed to remove credentials from keychain: ${(error as Error).message}`);
+        }
       }
     }
   }

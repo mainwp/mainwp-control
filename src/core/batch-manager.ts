@@ -244,49 +244,41 @@ export class BatchManager {
   }
 
   /**
-   * Normalize API response to JobStatus
+   * Normalize API response to JobStatus, unwrapping success envelope if present
    */
   private normalizeJobStatus(data: unknown): JobStatus {
-    // Handle the response format from get-batch-job-status-v1
     if (typeof data !== 'object' || data === null) {
       throw new APIError('INVALID_RESPONSE', 'Invalid job status response');
     }
 
     const response = data as Record<string, unknown>;
 
-    // Check for success envelope
+    // Unwrap success envelope if present
+    let fields = response;
     if ('success' in response && 'data' in response) {
-      const innerData = response['data'] as Record<string, unknown>;
-      return this.extractJobStatus(innerData);
+      const inner = response['data'];
+      if (typeof inner !== 'object' || inner === null || Array.isArray(inner)) {
+        throw new APIError('INVALID_RESPONSE', 'Invalid job status data in success envelope');
+      }
+      fields = inner as Record<string, unknown>;
     }
 
-    return this.extractJobStatus(response);
-  }
-
-  /**
-   * Extract job status from response data
-   */
-  private extractJobStatus(data: Record<string, unknown>): JobStatus {
-    const id = String(data['job_id'] ?? data['id'] ?? '');
-
-    // Validate that we have a job ID
+    const id = String(fields['job_id'] ?? fields['id'] ?? '');
     if (!id) {
       throw new APIError('INVALID_RESPONSE', 'Job status response missing job ID');
     }
 
-    const status: JobStatus = {
+    return {
       id,
-      status: this.parseJobStatus(data['status']),
-      progress: typeof data['progress'] === 'number' ? data['progress'] : undefined,
-      total: typeof data['total'] === 'number' ? data['total'] : undefined,
-      processed: typeof data['processed'] === 'number' ? data['processed'] : undefined,
-      results: Array.isArray(data['results']) ? data['results'] : undefined,
-      errors: this.parseJobErrors(data['errors']),
-      created_at: typeof data['created_at'] === 'string' ? data['created_at'] : undefined,
-      completed_at: typeof data['completed_at'] === 'string' ? data['completed_at'] : undefined,
+      status: this.parseJobStatus(fields['status']),
+      progress: typeof fields['progress'] === 'number' ? fields['progress'] : undefined,
+      total: typeof fields['total'] === 'number' ? fields['total'] : undefined,
+      processed: typeof fields['processed'] === 'number' ? fields['processed'] : undefined,
+      results: Array.isArray(fields['results']) ? fields['results'] : undefined,
+      errors: this.parseJobErrors(fields['errors']),
+      created_at: typeof fields['created_at'] === 'string' ? fields['created_at'] : undefined,
+      completed_at: typeof fields['completed_at'] === 'string' ? fields['completed_at'] : undefined,
     };
-
-    return status;
   }
 
   /**

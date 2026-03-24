@@ -25,18 +25,3 @@ export const ExitCode = {
 } as const;
 
 export type ExitCodeValue = (typeof ExitCode)[keyof typeof ExitCode];
-
-/**
- * Get human-readable name for an exit code
- */
-export function exitCodeName(code: ExitCodeValue): string {
-  const names: Record<ExitCodeValue, string> = {
-    [ExitCode.SUCCESS]: 'SUCCESS',
-    [ExitCode.INPUT_ERROR]: 'INPUT_ERROR',
-    [ExitCode.AUTH_ERROR]: 'AUTH_ERROR',
-    [ExitCode.NETWORK_ERROR]: 'NETWORK_ERROR',
-    [ExitCode.API_ERROR]: 'API_ERROR',
-    [ExitCode.INTERNAL_ERROR]: 'INTERNAL_ERROR',
-  };
-  return names[code] ?? 'UNKNOWN';
-}

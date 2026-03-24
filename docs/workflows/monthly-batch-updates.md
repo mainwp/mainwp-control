@@ -1,11 +1,11 @@
 # Monthly Batch Updates
 
-> Safely preview and apply WordPress core, plugin, and theme updates across all your MainWP sites — either from a script or automatically via GitHub Actions.
+> Safely preview and apply WordPress core, plugin, and theme updates across all your MainWP sites, either from a script or through GitHub Actions.
 
-This guide walks you through two ways to automate monthly updates for every WordPress site connected to your MainWP Dashboard:
+This guide covers two ways to automate monthly updates for every WordPress site connected to your MainWP Dashboard:
 
-- **Option A** — A bash script you run manually or schedule with cron
-- **Option B** — A GitHub Actions workflow that runs automatically on the 1st of each month
+- **Option A:** A bash script you run manually or schedule with cron
+- **Option B:** A GitHub Actions workflow that runs automatically on the 1st of each month
 
 Both options follow the same pattern: preview what will change, apply the updates, and verify the result. You only need to pick one, but the guide builds the concepts incrementally so Option B builds on what you learn in Option A.
 
@@ -32,12 +32,12 @@ Before starting, make sure you have:
 
 ## Step 1: Create an Application Password
 
-MainWP Control authenticates with your MainWP Dashboard using a WordPress Application Password. This is a built-in WordPress feature (no extra plugins needed) that generates a separate password specifically for API access, so you never expose your main login credentials.
+MainWP Control authenticates with your MainWP Dashboard using a WordPress Application Password. This is a built-in WordPress feature (no extra plugins needed) that generates a separate password for API access, so you never expose your main login credentials.
 
 To create one:
 
 1. Log in to the WordPress site where MainWP Dashboard is installed.
-2. Go to **Users** in the left sidebar, then click on your own user profile (or go to **Users → Your Profile**).
+2. Go to **Users** in the left sidebar, then click on your own user profile (or go to **Users > Your Profile**).
 3. Scroll down to the **Application Passwords** section near the bottom of the page.
 4. In the **New Application Password Name** field, type a descriptive name like `mainwpctl`.
 5. Click **Add New Application Password**.
@@ -48,7 +48,7 @@ To create one:
    ```
 
 7. **Copy this password immediately.** WordPress will not show it again. If you lose it, you will need to revoke it and create a new one.
-8. Store the password securely — in a password manager, as a CI/CD secret, or in an encrypted note. Do not paste it into files that are committed to version control.
+8. Store the password securely: in a password manager, as a CI/CD secret, or in an encrypted note. Do not paste it into files that are committed to version control.
 
 ---
 
@@ -57,7 +57,7 @@ To create one:
 Install MainWP Control globally using npm (the Node.js package manager that comes with Node.js):
 
 ```bash
-npm install -g mainwpctl
+npm install -g @mainwp/control
 ```
 
 This makes the `mainwpctl` command available anywhere on your system.
@@ -98,9 +98,9 @@ mainwpctl login
 
 MainWP Control will prompt you for three pieces of information:
 
-1. **Dashboard URL** — The full URL of your MainWP Dashboard site (e.g., `https://dashboard.example.com`). Include the `https://` prefix.
-2. **Username** — Your WordPress admin username on that site.
-3. **Application Password** — The password you created in Step 1.
+1. **Dashboard URL:** The full URL of your MainWP Dashboard site (e.g., `https://dashboard.example.com`). Include the `https://` prefix.
+2. **Username:** Your WordPress admin username on that site.
+3. **Application Password:** The password you created in Step 1.
 
 After entering your credentials, MainWP Control stores them in a local profile so you do not need to re-enter them each time. If the machine cannot use the OS keychain, keep `MAINWP_APP_PASSWORD` available in the environment for future runs.
 
@@ -146,15 +146,15 @@ Before writing any scripts, it is important to understand how MainWP Control pre
 
 MainWP Control enforces this through four flags:
 
-- **`--dry-run`** — Asks MainWP to show you what *would* happen, without making any changes. Think of it as a preview. Your sites are not touched. You can run `--dry-run` as many times as you want with zero risk.
+- **`--dry-run`:** Asks MainWP to show you what *would* happen, without making any changes. Think of it as a preview. Your sites are not touched. You can run `--dry-run` as many times as you want with zero risk.
 
-- **`--confirm`** — Tells MainWP to go ahead and execute the operation for real. This is required for any operation that changes something (applying updates, deleting plugins, etc.). Without `--confirm`, the command will only show you what it would do.
+- **`--confirm`:** Tells MainWP to go ahead and execute the operation for real. This is required for any operation that changes something (applying updates, deleting plugins, etc.). Without `--confirm`, the command will only show you what it would do.
 
-- **`--force`** — Skips the interactive "Are you sure?" prompt that MainWP Control normally shows before destructive operations. This is necessary in scripts and CI/CD pipelines where there is no human to type "yes." It does not bypass the preview/confirm model — it only skips the interactive prompt.
+- **`--force`:** Skips the interactive "Are you sure?" prompt that MainWP Control normally shows before destructive operations. This is necessary in scripts and CI/CD pipelines where there is no human to type "yes." It does not bypass the preview/confirm model. It only skips the interactive prompt.
 
-- **`--wait`** — Keeps the command running until the batch operation finishes on the server. Without this flag, the command returns immediately with a job ID, and the updates continue in the background. With `--wait`, the command blocks until all updates are complete and then returns the final result.
+- **`--wait`:** Keeps the command running until the batch operation finishes on the server. Without this flag, the command returns immediately with a job ID, and the updates continue in the background. With `--wait`, the command blocks until all updates are complete and then returns the final result.
 
-**Important:** `--dry-run` and `--confirm` are mutually exclusive. You cannot preview and execute at the same time. If you pass both, MainWP Control will return an error. This is intentional — it forces you to make the preview and execution separate, deliberate steps.
+**Important:** `--dry-run` and `--confirm` are mutually exclusive. You cannot preview and execute at the same time. If you pass both, MainWP Control will return an error. This is intentional. It forces you to make the preview and execution separate, deliberate steps.
 
 The typical flow in any script is:
 
@@ -181,9 +181,9 @@ mainwpctl abilities run list-updates-v1 --json
 
 Breaking this command down:
 
-- `abilities run` — Tells MainWP Control to execute a MainWP ability (an action the API can perform).
-- `list-updates-v1` — The specific ability to run. This one lists all pending updates across your network.
-- `--json` — Outputs the result as JSON instead of a human-readable table. This makes the output easy to parse in scripts.
+- `abilities run`: Tells MainWP Control to execute a MainWP ability (an action the API can perform).
+- `list-updates-v1`: The specific ability to run. This one lists all pending updates across your network.
+- `--json`: Outputs the result as JSON instead of a human-readable table. This makes the output easy to parse in scripts.
 
 Expected output (abbreviated):
 
@@ -223,14 +223,14 @@ The `data.data.total` field tells you how many updates are pending (the inner `d
 
 ### Step 5: Preview Pending Updates
 
-Now check what updates are available. `list-updates-v1` is a read-only ability — it shows you what is pending without changing anything:
+Now check what updates are available. `list-updates-v1` is a read-only ability. It shows you what is pending without changing anything:
 
 ```bash
 PREVIEW=$(mainwpctl abilities run list-updates-v1 --json)
 echo "$PREVIEW"
 ```
 
-The first line runs the command and stores its output in a variable called `PREVIEW`. A variable in bash is a named container that holds a value — here it holds the JSON output so you can use it again without re-running the command. The second line prints the stored output to your terminal.
+The first line runs the command and stores its output in a variable called `PREVIEW`. A variable in bash is a named container that holds a value. Here it holds the JSON output so you can use it again without re-running the command. The second line prints the stored output to your terminal.
 
 Expected output (abbreviated):
 
@@ -266,9 +266,9 @@ Expected output (abbreviated):
 }
 ```
 
-This tells you exactly what updates are pending — which sites, which plugins/themes/core versions, and what version they will move to. Nothing has been changed.
+This tells you exactly what updates are pending: which sites, which plugins/themes/core versions, and what version they will move to. Nothing has been changed.
 
-Next, extract just the update count using `jq`. `jq` is a command-line tool for reading and manipulating JSON data. If you do not have it installed, you can install it with `brew install jq` on macOS or `sudo apt-get install jq` on Ubuntu/Debian:
+Next, extract the update count using `jq`. `jq` is a command-line tool for reading and manipulating JSON data. If you do not have it installed, you can install it with `brew install jq` on macOS or `sudo apt-get install jq` on Ubuntu/Debian:
 
 ```bash
 PREVIEW=$(mainwpctl abilities run list-updates-v1 --json)
@@ -276,7 +276,7 @@ UPDATE_COUNT=$(echo "$PREVIEW" | jq '.data.data.total // 0')
 echo "$UPDATE_COUNT updates pending"
 ```
 
-The `jq '.data.data.total // 0'` part reads the `total` field from inside the inner `data` object in the JSON. The `// 0` means "if that field does not exist or is null, use 0 instead" — this prevents the script from breaking if the response format is unexpected.
+The `jq '.data.data.total // 0'` part reads the `total` field from inside the inner `data` object in the JSON. The `// 0` means "if that field does not exist or is null, use 0 instead." This prevents the script from breaking if the response format is unexpected.
 
 Expected output:
 
@@ -294,10 +294,10 @@ mainwpctl abilities run run-updates-v1 --confirm --force --wait --json
 
 Here is what each flag does in this context:
 
-- `--confirm` — "Yes, apply these updates for real." This is the flag that transitions from preview to execution.
-- `--force` — Skip the interactive "Are you sure?" prompt. In a script, there is no human to respond to the prompt, so this flag is required.
-- `--wait` — Block and wait until all updates have finished applying across all sites. Without this, the command would return immediately with a job ID while updates continue in the background. With `--wait`, the command stays running and gives you the final result when everything is done.
-- `--json` — Output the result as JSON for easy parsing.
+- `--confirm`: "Yes, apply these updates for real." This is the flag that transitions from preview to execution.
+- `--force`: Skip the interactive "Are you sure?" prompt. In a script, there is no human to respond to the prompt, so this flag is required.
+- `--wait`: Block and wait until all updates have finished applying across all sites. Without this, the command would return immediately with a job ID while updates continue in the background. With `--wait`, the command stays running and gives you the final result when everything is done.
+- `--json`: Output the result as JSON for easy parsing.
 
 Expected output (abbreviated):
 
@@ -345,7 +345,7 @@ Expected output:
 0 updates remaining after run
 ```
 
-If the number is not zero, it could mean some updates failed, or new updates appeared while the previous batch was running. This is not necessarily a problem — the Troubleshooting section at the end covers this scenario.
+If the number is not zero, some updates may have failed, or new updates appeared while the previous batch was running. This is not necessarily a problem. The Troubleshooting section at the end covers this scenario.
 
 ### Complete Script
 
@@ -383,10 +383,10 @@ echo "$REMAINING updates remaining after run"
 
 The script follows the same four-step flow you built piece by piece:
 
-1. **Preview** — List pending updates to see what would change
-2. **Check count** — Extract the number of pending updates; exit early if there are none
-3. **Apply** — Run with `--confirm --force --wait` to apply all updates and wait for completion
-4. **Verify** — List updates again to confirm everything was applied
+1. **Preview:** List pending updates to see what would change
+2. **Check count:** Extract the number of pending updates; exit early if there are none
+3. **Apply:** Run with `--confirm --force --wait` to apply all updates and wait for completion
+4. **Verify:** List updates again to confirm everything was applied
 
 Make the script executable (this tells your operating system the file can be run as a program):
 
@@ -419,7 +419,7 @@ Nothing to update
 
 ### Scheduling with Cron
 
-To run this script automatically on the 1st of every month, you can use cron — a built-in scheduling tool on macOS and Linux. Open your cron configuration:
+To run this script automatically on the 1st of every month, you can use cron, a built-in scheduling tool on macOS and Linux. Open your cron configuration:
 
 ```bash
 crontab -e
@@ -474,7 +474,7 @@ GitHub secrets are encrypted values stored in your repository settings. They are
    | `DASHBOARD_USER` | Your WordPress admin username | `admin` |
    | `MAINWP_APP_PASSWORD` | The Application Password from Step 1 | `AbCD 1234 efGH 5678 ijKL 9012` |
 
-For each one, type the name in the **Name** field, paste the value in the **Secret** field, and click **Add secret**. Once saved, the value is encrypted and cannot be viewed again — only updated or deleted.
+For each one, type the name in the **Name** field, paste the value in the **Secret** field, and click **Add secret**. Once saved, the value is encrypted and cannot be viewed again, only updated or deleted.
 
 ### Step 9: Create the Workflow File
 
@@ -493,9 +493,9 @@ on:
   workflow_dispatch:
 ```
 
-- `name` — A human-readable name that appears in the GitHub Actions tab.
-- `schedule` — Runs the workflow on a cron schedule. The cron syntax `'0 6 1 * *'` means "6:00 AM UTC on the 1st of each month" — the same schedule used in the bash cron example.
-- `workflow_dispatch` — Adds a "Run workflow" button in the GitHub Actions tab so you can trigger it manually at any time. This is invaluable for testing.
+- `name`: A human-readable name that appears in the GitHub Actions tab.
+- `schedule`: Runs the workflow on a cron schedule. The cron syntax `'0 6 1 * *'` means "6:00 AM UTC on the 1st of each month," the same schedule used in the bash cron example.
+- `workflow_dispatch`: Adds a "Run workflow" button in the GitHub Actions tab so you can trigger it manually at any time. Essential for testing.
 
 #### Job Setup
 
@@ -511,13 +511,13 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
-      - run: npm install -g mainwpctl
+      - run: npm install -g @mainwp/control
 ```
 
-- `jobs` — Defines the work to do. Each job runs on a fresh virtual machine.
-- `runs-on: ubuntu-latest` — Uses the latest Ubuntu Linux runner provided by GitHub.
-- `actions/setup-node@v4` — A pre-built action that installs Node.js. We specify version 20 to match MainWP Control's requirements.
-- `npm install -g mainwpctl` — Installs MainWP Control globally on the runner, just like you did on your own machine in Step 2.
+- `jobs`: Defines the work to do. Each job runs on a fresh virtual machine.
+- `runs-on: ubuntu-latest`: Uses the latest Ubuntu Linux runner provided by GitHub.
+- `actions/setup-node@v4`: A pre-built action that installs Node.js. We specify version 20 to match MainWP Control's requirements.
+- `npm install -g @mainwp/control`: Installs MainWP Control globally on the runner, the same way you did on your own machine in Step 2.
 
 #### Authentication
 
@@ -529,9 +529,9 @@ jobs:
           --username $DASHBOARD_USER
 ```
 
-- `env` — Sets job-level environment variables so every `mainwpctl` step can authenticate. GitHub runners often do not persist credentials in an OS keychain between steps, so `MAINWP_APP_PASSWORD` must stay available for the whole job.
-- `${{ secrets.DASHBOARD_URL }}` — GitHub replaces this with the encrypted secret value at runtime. The actual value never appears in logs.
-- The `>` after `run:` is YAML syntax for a folded string — it joins the following indented lines into a single command, which makes long commands easier to read.
+- `env`: Sets job-level environment variables so every `mainwpctl` step can authenticate. GitHub runners often do not persist credentials in an OS keychain between steps, so `MAINWP_APP_PASSWORD` must stay available for the whole job.
+- `${{ secrets.DASHBOARD_URL }}`: GitHub replaces this with the encrypted secret value at runtime. The actual value never appears in logs.
+- The `>` after `run:` is YAML syntax for a folded string. It joins the following indented lines into a single command, which makes long commands easier to read.
 
 #### Preview Step
 
@@ -545,9 +545,9 @@ jobs:
           echo "### Preview: $COUNT updates pending" >> "$GITHUB_STEP_SUMMARY"
 ```
 
-- `id: preview` — Gives this step a name so other steps can reference its outputs.
-- `$GITHUB_OUTPUT` — A special file provided by GitHub Actions. Writing `key=value` to it makes the value available to later steps via `steps.preview.outputs.key`. Here, we write the update count so the next step can decide whether to proceed.
-- `$GITHUB_STEP_SUMMARY` — Another special file. Text written here (in Markdown format) appears as a summary on the workflow run page, making it easy to see results at a glance without digging through logs.
+- `id: preview`: Gives this step a name so other steps can reference its outputs.
+- `$GITHUB_OUTPUT`: A special file provided by GitHub Actions. Writing `key=value` to it makes the value available to later steps via `steps.preview.outputs.key`. Here, we write the update count so the next step can decide whether to proceed.
+- `$GITHUB_STEP_SUMMARY`: Another special file. Text written here (in Markdown format) appears as a summary on the workflow run page, making it easy to see results at a glance without digging through logs.
 
 #### Apply Step (Conditional)
 
@@ -559,7 +559,7 @@ jobs:
           --confirm --force --wait --json
 ```
 
-- `if:` — Makes this step conditional. It only runs when the preview step found updates to apply. If the count is `0`, this step is skipped entirely, and you will see it greyed out in the workflow log.
+- `if:`: Makes this step conditional. It only runs when the preview step found updates to apply. If the count is `0`, this step is skipped entirely, and you will see it greyed out in the workflow log.
 - The flags are the same as in the bash script: `--confirm` to execute for real, `--force` to skip the interactive prompt, `--wait` to block until done, and `--json` for machine-readable output.
 
 #### Verify Step
@@ -598,7 +598,7 @@ jobs:
         with:
           node-version: '20'
 
-      - run: npm install -g mainwpctl
+      - run: npm install -g @mainwp/control
 
       - name: Login
         run: >
@@ -686,7 +686,7 @@ mainwpctl abilities run run-updates-v1 --confirm --force --wait --wait-timeout 6
 
 This increases the timeout to 10 minutes (600 seconds).
 
-If the command still times out, the updates are not cancelled — they continue running on the MainWP server. The CLI simply stops waiting. You can check the progress of a running job with:
+If the command still times out, the updates are not cancelled. They continue running on the MainWP server. The CLI stops waiting. You can check the progress of a running job with:
 
 ```bash
 mainwpctl jobs watch <job-id>
@@ -696,7 +696,7 @@ Replace `<job-id>` with the job ID from the timeout output. This command connect
 
 ### Partial Update Failures
 
-Some individual updates may fail — for example, a plugin may be incompatible with the current WordPress version, or a site may be temporarily unreachable. The command still exits successfully (exit code 0) as long as the overall operation completed.
+Some individual updates may fail. For example, a plugin may be incompatible with the current WordPress version, or a site may be temporarily unreachable. The command still exits successfully (exit code 0) as long as the overall operation completed.
 
 To see which updates failed, check the `results` array in the JSON output. Each entry includes a `status` field indicating whether that particular update succeeded or failed.
 
@@ -710,10 +710,10 @@ mainwpctl abilities run list-updates-v1 --json
 
 This is normal and can happen for two reasons:
 
-1. **Some updates failed** — Check the JSON output from the apply step for failure details.
-2. **New updates appeared during the run** — If a plugin released a new version while your batch was running, it will show up as a new pending update.
+1. **Some updates failed.** Check the JSON output from the apply step for failure details.
+2. **New updates appeared during the run.** If a plugin released a new version while your batch was running, it will show up as a new pending update.
 
-In either case, you can simply re-run the script to apply the remaining updates.
+In either case, re-run the script to apply the remaining updates.
 
 ### `set -e` Causes the Script to Exit Unexpectedly
 
@@ -730,6 +730,6 @@ To debug, run each command from the script individually in your terminal to find
 If the Login step fails in your GitHub Actions workflow:
 
 1. **Verify all three secrets are set.** Go to your repository's **Settings** > **Secrets and variables** > **Actions** and confirm that `DASHBOARD_URL`, `DASHBOARD_USER`, and `MAINWP_APP_PASSWORD` are all listed.
-2. **Check the Dashboard URL.** It must include the `https://` prefix (e.g., `https://dashboard.example.com`, not just `dashboard.example.com`).
+2. **Check the Dashboard URL.** It must include the `https://` prefix (e.g., `https://dashboard.example.com`, not `dashboard.example.com`).
 3. **Verify the Application Password.** Go back to your WordPress Dashboard profile and check the Application Passwords section. If the password was revoked or you are unsure of the value, delete it and create a new one (repeat Step 1), then update the `MAINWP_APP_PASSWORD` secret in GitHub.
 4. **Check that MainWP Dashboard is reachable.** The GitHub Actions runner connects from the public internet. If your Dashboard is behind a firewall or VPN, the runner will not be able to reach it. You may need to allowlist GitHub Actions IP ranges or use a self-hosted runner.

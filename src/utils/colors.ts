@@ -24,7 +24,7 @@ export const colors = {
  * Check if we should use colored output
  */
 export function useColors(): boolean {
-  return process.stdout.isTTY === true && process.env['NO_COLOR'] === undefined;
+  return process.stdout.isTTY === true && !('NO_COLOR' in process.env);
 }
 
 /**

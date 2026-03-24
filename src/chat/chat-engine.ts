@@ -40,6 +40,7 @@ import {
 } from '../core/safety-controller.js';
 import { abilityToTool } from './providers/provider.js';
 import { logDestructiveActionSafe } from '../utils/audit-logger.js';
+import { getInputSanitizer } from '../validation/input-sanitizer.js';
 
 /**
  * Chat response types
@@ -287,7 +288,7 @@ export class ChatEngine {
       success: result.success,
     };
     if (result.error?.message) {
-      executionAudit.error = result.error.message;
+      executionAudit.error = getInputSanitizer().sanitizeErrorMessage(result.error.message);
     }
     await logDestructiveActionSafe({
       abilityName: preview.ability.name,
