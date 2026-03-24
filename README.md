@@ -24,16 +24,14 @@ You should see something like this:
 Abilities (87 total)
 
   Sites
-┌──────────────────┬──────────────────────┬────────────────┐
-│ Name             │ Description          │ Type           │
-├──────────────────┼──────────────────────┼────────────────┤
-│ list-sites-v1    │ List MainWP sites    │ 📖 read        │
-│ get-site-v1      │ Get site details     │ 📖 read        │
-│ sync-sites-v1    │ Sync all sites       │ ✏️  write       │
-└──────────────────┴──────────────────────┴────────────────┘
+Name              Description           Type
+----------------  --------------------  --------------
+list-sites-v1     List MainWP sites     📖 read
     mainwpcontrol abilities run list-sites-v1
+get-site-v1       Get site details      📖 read
     mainwpcontrol abilities run get-site-v1
-    ...
+sync-sites-v1     Sync all sites        ✏️  write
+    mainwpcontrol abilities run sync-sites-v1
 ```
 
 That's it. You're connected and you can see every operation your Dashboard supports.

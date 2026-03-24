@@ -8,6 +8,7 @@
  */
 
 import { Hook } from '@oclif/core';
+import { ExitCode } from '../utils/exit-codes.js';
 
 /** Simple Levenshtein distance (no external deps) */
 function levenshtein(a: string, b: string): number {
@@ -38,7 +39,7 @@ const hook: Hook<'command_not_found'> = async function ({ id, config }) {
     const suggestion = `${config.bin} abilities run ${name}`;
     this.error(
       `"${id}" is not a command. It looks like an ability name.\n\nRun it with:\n  ${suggestion}`,
-      { exit: 1 },
+      { exit: ExitCode.INPUT_ERROR },
     );
   }
 
@@ -47,7 +48,7 @@ const hook: Hook<'command_not_found'> = async function ({ id, config }) {
     ...config.commandIDs,
     ...config.commands.flatMap((c) => c.aliases),
   ].filter(
-    (cid) => !config.commands.find((cmd) => cmd.id === cid)?.hidden,
+    (cid) => !config.commands.find((cmd) => cmd.id === cid || cmd.aliases?.includes(cid))?.hidden,
   );
 
   if (commandIDs.length > 0) {
@@ -62,7 +63,7 @@ const hook: Hook<'command_not_found'> = async function ({ id, config }) {
       const displayCmd = best.cmd.replace(/:/g, ' ');
       this.error(
         `"${id.replace(/:/g, ' ')}" is not a ${config.bin} command. Did you mean "${displayCmd}"?\n\nRun ${config.bin} help for a list of available commands.`,
-        { exit: 127 },
+        { exit: ExitCode.INPUT_ERROR },
       );
     }
   }
@@ -70,7 +71,7 @@ const hook: Hook<'command_not_found'> = async function ({ id, config }) {
   // Fallback: no close match found
   this.error(
     `command "${id.replace(/:/g, ' ')}" not found. Run ${config.bin} help for a list of available commands.`,
-    { exit: 2 },
+    { exit: ExitCode.INPUT_ERROR },
   );
 };
 
