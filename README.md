@@ -20,7 +20,7 @@ mainwpcontrol abilities list
 
 You should see something like this:
 
-```
+```text
 Abilities (87 total)
 
   Sites
@@ -175,6 +175,8 @@ When you run a command, the output appears in your terminal. A few things to kno
 
 ### Abilities
 
+Your Dashboard exposes its operations as "abilities." You browse them, pick one, and run it. Every ability has a versioned name like `list-sites-v1` that you pass to `abilities run`.
+
 ```bash
 # List all abilities
 mainwpcontrol abilities list
@@ -194,6 +196,8 @@ mainwpcontrol abilities run get-site-v1 --input '{"site_id": 1}' --json
 
 ### Profiles
 
+Each `mainwpcontrol login` creates a profile, a named connection to a Dashboard, identified by hostname. If you manage multiple Dashboards, run `login` once per Dashboard to create a profile for each.
+
 ```bash
 # List all profiles
 mainwpcontrol profile list
@@ -210,6 +214,8 @@ mainwpcontrol profile delete staging.example.com
 
 ### Diagnostics
 
+`doctor` checks your configuration, credentials, and Dashboard connectivity. Run it first if something isn't working.
+
 ```bash
 # Check configuration and connectivity
 mainwpcontrol doctor
@@ -223,17 +229,23 @@ mainwpcontrol doctor --json
 
 ### Chat Mode
 
-Optional interactive mode for exploring abilities in natural language. Requires an LLM provider key.
+If you have an LLM API key, you can talk to your Dashboard in plain English instead of constructing commands. Good for exploration, not required for anything.
+
+Set one of these environment variables to enable it:
 
 ```bash
-# Interactive chat
-mainwpcontrol chat
+# Pick one (Anthropic, OpenAI, Google, or OpenRouter)
+export ANTHROPIC_API_KEY='sk-ant-...'
 
-# Single message (works in scripts)
+mainwpcontrol chat
 mainwpcontrol chat "list all sites with pending updates"
 ```
 
+See [Chat Mode Configuration](#chat-mode-configuration) for all supported providers and flags.
+
 ### Global Flags
+
+These flags work on every command.
 
 | Flag | Description |
 |------|-------------|
@@ -244,6 +256,8 @@ mainwpcontrol chat "list all sites with pending updates"
 | `--help` | Show help |
 
 ### Abilities Run Flags
+
+Extra flags for `abilities run`. These control input, safety checks, and batch job behavior.
 
 | Flag | Description |
 |------|-------------|
