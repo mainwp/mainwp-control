@@ -102,7 +102,7 @@ describe('smoke tests', () => {
     expect(result.exitCode).toBe(0);
   });
 
-  it('mainwpcontrol "some message" exits 2 with command-not-found error', async () => {
+  it('mainwpcontrol "some message" exits 1 with command-not-found error', async () => {
     // oclif treats the argument as a command name lookup, not as a chat message arg.
     // Since there is no command called "some message", oclif exits with a command-not-found error.
     configWithProfile = await ConfigDir.create({
@@ -123,7 +123,7 @@ describe('smoke tests', () => {
       },
     });
 
-    expect(result.exitCode).toBe(2);
+    expect(result.exitCode).toBe(1);
     const combined = result.stdout + result.stderr;
     expect(combined).toMatch(/not found/i);
   });

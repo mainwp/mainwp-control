@@ -9,7 +9,7 @@ import { BaseCommand, commonFlags } from '../lib/base-command.js';
 import { getProfileStore, type Profile } from '../config/profile-store.js';
 import { getKeychain } from '../config/keychain.js';
 import { createHttpClient } from '../core/http-client.js';
-import { formatSuccess, formatWarning } from '../output/formatter.js';
+import { formatSuccess, formatWarning, formatInfo } from '../output/formatter.js';
 import { AuthError, InputError } from '../utils/errors.js';
 import { promptForInput, promptForPassword, isInteractive } from '../utils/prompt.js';
 
@@ -208,6 +208,9 @@ export default class Login extends BaseCommand {
           lines.push('');
           lines.push(formatWarning('Using HTTP instead of HTTPS. Credentials may be exposed.'));
         }
+
+        lines.push('');
+        lines.push(formatInfo('Next: mainwpcontrol abilities list'));
 
         return lines.join('\n');
       }
