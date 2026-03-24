@@ -55,7 +55,7 @@ mainwpcontrol login --url https://dashboard.example.com --username admin
 mainwpcontrol abilities run list-sites-v1 --json
 ```
 
-> **Tip:** If keytar is installed but broken, set `MAINWPCTL_NO_KEYTAR=1` to skip loading it entirely.
+> **Tip:** If keytar is installed but broken, set `MAINWPCONTROL_NO_KEYTAR=1` to skip loading it entirely.
 
 When the OS keychain is unavailable, `mainwpcontrol` does not persist plaintext credentials. Keep `MAINWP_APP_PASSWORD` set for each run on CI, cron hosts, and headless servers.
 
@@ -284,7 +284,7 @@ In CI/scripted workflows, you can pass `--confirm --force` directly if you've al
 | Variable | Description |
 |----------|-------------|
 | `MAINWP_APP_PASSWORD` | Application password for non-interactive login and commands when keychain storage is unavailable |
-| `MAINWPCTL_NO_KEYTAR` | Set to `1` to skip keytar (keychain) loading entirely |
+| `MAINWPCONTROL_NO_KEYTAR` | Set to `1` to skip keytar (keychain) loading entirely |
 | `MAINWP_ALLOW_HTTP` | Set to `1` to allow insecure HTTP Dashboard URLs |
 
 ### Chat Configuration (optional)
@@ -360,7 +360,7 @@ Keytar requires native C++ compilation on some platforms. If it fails:
    export MAINWP_APP_PASSWORD='your-application-password'
    mainwpcontrol login --url https://dashboard.example.com --username admin
    ```
-2. **Or skip keytar explicitly** by setting `MAINWPCTL_NO_KEYTAR=1` before running commands.
+2. **Or skip keytar explicitly** by setting `MAINWPCONTROL_NO_KEYTAR=1` before running commands.
 
 The pre-built binaries cover macOS, Windows, and Linux (x64/arm64). If you're on a different platform or architecture, you'll need C++ build tools (`gcc`, `g++`, `make`) or the env var approach.
 

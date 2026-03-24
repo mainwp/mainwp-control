@@ -86,10 +86,10 @@ mainwpcontrol --version
 Expected output:
 
 ```
-mainwpcontrol/x.y.z darwin-arm64 node-vNN.NN.N
+@mainwp/control/x.y.z darwin-arm64 node-vNN.NN.N
 ```
 
-You should see `mainwpcontrol/` followed by a version number. If you see `command not found`, make sure Node.js 20+ is installed and try opening a new terminal window.
+You should see `@mainwp/control/` followed by a version number. If you see `command not found`, make sure Node.js 20+ is installed and try opening a new terminal window.
 
 ---
 

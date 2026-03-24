@@ -79,10 +79,10 @@ mainwpcontrol --version
 Expected output:
 
 ```
-mainwpcontrol/x.y.z
+@mainwp/control/x.y.z
 ```
 
-You should see `mainwpcontrol/` followed by a version number. As long as the output starts with `mainwpcontrol/`, the installation is working.
+You should see `@mainwp/control/` followed by a version number. As long as the output starts with `@mainwp/control/`, the installation is working.
 
 If you see `command not found`, make sure Node.js 20+ is installed and that your system PATH includes the npm global bin directory. Run `npm config get prefix` to find where npm installs global packages.
 

@@ -82,10 +82,10 @@ mainwpcontrol --version
 Expected output:
 
 ```
-mainwpcontrol/x.y.z darwin-arm64 node-vNN.NN.N
+@mainwp/control/x.y.z darwin-arm64 node-vNN.NN.N
 ```
 
-You should see `mainwpcontrol/` followed by a version number. The exact values depend on your system.
+You should see `@mainwp/control/` followed by a version number. The exact values depend on your system.
 
 ---
 

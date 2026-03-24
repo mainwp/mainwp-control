@@ -106,10 +106,10 @@ mainwpcontrol --version
 Expected output:
 
 ```
-mainwpcontrol/x.y.z
+@mainwp/control/x.y.z
 ```
 
-You should see `mainwpcontrol/` followed by a version number. The exact values depend on your system.
+You should see `@mainwp/control/` followed by a version number. The exact values depend on your system.
 
 ---
 

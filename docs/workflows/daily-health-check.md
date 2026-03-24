@@ -91,10 +91,10 @@ mainwpcontrol --version
 Expected output:
 
 ```
-mainwpcontrol/x.y.z darwin-arm64 node-vNN.NN.N
+@mainwp/control/x.y.z darwin-arm64 node-vNN.NN.N
 ```
 
-You should see `mainwpcontrol/` followed by version information. The exact values depend on your system and Node.js version.
+You should see `@mainwp/control/` followed by version information. The exact values depend on your system and Node.js version.
 
 ---
 
