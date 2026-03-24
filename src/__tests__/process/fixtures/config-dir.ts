@@ -25,15 +25,15 @@ export interface ConfigDirOptions {
 }
 
 export class ConfigDir {
-  /** The temp XDG_CONFIG_HOME path (parent of mainwpctl/). */
+  /** The temp XDG_CONFIG_HOME path (parent of mainwpcontrol/). */
   readonly xdgHome: string;
 
-  /** The mainwpctl config directory inside xdgHome. */
+  /** The mainwpcontrol config directory inside xdgHome. */
   readonly configPath: string;
 
   private constructor(xdgHome: string) {
     this.xdgHome = xdgHome;
-    this.configPath = join(xdgHome, 'mainwpctl');
+    this.configPath = join(xdgHome, 'mainwpcontrol');
   }
 
   /**
@@ -43,7 +43,7 @@ export class ConfigDir {
     const xdgHome = await mkdtemp(join(tmpdir(), 'mwpctl-test-'));
     const instance = new ConfigDir(xdgHome);
 
-    // Create mainwpctl subdir
+    // Create mainwpcontrol subdir
     await mkdir(instance.configPath, { recursive: true });
 
     // Write profiles.json

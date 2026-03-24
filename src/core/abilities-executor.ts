@@ -1,5 +1,5 @@
 /**
- * Abilities Executor for mainwpctl
+ * Abilities Executor for mainwpcontrol
  *
  * Single execution pathway for all ability calls.
  * INVARIANT: Both commands and chat route through this module.
@@ -118,7 +118,7 @@ export class AbilitiesExecutor {
       throw new InputError(
         `Unknown ability: ${abilityName}`,
         undefined,
-        'List available abilities with `mainwpctl abilities list`'
+        'List available abilities with `mainwpcontrol abilities list`'
       );
     }
 

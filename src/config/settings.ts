@@ -1,5 +1,5 @@
 /**
- * Settings file support for mainwpctl
+ * Settings file support for mainwpcontrol
  */
 
 import { promises as fs } from 'node:fs';
@@ -72,9 +72,9 @@ export const SETTINGS_DEFAULTS: ResolvedSettings = {
 export function getConfigDir(): string {
   const xdgConfig = process.env['XDG_CONFIG_HOME'];
   if (xdgConfig) {
-    return join(xdgConfig, 'mainwpctl');
+    return join(xdgConfig, 'mainwpcontrol');
   }
-  return join(homedir(), '.config', 'mainwpctl');
+  return join(homedir(), '.config', 'mainwpcontrol');
 }
 
 /**
@@ -86,7 +86,7 @@ export function getSettingsPath(): string {
 
 /**
  * Cached settings (cleared on explicit reload).
- * No TTL needed: mainwpctl is a short-lived CLI process — settings are read
+ * No TTL needed: mainwpcontrol is a short-lived CLI process — settings are read
  * once per invocation. clearSettingsCache() handles explicit invalidation
  * (e.g. after saveSettings).
  */

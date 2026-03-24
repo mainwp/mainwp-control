@@ -1,5 +1,5 @@
 /**
- * OpenRouter Provider for mainwpctl
+ * OpenRouter Provider for mainwpcontrol
  *
  * Implements LLM provider interface for OpenRouter.
  * OpenRouter provides access to multiple models through a unified API
@@ -48,7 +48,7 @@ export class OpenRouterProvider extends OpenAICompatibleProvider {
 
   constructor(config: ProviderConfig) {
     super(config, { baseUrl: DEFAULT_BASE_URL, model: DEFAULT_MODEL });
-    this.appName = 'mainwpctl';
+    this.appName = 'mainwpcontrol';
   }
 
   isConfigured(): boolean {

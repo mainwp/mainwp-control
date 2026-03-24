@@ -1,5 +1,5 @@
 /**
- * Formatting utilities for mainwpctl
+ * Formatting utilities for mainwpcontrol
  *
  * Provides consistent secret masking across all commands.
  */

@@ -168,7 +168,7 @@ describe('E2E: Login → Abilities Flow', () => {
       await keychain.set('test-dashboard', password);
 
       expect(mockKeytarSetPassword).toHaveBeenCalledWith(
-        'mainwpctl',
+        'mainwpcontrol',
         'test-dashboard',
         password
       );
@@ -192,7 +192,7 @@ describe('E2E: Login → Abilities Flow', () => {
 
       const retrieved = await keychain.get('test-dashboard');
 
-      expect(mockKeytarGetPassword).toHaveBeenCalledWith('mainwpctl', 'test-dashboard');
+      expect(mockKeytarGetPassword).toHaveBeenCalledWith('mainwpcontrol', 'test-dashboard');
       expect(retrieved).toBe(password);
     });
   });

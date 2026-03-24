@@ -1,5 +1,5 @@
 /**
- * Profile store for mainwpctl
+ * Profile store for mainwpcontrol
  *
  * Manages multiple Dashboard connection profiles.
  */
@@ -64,7 +64,7 @@ async function loadProfilesFile(): Promise<ProfilesFile> {
     throw new ConfigError(
       `Failed to load profiles: ${(error as Error).message}`,
       undefined,
-      'Check file permissions for ~/.config/mainwpctl/profiles.json'
+      'Check file permissions for ~/.config/mainwpcontrol/profiles.json'
     );
   }
 }
@@ -115,7 +115,7 @@ export class ProfileStore {
    * Validate a profile's required fields and URL format
    */
   private validateProfile(profile: Profile): void {
-    const validationHint = 'Run `mainwpctl login` to create a valid profile';
+    const validationHint = 'Run `mainwpcontrol login` to create a valid profile';
 
     if (!profile.name || profile.name.trim().length === 0) {
       throw new ConfigError(
@@ -232,7 +232,7 @@ export class ProfileStore {
       throw new ConfigError(
         `Profile not found: ${name}`,
         undefined,
-        'List available profiles with `mainwpctl profile list`'
+        'List available profiles with `mainwpcontrol profile list`'
       );
     }
 
@@ -290,7 +290,7 @@ export class ProfileStore {
       throw new ConfigError(
         `Profile not found: ${name}`,
         undefined,
-        'List available profiles with `mainwpctl profile list`'
+        'List available profiles with `mainwpcontrol profile list`'
       );
     }
 

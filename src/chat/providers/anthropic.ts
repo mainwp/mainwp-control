@@ -1,5 +1,5 @@
 /**
- * Anthropic Provider for mainwpctl
+ * Anthropic Provider for mainwpcontrol
  *
  * Implements LLM provider interface for Claude models.
  */

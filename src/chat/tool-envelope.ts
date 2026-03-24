@@ -1,5 +1,5 @@
 /**
- * Tool Envelope Parser for mainwpctl
+ * Tool Envelope Parser for mainwpcontrol
  *
  * Parses and validates LLM tool call responses.
  * Supports both native function calling (from provider) and JSON in content.

@@ -1,7 +1,7 @@
 /**
  * Process-level multi-step scenario tests
  *
- * Tests realistic multi-command workflows by spawning mainwpctl as a child
+ * Tests realistic multi-command workflows by spawning mainwpcontrol as a child
  * process against a mock HTTP server. Each scenario simulates a real user
  * session: login, then run a sequence of abilities, verifying data flows
  * correctly between steps.

@@ -1,5 +1,5 @@
 /**
- * Local LLM Provider for mainwpctl
+ * Local LLM Provider for mainwpcontrol
  *
  * Implements LLM provider interface for OpenAI-compatible local endpoints.
  * Supports llama.cpp, Ollama, LM Studio, and other OpenAI-compatible servers.

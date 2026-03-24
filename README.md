@@ -1,6 +1,6 @@
 # MainWP Control
 
-A CLI for managing your MainWP Dashboard from the terminal. The command is `mainwpctl`.
+A CLI for managing your MainWP Dashboard from the terminal. The command is `mainwpcontrol`.
 
 You can list sites, check status, push updates, sync data, add or remove child sites, and run batch operations across dozens of sites. Everything outputs structured JSON for piping into other tools. Exit codes are deterministic so CI pipelines can branch on them. There's also an optional chat mode if you want to explore abilities conversationally before scripting them.
 
@@ -10,7 +10,7 @@ You can list sites, check status, push updates, sync data, add or remove child s
 
 **[MainWP MCP Server](https://github.com/mainwp/mainwp-mcp)** is for conversational AI management: natural language queries inside Claude, Cursor, ChatGPT, or any MCP-compatible client. Good for exploration, ad-hoc questions, and interactive workflows.
 
-**MainWP Control** is for automation: cron jobs, CI/CD pipelines, monitoring scripts, and batch operations. `mainwpctl` gives you deterministic exit codes, stable JSON output, and composability with standard Unix tools. Both talk to the same Abilities API with the same safety model.
+**MainWP Control** is for automation: cron jobs, CI/CD pipelines, monitoring scripts, and batch operations. `mainwpcontrol` gives you deterministic exit codes, stable JSON output, and composability with standard Unix tools. Both talk to the same Abilities API with the same safety model.
 
 ---
 
@@ -31,10 +31,10 @@ This is the best path for most users. Pre-built keychain binaries are included f
 npm install -g @mainwp/control
 
 # Log in (stores credentials in your OS keychain)
-mainwpctl login
+mainwpcontrol login
 
 # Verify it works
-mainwpctl abilities run list-sites-v1 --json
+mainwpcontrol abilities run list-sites-v1 --json
 ```
 
 ### Option B: Environment variable auth (no keychain)
@@ -49,15 +49,15 @@ npm install -g @mainwp/control
 export MAINWP_APP_PASSWORD='xxxx xxxx xxxx xxxx xxxx xxxx'
 
 # Log in non-interactively (credentials stay in the environment, not on disk)
-mainwpctl login --url https://dashboard.example.com --username admin
+mainwpcontrol login --url https://dashboard.example.com --username admin
 
 # Verify it works
-mainwpctl abilities run list-sites-v1 --json
+mainwpcontrol abilities run list-sites-v1 --json
 ```
 
-> **Tip:** If keytar is installed but broken, set `MAINWPCTL_NO_KEYTAR=1` to skip loading it entirely.
+> **Tip:** If keytar is installed but broken, set `MAINWPCONTROL_NO_KEYTAR=1` to skip loading it entirely.
 
-When the OS keychain is unavailable, `mainwpctl` does not persist plaintext credentials. Keep `MAINWP_APP_PASSWORD` set for each run on CI, cron hosts, and headless servers.
+When the OS keychain is unavailable, `mainwpcontrol` does not persist plaintext credentials. Keep `MAINWP_APP_PASSWORD` set for each run on CI, cron hosts, and headless servers.
 
 ---
 
@@ -77,7 +77,7 @@ A terminal is where you type commands instead of clicking buttons. You'll see it
 
 ### What does `npm install -g` do?
 
-`npm` is the Node.js package manager. It downloads and installs JavaScript packages. The `-g` flag installs globally, which makes `mainwpctl` available as a command anywhere on your system, not only in one project folder.
+`npm` is the Node.js package manager. It downloads and installs JavaScript packages. The `-g` flag installs globally, which makes `mainwpcontrol` available as a command anywhere on your system, not only in one project folder.
 
 ### What is an environment variable?
 
@@ -92,19 +92,19 @@ export MAINWP_APP_PASSWORD='xxxx xxxx xxxx xxxx xxxx xxxx'
 $env:MAINWP_APP_PASSWORD = 'xxxx xxxx xxxx xxxx xxxx xxxx'
 ```
 
-For long-term storage, use the OS keychain (the default when you run `mainwpctl login`) or a restricted-permission `.env` file rather than pasting credentials into shell profile files.
+For long-term storage, use the OS keychain (the default when you run `mainwpcontrol login`) or a restricted-permission `.env` file rather than pasting credentials into shell profile files.
 
 ### What is an Application Password?
 
-WordPress Application Passwords let external tools like `mainwpctl` access your site without using your main login password. They look like groups of four characters separated by spaces (e.g., `abcd efgh ijkl mnop qrst uvwx`).
+WordPress Application Passwords let external tools like `mainwpcontrol` access your site without using your main login password. They look like groups of four characters separated by spaces (e.g., `abcd efgh ijkl mnop qrst uvwx`).
 
-**To create one:** Log into WordPress admin > Users > Your Profile > scroll to **Application Passwords** > enter a name like "mainwpctl" > click **Add New Application Password** > copy the generated password.
+**To create one:** Log into WordPress admin > Users > Your Profile > scroll to **Application Passwords** > enter a name like "mainwpcontrol" > click **Add New Application Password** > copy the generated password.
 
 ### Reading command output
 
 When you run a command, the output appears in your terminal. A few things to know:
 
-- **`--json`** tells `mainwpctl` to output structured JSON (useful for scripting and piping to other tools)
+- **`--json`** tells `mainwpcontrol` to output structured JSON (useful for scripting and piping to other tools)
 - **Exit codes** indicate success (`0`) or failure (`1` through `5`). You won't see them directly, but scripts and CI use them to decide what happens next. Run `echo $?` (macOS/Linux) or `echo $LASTEXITCODE` (PowerShell) after a command to check.
 
 </details>
@@ -117,12 +117,12 @@ We recommend a two-step pattern for destructive operations: preview first, then 
 
 ```bash
 # Step 1: Preview what will be deleted (nothing changes)
-mainwpctl abilities run delete-site-v1 \
+mainwpcontrol abilities run delete-site-v1 \
   --input '{"site_id_or_domain": "mysite.com"}' \
   --dry-run --json
 
 # Step 2: Execute after reviewing the preview
-mainwpctl abilities run delete-site-v1 \
+mainwpcontrol abilities run delete-site-v1 \
   --input '{"site_id_or_domain": "mysite.com"}' \
   --confirm --force --json
 ```
@@ -147,16 +147,16 @@ The MainWP Abilities API provides all available operations:
 
 ```bash
 # List all abilities
-mainwpctl abilities list
+mainwpcontrol abilities list
 
 # Get ability details (input schema, annotations)
-mainwpctl abilities info <ability-name>
+mainwpcontrol abilities info <ability-name>
 
 # Execute an ability
-mainwpctl abilities run <ability-name> [--input JSON] [--input-file path] [--json]
+mainwpcontrol abilities run <ability-name> [--input JSON] [--input-file path] [--json]
 
 # Execute and wait for batch completion
-mainwpctl abilities run <ability-name> --wait [--wait-timeout 300] --json
+mainwpcontrol abilities run <ability-name> --wait [--wait-timeout 300] --json
 ```
 
 ### Batch Jobs
@@ -165,49 +165,49 @@ Monitor long-running batch operations:
 
 ```bash
 # Watch a batch job
-mainwpctl jobs watch <job-id>
+mainwpcontrol jobs watch <job-id>
 
 # With timeout
-mainwpctl jobs watch <job-id> --timeout 120
+mainwpcontrol jobs watch <job-id> --timeout 120
 ```
 
 ### Diagnostics
 
 ```bash
 # Check configuration and connectivity
-mainwpctl doctor
+mainwpcontrol doctor
 
 # Verbose output with details
-mainwpctl doctor -v
+mainwpcontrol doctor -v
 
 # JSON output for scripting
-mainwpctl doctor --json
+mainwpcontrol doctor --json
 ```
 
 ### Profile Management
 
 ```bash
 # List all profiles
-mainwpctl profile list
+mainwpcontrol profile list
 
 # Switch active profile
-mainwpctl profile use <profile-name>
+mainwpcontrol profile use <profile-name>
 ```
 
 ### Authentication
 
 ```bash
 # Interactive login (stores credentials in OS keychain)
-mainwpctl login
+mainwpcontrol login
 
 # Non-interactive login for CI/containers (password from env var)
 export MAINWP_APP_PASSWORD='your-application-password'
-mainwpctl login --url https://dashboard.example.com --username admin
+mainwpcontrol login --url https://dashboard.example.com --username admin
 ```
 
-To create an Application Password: log into WordPress admin > Users > Your Profile > Application Passwords > add a new password named "mainwpctl".
+To create an Application Password: log into WordPress admin > Users > Your Profile > Application Passwords > add a new password named "mainwpcontrol".
 
-When the OS keychain is unavailable, `mainwpctl` does not persist plaintext credentials. Keep `MAINWP_APP_PASSWORD` set for each non-interactive run on CI, cron hosts, and headless servers.
+When the OS keychain is unavailable, `mainwpcontrol` does not persist plaintext credentials. Keep `MAINWP_APP_PASSWORD` set for each non-interactive run on CI, cron hosts, and headless servers.
 
 ### Chat Mode
 
@@ -215,10 +215,10 @@ Optional interactive mode for exploring abilities before scripting them. Require
 
 ```bash
 # Interactive chat
-mainwpctl chat
+mainwpcontrol chat
 
 # Single message (works in scripts)
-mainwpctl chat "list all sites with pending updates"
+mainwpcontrol chat "list all sites with pending updates"
 ```
 
 Chat requires one of these environment variables:
@@ -228,7 +228,7 @@ Chat requires one of these environment variables:
 - `OPENROUTER_API_KEY` (OpenRouter)
 - `LOCAL_LLM_API_KEY` (Local endpoint, with optional `LOCAL_LLM_URL`)
 
-In non-TTY environments (pipes, CI), `mainwpctl chat` without a message exits with guidance. Use `mainwpctl chat "message"` for single-message mode in scripts.
+In non-TTY environments (pipes, CI), `mainwpcontrol chat` without a message exits with guidance. Use `mainwpcontrol chat "message"` for single-message mode in scripts.
 
 ---
 
@@ -284,7 +284,7 @@ In CI/scripted workflows, you can pass `--confirm --force` directly if you've al
 | Variable | Description |
 |----------|-------------|
 | `MAINWP_APP_PASSWORD` | Application password for non-interactive login and commands when keychain storage is unavailable |
-| `MAINWPCTL_NO_KEYTAR` | Set to `1` to skip keytar (keychain) loading entirely |
+| `MAINWPCONTROL_NO_KEYTAR` | Set to `1` to skip keytar (keychain) loading entirely |
 | `MAINWP_ALLOW_HTTP` | Set to `1` to allow insecure HTTP Dashboard URLs |
 
 ### Chat Configuration (optional)
@@ -304,7 +304,7 @@ In CI/scripted workflows, you can pass `--confirm --force` directly if you've al
 
 ## Configuration File
 
-Settings in `~/.config/mainwpctl/settings.json`:
+Settings in `~/.config/mainwpcontrol/settings.json`:
 
 ```json
 {
@@ -326,7 +326,7 @@ Settings in `~/.config/mainwpctl/settings.json`:
 | `skipSSLVerification` | boolean | Advanced fallback: disable TLS verification when the active profile does not set its own SSL preference |
 | `allowInsecureHttp` | boolean | Advanced fallback: allow `http://` Dashboard URLs without setting `MAINWP_ALLOW_HTTP=1` |
 
-`skipSSLVerification` and `allowInsecureHttp` are insecure overrides. Prefer storing TLS behavior on the profile with `mainwpctl login --skip-ssl-verify`, and keep HTTPS as the default transport.
+`skipSSLVerification` and `allowInsecureHttp` are insecure overrides. Prefer storing TLS behavior on the profile with `mainwpcontrol login --skip-ssl-verify`, and keep HTTPS as the default transport.
 
 ---
 
@@ -334,10 +334,10 @@ Settings in `~/.config/mainwpctl/settings.json`:
 
 ```bash
 # Bash
-source /path/to/mainwpctl/scripts/completions/mainwpctl.bash
+source /path/to/mainwp-control/scripts/completions/mainwpcontrol.bash
 
 # Zsh
-source /path/to/mainwpctl/scripts/completions/mainwpctl.zsh
+source /path/to/mainwp-control/scripts/completions/mainwpcontrol.zsh
 ```
 
 ## Requirements
@@ -358,9 +358,9 @@ Keytar requires native C++ compilation on some platforms. If it fails:
 1. **Use environment variable auth instead** (bypasses keytar entirely):
    ```bash
    export MAINWP_APP_PASSWORD='your-application-password'
-   mainwpctl login --url https://dashboard.example.com --username admin
+   mainwpcontrol login --url https://dashboard.example.com --username admin
    ```
-2. **Or skip keytar explicitly** by setting `MAINWPCTL_NO_KEYTAR=1` before running commands.
+2. **Or skip keytar explicitly** by setting `MAINWPCONTROL_NO_KEYTAR=1` before running commands.
 
 The pre-built binaries cover macOS, Windows, and Linux (x64/arm64). If you're on a different platform or architecture, you'll need C++ build tools (`gcc`, `g++`, `make`) or the env var approach.
 
@@ -389,15 +389,15 @@ On Windows, the npm global directory is usually already in PATH after installing
 <details>
 <summary><strong>"connection refused" or network errors</strong></summary>
 
-If `mainwpctl login` or commands fail with connection errors:
+If `mainwpcontrol login` or commands fail with connection errors:
 
 1. **Check the Dashboard URL.** Make sure it's the full URL with `https://` (e.g., `https://dashboard.example.com`). Don't include a trailing slash.
-2. **Verify HTTPS.** `mainwpctl` requires HTTPS by default. If your Dashboard uses HTTP (not recommended), set `MAINWP_ALLOW_HTTP=1`.
+2. **Verify HTTPS.** `mainwpcontrol` requires HTTPS by default. If your Dashboard uses HTTP (not recommended), set `MAINWP_ALLOW_HTTP=1`.
 3. **Check firewall/network.** Make sure your machine can reach the Dashboard:
    ```bash
    curl -I https://dashboard.example.com
    ```
-4. **SSL certificate issues.** If using a self-signed certificate, you can use `mainwpctl login --skip-ssl-verify` (not recommended for production).
+4. **SSL certificate issues.** If using a self-signed certificate, you can use `mainwpcontrol login --skip-ssl-verify` (not recommended for production).
 
 </details>
 

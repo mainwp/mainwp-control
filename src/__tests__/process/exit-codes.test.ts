@@ -1,7 +1,7 @@
 /**
  * Process-level tests for the exit code contract
  *
- * Verifies that mainwpctl exits with the correct code for each error category:
+ * Verifies that mainwpcontrol exits with the correct code for each error category:
  *   0 = Success
  *   1 = Input error
  *   2 = Auth / config error
@@ -9,7 +9,7 @@
  *   4 = API error
  *   5 = Internal error
  *
- * Each test spawns mainwpctl as a real child process, so these validate
+ * Each test spawns mainwpcontrol as a real child process, so these validate
  * the full error-propagation path from command → base-command catch → exit.
  */
 

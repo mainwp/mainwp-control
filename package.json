@@ -6,7 +6,7 @@
   "exports": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "bin": {
-    "mainwpctl": "./bin/run.js"
+    "mainwpcontrol": "./bin/run.js"
   },
   "files": [
     "bin",
@@ -32,8 +32,8 @@
     "pack:deb": "oclif pack deb"
   },
   "oclif": {
-    "bin": "mainwpctl",
-    "dirname": "mainwpctl",
+    "bin": "mainwpcontrol",
+    "dirname": "mainwpcontrol",
     "commands": "./dist/commands",
     "default": "chat",
     "plugins": [
@@ -42,11 +42,11 @@
     ],
     "topicSeparator": " ",
     "macos": {
-      "identifier": "com.mainwp.mainwpctl"
+      "identifier": "com.mainwp.mainwpcontrol"
     },
     "update": {
       "s3": {
-        "bucket": "mainwpctl-releases"
+        "bucket": "mainwpcontrol-releases"
       }
     }
   },

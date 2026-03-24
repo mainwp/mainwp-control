@@ -1,5 +1,5 @@
 /**
- * Terminal Output Sanitizer for mainwpctl
+ * Terminal Output Sanitizer for mainwpcontrol
  *
  * Security utility to strip ANSI escape sequences and control characters
  * from untrusted data before rendering to terminal output.

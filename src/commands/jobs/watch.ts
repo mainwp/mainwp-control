@@ -1,5 +1,5 @@
 /**
- * Jobs watch command for mainwpctl
+ * Jobs watch command for mainwpcontrol
  *
  * Monitor batch job status with exponential backoff polling.
  * Streams progress updates until job completes or times out.

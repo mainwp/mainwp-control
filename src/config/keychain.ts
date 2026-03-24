@@ -1,5 +1,5 @@
 /**
- * Keychain integration for mainwpctl
+ * Keychain integration for mainwpcontrol
  *
  * Secure credential storage with environment variable fallback.
  *
@@ -14,7 +14,7 @@ import { AuthError } from '../utils/errors.js';
 /**
  * Service name for keychain entries
  */
-const SERVICE_NAME = 'mainwpctl';
+const SERVICE_NAME = 'mainwpcontrol';
 
 /**
  * Environment variable for fallback
@@ -60,7 +60,7 @@ async function loadKeytar(): Promise<typeof import('keytar') | null> {
   }
 
   // Allow explicit opt-out for CI/containers where native keychain is unavailable
-  if (process.env['MAINWPCTL_NO_KEYTAR'] === '1') {
+  if (process.env['MAINWPCONTROL_NO_KEYTAR'] === '1') {
     keytarAvailable = false;
     return null;
   }
@@ -194,7 +194,7 @@ export class Keychain {
       throw new AuthError(
         `No credentials found for profile "${profileName}".`,
         undefined,
-        `Run \`mainwpctl login\` or set ${ENV_VAR} environment variable`
+        `Run \`mainwpcontrol login\` or set ${ENV_VAR} environment variable`
       );
     }
 

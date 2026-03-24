@@ -1,5 +1,5 @@
 /**
- * Config Show Command for mainwpctl
+ * Config Show Command for mainwpcontrol
  *
  * Displays current configuration and settings.
  *
@@ -286,7 +286,7 @@ export default class ConfigShowCommand extends BaseCommand {
 
       if (config.profile.credentialsSource === 'none') {
         this.log(`    Credentials:    ${color('✗ Not found', colors.red)}`);
-        this.log(`                    ${color('Run `mainwpctl login` or set MAINWP_APP_PASSWORD', colors.gray)}`);
+        this.log(`                    ${color('Run `mainwpcontrol login` or set MAINWP_APP_PASSWORD', colors.gray)}`);
       } else {
         const sourceLabel =
           config.profile.credentialsSource === 'keychain'
@@ -298,7 +298,7 @@ export default class ConfigShowCommand extends BaseCommand {
       }
     } else {
       this.log(`    ${color('No active profile configured', colors.yellow)}`);
-      this.log(`    ${color('Run `mainwpctl login` or `mainwpctl profile use <name>`', colors.gray)}`);
+      this.log(`    ${color('Run `mainwpcontrol login` or `mainwpcontrol profile use <name>`', colors.gray)}`);
 
       // Show available profiles count
       this.showAvailableProfilesHint();

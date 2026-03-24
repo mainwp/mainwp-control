@@ -1,5 +1,5 @@
 /**
- * Retry utilities for mainwpctl
+ * Retry utilities for mainwpcontrol
  *
  * Provides exponential backoff functionality for polling operations.
  */

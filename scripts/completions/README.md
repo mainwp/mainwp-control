@@ -1,6 +1,6 @@
 # Shell Completion for MainWP Control
 
-This directory contains shell completion scripts for `mainwpctl`, providing tab completion for commands, flags, and dynamic data like profile names.
+This directory contains shell completion scripts for `mainwpcontrol`, providing tab completion for commands, flags, and dynamic data like profile names.
 
 ## Quick Start
 
@@ -9,7 +9,7 @@ This directory contains shell completion scripts for `mainwpctl`, providing tab 
 Add to your `~/.bashrc`:
 
 ```bash
-source /path/to/mainwpctl/scripts/completions/mainwpctl.bash
+source /path/to/mainwp-control/scripts/completions/mainwpcontrol.bash
 ```
 
 Then reload your shell:
@@ -23,7 +23,7 @@ source ~/.bashrc
 Add to your `~/.zshrc`:
 
 ```bash
-source /path/to/mainwpctl/scripts/completions/mainwpctl.zsh
+source /path/to/mainwp-control/scripts/completions/mainwpcontrol.zsh
 ```
 
 Then reload your shell:
@@ -34,17 +34,17 @@ source ~/.zshrc
 
 ## For npm-installed CLI
 
-If you installed `mainwpctl` globally via npm:
+If you installed `mainwpcontrol` globally via npm:
 
 ```bash
 # Find the installation path
 npm root -g
 
 # Source from node_modules (bash example)
-source $(npm root -g)/mainwpctl/scripts/completions/mainwpctl.bash
+source $(npm root -g)/@mainwp/control/scripts/completions/mainwpcontrol.bash
 
 # Or for zsh
-source $(npm root -g)/mainwpctl/scripts/completions/mainwpctl.zsh
+source $(npm root -g)/@mainwp/control/scripts/completions/mainwpcontrol.zsh
 ```
 
 ## For Local Development
@@ -53,10 +53,10 @@ If you're developing from the cloned repository:
 
 ```bash
 # Bash
-source ./scripts/completions/mainwpctl.bash
+source ./scripts/completions/mainwpcontrol.bash
 
 # Zsh
-source ./scripts/completions/mainwpctl.zsh
+source ./scripts/completions/mainwpcontrol.zsh
 ```
 
 ## What's Completed
@@ -129,7 +129,7 @@ Profile names are completed dynamically for:
 - `profile use <name>` argument
 - `profile delete <name>` argument
 
-Profile names are read from `~/.config/mainwpctl/profiles.json`.
+Profile names are read from `~/.config/mainwpcontrol/profiles.json`.
 
 ## Updating Completions
 
@@ -145,8 +145,8 @@ This provides guidance on which files to update.
 
 | File | Purpose |
 |------|---------|
-| `mainwpctl.bash` | Bash completion script |
-| `mainwpctl.zsh` | Zsh completion script |
+| `mainwpcontrol.bash` | Bash completion script |
+| `mainwpcontrol.zsh` | Zsh completion script |
 | `profile-completer.sh` | Helper to read profile names from config |
 | `regenerate.sh` | Helper script for updating completions |
 | `README.md` | This documentation |
@@ -158,10 +158,10 @@ This provides guidance on which files to update.
 1. **Check if sourced correctly:**
    ```bash
    # Bash
-   complete -p mainwpctl
+   complete -p mainwpcontrol
 
    # Zsh
-   whence -f _mainwpctl
+   whence -f _mainwpcontrol
    ```
 
 2. **Reload shell configuration:**
@@ -180,7 +180,7 @@ This provides guidance on which files to update.
 
 1. **Check if profiles.json exists:**
    ```bash
-   cat ~/.config/mainwpctl/profiles.json
+   cat ~/.config/mainwpcontrol/profiles.json
    ```
 
 2. **Check if jq is installed (optional but recommended):**
@@ -210,8 +210,8 @@ Make sure completion scripts are executable:
 
 ```bash
 chmod +x scripts/completions/*.sh
-chmod +x scripts/completions/mainwpctl.bash
-chmod +x scripts/completions/mainwpctl.zsh
+chmod +x scripts/completions/mainwpcontrol.bash
+chmod +x scripts/completions/mainwpcontrol.zsh
 ```
 
 ## Requirements

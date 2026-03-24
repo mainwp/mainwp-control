@@ -1,5 +1,5 @@
 /**
- * Base command for mainwpctl
+ * Base command for mainwpcontrol
  *
  * Provides common functionality for all CLI commands:
  * - Profile and authentication management
@@ -54,7 +54,7 @@ type CommonFlags = Interfaces.InferredFlags<typeof commonFlags>;
 /**
  * Base command class
  *
- * All mainwpctl commands should extend this class.
+ * All mainwpcontrol commands should extend this class.
  */
 export abstract class BaseCommand extends Command {
   /**
@@ -157,7 +157,7 @@ export abstract class BaseCommand extends Command {
         throw new ConfigError(
           `Profile not found: ${profileName}`,
           undefined,
-          'List available profiles with `mainwpctl profile list` or create one with `mainwpctl login`'
+          'List available profiles with `mainwpcontrol profile list` or create one with `mainwpcontrol login`'
         );
       }
       this.currentProfile = profile;
@@ -167,7 +167,7 @@ export abstract class BaseCommand extends Command {
         throw new ConfigError(
           'No profile configured.',
           undefined,
-          'Create your first profile with `mainwpctl login`'
+          'Create your first profile with `mainwpcontrol login`'
         );
       }
     }

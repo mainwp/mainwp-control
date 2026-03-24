@@ -1,10 +1,10 @@
 /**
  * Process-level tests for the `abilities info` command
  *
- * Verifies that `mainwpctl abilities info <name>` correctly fetches and
+ * Verifies that `mainwpcontrol abilities info <name>` correctly fetches and
  * displays details for a specific ability. The command populates its cache
  * by calling listAbilities, then looks up the requested ability by name.
- * Each test runs mainwpctl as a child process against a mock HTTP server.
+ * Each test runs mainwpcontrol as a child process against a mock HTTP server.
  */
 
 import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach } from 'vitest';

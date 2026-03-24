@@ -1,5 +1,5 @@
 /**
- * Input Sanitizer for mainwpctl
+ * Input Sanitizer for mainwpcontrol
  *
  * Security sanitization for inputs:
  * - Input limits (string length, array elements, object depth)
@@ -60,7 +60,7 @@ const PATH_PATTERNS = [
   /\/home\/[^/\s]+/g,
   /C:\\Users\\[^\\]+/gi,
   // Config directories
-  /\.config\/mainwpctl/g,
+  /\.config\/mainwpcontrol/g,
 ];
 
 /**

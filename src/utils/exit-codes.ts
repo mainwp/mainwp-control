@@ -1,5 +1,5 @@
 /**
- * Exit codes for mainwpctl
+ * Exit codes for mainwpcontrol
  *
  * These codes are stable and documented. Do not change without updating docs.
  */

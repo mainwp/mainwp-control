@@ -1,11 +1,11 @@
-#compdef mainwpctl
-# mainwpctl zsh completion script
+#compdef mainwpcontrol
+# mainwpcontrol zsh completion script
 #
 # Installation:
-#   source /path/to/mainwpctl/scripts/completions/mainwpctl.zsh
+#   source /path/to/mainwpcontrol/scripts/completions/mainwpcontrol.zsh
 #
 # Or add to ~/.zshrc:
-#   source /path/to/mainwpctl/scripts/completions/mainwpctl.zsh
+#   source /path/to/mainwpcontrol/scripts/completions/mainwpcontrol.zsh
 
 # Determine the directory where this script is located
 _MAINWPCTL_COMPLETION_DIR="${0:A:h}"
@@ -16,16 +16,16 @@ if [[ -f "${_MAINWPCTL_COMPLETION_DIR}/profile-completer.sh" ]]; then
 fi
 
 # Helper function to get profile names for completion
-_mainwpctl_profiles() {
+_mainwpcontrol_profiles() {
     local profiles
-    if (( $+functions[_mainwpctl_get_profiles] )); then
-        profiles=("${(@f)$(_mainwpctl_get_profiles)}")
+    if (( $+functions[_mainwpcontrol_get_profiles] )); then
+        profiles=("${(@f)$(_mainwpcontrol_get_profiles)}")
         _describe -t profiles 'profile' profiles
     fi
 }
 
 # Main completion function
-_mainwpctl() {
+_mainwpcontrol() {
     local curcontext="$curcontext" state line
     typeset -A opt_args
 
@@ -35,7 +35,7 @@ _mainwpctl() {
         '--debug[Show debug output]'
         '--help[Show help]'
         '--json[Output JSON (for scripting/CI)]'
-        '(-p --profile)'{-p,--profile}'[Use a specific profile]:profile:_mainwpctl_profiles'
+        '(-p --profile)'{-p,--profile}'[Use a specific profile]:profile:_mainwpcontrol_profiles'
     )
 
     # Top-level commands
@@ -58,33 +58,33 @@ _mainwpctl() {
 
     case "$state" in
         command)
-            _describe -t commands 'mainwpctl commands' commands
+            _describe -t commands 'mainwpcontrol commands' commands
             ;;
         args)
             case "$words[1]" in
                 abilities)
-                    _mainwpctl_abilities
+                    _mainwpcontrol_abilities
                     ;;
                 autocomplete)
-                    _mainwpctl_autocomplete
+                    _mainwpcontrol_autocomplete
                     ;;
                 chat)
-                    _mainwpctl_chat
+                    _mainwpcontrol_chat
                     ;;
                 doctor)
-                    _mainwpctl_doctor
+                    _mainwpcontrol_doctor
                     ;;
                 help)
-                    _mainwpctl_help
+                    _mainwpcontrol_help
                     ;;
                 jobs)
-                    _mainwpctl_jobs
+                    _mainwpcontrol_jobs
                     ;;
                 login)
-                    _mainwpctl_login
+                    _mainwpcontrol_login
                     ;;
                 profile)
-                    _mainwpctl_profile
+                    _mainwpcontrol_profile
                     ;;
             esac
             ;;
@@ -92,7 +92,7 @@ _mainwpctl() {
 }
 
 # Abilities command completions
-_mainwpctl_abilities() {
+_mainwpcontrol_abilities() {
     local -a subcommands
     subcommands=(
         'info:Get detailed information about an ability'
@@ -136,13 +136,13 @@ _mainwpctl_abilities() {
 }
 
 # Autocomplete command completions
-_mainwpctl_autocomplete() {
+_mainwpcontrol_autocomplete() {
     _arguments \
         '1:shell:(bash zsh)'
 }
 
 # Chat command completions
-_mainwpctl_chat() {
+_mainwpcontrol_chat() {
     _arguments \
         $common_flags \
         '--provider[LLM provider]:provider:(anthropic gemini local openai openrouter)' \
@@ -157,14 +157,14 @@ _mainwpctl_chat() {
 }
 
 # Doctor command completions
-_mainwpctl_doctor() {
+_mainwpcontrol_doctor() {
     _arguments \
         $common_flags \
         '(-v --verbose)'{-v,--verbose}'[Verbose output]'
 }
 
 # Help command completions
-_mainwpctl_help() {
+_mainwpcontrol_help() {
     local -a commands
     commands=(
         'abilities'
@@ -182,7 +182,7 @@ _mainwpctl_help() {
 }
 
 # Jobs command completions
-_mainwpctl_jobs() {
+_mainwpcontrol_jobs() {
     local -a subcommands
     subcommands=(
         'watch:Monitor a batch job'
@@ -214,7 +214,7 @@ _mainwpctl_jobs() {
 }
 
 # Login command completions
-_mainwpctl_login() {
+_mainwpcontrol_login() {
     _arguments \
         $common_flags \
         '(-u --url)'{-u,--url}'[Dashboard URL]:url:' \
@@ -225,7 +225,7 @@ _mainwpctl_login() {
 }
 
 # Profile command completions
-_mainwpctl_profile() {
+_mainwpcontrol_profile() {
     local -a subcommands
     subcommands=(
         'delete:Delete a profile'
@@ -247,7 +247,7 @@ _mainwpctl_profile() {
                 delete)
                     _arguments \
                         $common_flags \
-                        '1:profile name:_mainwpctl_profiles'
+                        '1:profile name:_mainwpcontrol_profiles'
                     ;;
                 list)
                     _arguments \
@@ -256,7 +256,7 @@ _mainwpctl_profile() {
                 use)
                     _arguments \
                         $common_flags \
-                        '1:profile name:_mainwpctl_profiles'
+                        '1:profile name:_mainwpcontrol_profiles'
                     ;;
             esac
             ;;
@@ -264,4 +264,4 @@ _mainwpctl_profile() {
 }
 
 # Register the completion function
-compdef _mainwpctl mainwpctl
+compdef _mainwpcontrol mainwpcontrol

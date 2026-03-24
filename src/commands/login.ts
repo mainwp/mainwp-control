@@ -1,5 +1,5 @@
 /**
- * Login command for mainwpctl
+ * Login command for mainwpcontrol
  *
  * Authenticates with a MainWP Dashboard and stores credentials.
  */

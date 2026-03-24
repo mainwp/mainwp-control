@@ -1,5 +1,5 @@
 /**
- * Batch Manager for mainwpctl
+ * Batch Manager for mainwpcontrol
  *
  * Handles batch operations with polling and resume capabilities.
  * Provides exponential backoff for job status polling.

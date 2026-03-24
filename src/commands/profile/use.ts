@@ -1,5 +1,5 @@
 /**
- * Profile use command for mainwpctl
+ * Profile use command for mainwpcontrol
  *
  * Switches the active Dashboard profile.
  */
@@ -43,7 +43,7 @@ export default class ProfileUse extends BaseCommand {
 
     if (!profile) {
       throw new ConfigError(
-        `Profile not found: ${args.name}. Run \`mainwpctl profile list\` to see available profiles.`
+        `Profile not found: ${args.name}. Run \`mainwpcontrol profile list\` to see available profiles.`
       );
     }
 

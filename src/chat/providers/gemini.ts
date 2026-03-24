@@ -1,5 +1,5 @@
 /**
- * Google Gemini Provider for mainwpctl
+ * Google Gemini Provider for mainwpcontrol
  *
  * Implements LLM provider interface for Gemini models.
  */

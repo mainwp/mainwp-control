@@ -1,5 +1,5 @@
 /**
- * Profile list command for mainwpctl
+ * Profile list command for mainwpcontrol
  *
  * Lists all saved Dashboard profiles.
  */
@@ -45,7 +45,7 @@ export default class ProfileList extends BaseCommand {
       },
       () => {
         if (profiles.length === 0) {
-          return 'No profiles configured. Run `mainwpctl login` to add one.';
+          return 'No profiles configured. Run `mainwpcontrol login` to add one.';
         }
 
         const lines = [formatHeading('Profiles'), ''];

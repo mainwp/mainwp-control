@@ -1,5 +1,5 @@
 /**
- * Abilities list command for mainwpctl
+ * Abilities list command for mainwpcontrol
  *
  * Lists all available abilities from the Dashboard.
  */

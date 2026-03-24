@@ -1,13 +1,13 @@
 #!/bin/sh
-# profile-completer.sh - Helper script to get available mainwpctl profile names
+# profile-completer.sh - Helper script to get available mainwpcontrol profile names
 # This script is sourced by shell completion scripts to provide dynamic profile completion.
 #
-# Usage: source this file, then call _mainwpctl_get_profiles
+# Usage: source this file, then call _mainwpcontrol_get_profiles
 #
 # Returns profile names one per line, empty if no profiles exist or config is missing.
 
-_mainwpctl_get_profiles() {
-    local config_file="${XDG_CONFIG_HOME:-$HOME/.config}/mainwpctl/profiles.json"
+_mainwpcontrol_get_profiles() {
+    local config_file="${XDG_CONFIG_HOME:-$HOME/.config}/mainwpcontrol/profiles.json"
 
     # Exit silently if config file doesn't exist
     if [ ! -f "$config_file" ]; then
@@ -31,5 +31,5 @@ _mainwpctl_get_profiles() {
 
 # If called directly (not sourced), output profile names
 if [ "${0##*/}" = "profile-completer.sh" ]; then
-    _mainwpctl_get_profiles
+    _mainwpcontrol_get_profiles
 fi

@@ -1,5 +1,5 @@
 /**
- * Chat Engine for mainwpctl
+ * Chat Engine for mainwpcontrol
  *
  * LLM interaction loop with safety enforcement.
  *
