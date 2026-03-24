@@ -1,7 +1,7 @@
 /**
- * Default Chat Command for mainwpctl
+ * Default Chat Command for mainwpcontrol
  *
- * Running `mainwpctl` without a subcommand enters interactive chat mode.
+ * Running `mainwpcontrol` without a subcommand enters interactive chat mode.
  * This is the primary interaction surface.
  *
  * INVARIANT: AI is the interaction surface, not the execution authority.
@@ -159,8 +159,8 @@ export default class ChatCommand extends BaseCommand {
     // Non-interactive without a message: show help, exit
     if (!isInteractive() && !args.message) {
       this.logToStderr('Error: Interactive chat requires a terminal. Provide a message argument or use abilities run.');
-      this.logToStderr('  mainwpctl "list all sites"              # single message');
-      this.logToStderr('  mainwpctl abilities run list-sites-v1   # direct command');
+      this.logToStderr('  mainwpcontrol "list all sites"              # single message');
+      this.logToStderr('  mainwpcontrol abilities run list-sites-v1   # direct command');
       this.exit(ExitCode.INPUT_ERROR);
     }
 

@@ -1,5 +1,5 @@
 /**
- * LLM Provider Interface for mainwpctl
+ * LLM Provider Interface for mainwpcontrol
  *
  * Abstract interface for different LLM providers.
  * Supported: OpenAI, Anthropic, Gemini, OpenRouter, Local (OpenAI-compatible)

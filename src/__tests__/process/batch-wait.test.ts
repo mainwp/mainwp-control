@@ -2,7 +2,7 @@
  * Process-level tests for batch job waiting
  *
  * Verifies --wait flag on `abilities run` and `jobs watch` by spawning
- * mainwpctl as a child process against a mock HTTP server that returns
+ * mainwpcontrol as a child process against a mock HTTP server that returns
  * progressive batch job statuses.
  */
 

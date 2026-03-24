@@ -1,5 +1,5 @@
 /**
- * Error classes for mainwpctl
+ * Error classes for mainwpcontrol
  *
  * Each error class maps to a specific exit code.
  */
@@ -7,7 +7,7 @@
 import { ExitCode, type ExitCodeValue } from './exit-codes.js';
 
 /**
- * Base error class for mainwpctl errors
+ * Base error class for mainwpcontrol errors
  */
 export abstract class MainWPCTLError extends Error {
   abstract readonly exitCode: ExitCodeValue;

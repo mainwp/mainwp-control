@@ -1,5 +1,5 @@
 /**
- * Process-level tests for `mainwpctl abilities run`
+ * Process-level tests for `mainwpcontrol abilities run`
  *
  * Spawns the CLI as a child process against a mock HTTP server
  * to verify the full request/response lifecycle: input resolution,
@@ -171,7 +171,7 @@ describe('abilities run', () => {
   });
 
   // -------------------------------------------------------------------------
-  // 4. echo '{"site_id": 5}' | mainwpctl abilities run get-site-v1 --input - --json
+  // 4. echo '{"site_id": 5}' | mainwpcontrol abilities run get-site-v1 --input - --json
   // -------------------------------------------------------------------------
   describe('get-site-v1 --input - (stdin pipe)', () => {
     it('reads input from stdin and sends it as query params', async () => {

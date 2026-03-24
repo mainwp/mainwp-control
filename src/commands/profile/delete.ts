@@ -1,5 +1,5 @@
 /**
- * Profile delete command for mainwpctl
+ * Profile delete command for mainwpcontrol
  *
  * Deletes a Dashboard profile and its credentials.
  */
@@ -45,7 +45,7 @@ export default class ProfileDelete extends BaseCommand {
 
     if (!profile) {
       throw new ConfigError(
-        `Profile not found: ${args.name}. Run \`mainwpctl profile list\` to see available profiles.`
+        `Profile not found: ${args.name}. Run \`mainwpcontrol profile list\` to see available profiles.`
       );
     }
 

@@ -39,7 +39,7 @@ To create one:
 1. Log in to the WordPress site where MainWP Dashboard is installed.
 2. Go to **Users** in the left sidebar, then click on your own user profile (or go to **Users > Your Profile**).
 3. Scroll down to the **Application Passwords** section near the bottom of the page.
-4. In the **New Application Password Name** field, type a descriptive name like `mainwpctl`.
+4. In the **New Application Password Name** field, type a descriptive name like `mainwpcontrol`.
 5. Click **Add New Application Password**.
 6. WordPress will display the generated password. It looks something like this:
 
@@ -60,12 +60,12 @@ Install MainWP Control globally using npm (the Node.js package manager that come
 npm install -g @mainwp/control
 ```
 
-This makes the `mainwpctl` command available anywhere on your system.
+This makes the `mainwpcontrol` command available anywhere on your system.
 
 If you prefer not to install globally, you can use `npx` to run it without a permanent install:
 
 ```bash
-npx mainwpctl --version
+npx --package=@mainwp/control mainwpcontrol --version
 ```
 
 `npx` downloads and runs the package on the fly, which is useful for one-off testing. For scripting and automation, the global install is more convenient.
@@ -73,16 +73,16 @@ npx mainwpctl --version
 Verify the installation:
 
 ```bash
-mainwpctl --version
+mainwpcontrol --version
 ```
 
 Expected output:
 
 ```
-mainwpctl/x.y.z
+mainwpcontrol/x.y.z
 ```
 
-You should see `mainwpctl/` followed by a version number. As long as the output starts with `mainwpctl/`, the installation is working.
+You should see `mainwpcontrol/` followed by a version number. As long as the output starts with `mainwpcontrol/`, the installation is working.
 
 If you see `command not found`, make sure Node.js 20+ is installed and that your system PATH includes the npm global bin directory. Run `npm config get prefix` to find where npm installs global packages.
 
@@ -93,7 +93,7 @@ If you see `command not found`, make sure Node.js 20+ is installed and that your
 Run the interactive login command:
 
 ```bash
-mainwpctl login
+mainwpcontrol login
 ```
 
 MainWP Control will prompt you for three pieces of information:
@@ -107,7 +107,7 @@ After entering your credentials, MainWP Control stores them in a local profile s
 Verify that authentication is working:
 
 ```bash
-mainwpctl doctor
+mainwpcontrol doctor
 ```
 
 Expected output:
@@ -136,7 +136,7 @@ Expected output:
   ✓ System is ready
 ```
 
-The key line is `✓ System is ready`. If any check fails, run `mainwpctl doctor -v` for details. If authentication fails, double-check your Dashboard URL, username, and Application Password.
+The key line is `✓ System is ready`. If any check fails, run `mainwpcontrol doctor -v` for details. If authentication fails, double-check your Dashboard URL, username, and Application Password.
 
 ---
 
@@ -176,7 +176,7 @@ This section builds a bash script step by step. Each step introduces one concept
 Start by asking MainWP what updates are available across all your connected sites:
 
 ```bash
-mainwpctl abilities run list-updates-v1 --json
+mainwpcontrol abilities run list-updates-v1 --json
 ```
 
 Breaking this command down:
@@ -226,7 +226,7 @@ The `data.data.total` field tells you how many updates are pending (the inner `d
 Now check what updates are available. `list-updates-v1` is a read-only ability. It shows you what is pending without changing anything:
 
 ```bash
-PREVIEW=$(mainwpctl abilities run list-updates-v1 --json)
+PREVIEW=$(mainwpcontrol abilities run list-updates-v1 --json)
 echo "$PREVIEW"
 ```
 
@@ -271,7 +271,7 @@ This tells you exactly what updates are pending: which sites, which plugins/them
 Next, extract the update count using `jq`. `jq` is a command-line tool for reading and manipulating JSON data. If you do not have it installed, you can install it with `brew install jq` on macOS or `sudo apt-get install jq` on Ubuntu/Debian:
 
 ```bash
-PREVIEW=$(mainwpctl abilities run list-updates-v1 --json)
+PREVIEW=$(mainwpcontrol abilities run list-updates-v1 --json)
 UPDATE_COUNT=$(echo "$PREVIEW" | jq '.data.data.total // 0')
 echo "$UPDATE_COUNT updates pending"
 ```
@@ -289,7 +289,7 @@ Expected output:
 When you are satisfied with the preview, apply the updates for real:
 
 ```bash
-mainwpctl abilities run run-updates-v1 --confirm --force --wait --json
+mainwpcontrol abilities run run-updates-v1 --confirm --force --wait --json
 ```
 
 Here is what each flag does in this context:
@@ -333,7 +333,7 @@ The output shows how many updates succeeded and how many failed, along with per-
 After applying updates, check that nothing is left pending:
 
 ```bash
-REMAINING=$(mainwpctl abilities run list-updates-v1 --json | jq '.data.data.total // 0')
+REMAINING=$(mainwpcontrol abilities run list-updates-v1 --json | jq '.data.data.total // 0')
 echo "$REMAINING updates remaining after run"
 ```
 
@@ -361,7 +361,7 @@ set -e
 
 # Step 1: Preview what will be updated (nothing changes yet)
 echo "Previewing pending updates..."
-PREVIEW=$(mainwpctl abilities run list-updates-v1 --json)
+PREVIEW=$(mainwpcontrol abilities run list-updates-v1 --json)
 
 # Step 2: Check how many updates are pending
 UPDATE_COUNT=$(echo "$PREVIEW" | jq '.data.data.total // 0')
@@ -374,10 +374,10 @@ fi
 
 # Step 3: Apply updates and wait for them to finish
 echo "Applying $UPDATE_COUNT updates..."
-mainwpctl abilities run run-updates-v1 --confirm --force --wait --json
+mainwpcontrol abilities run run-updates-v1 --confirm --force --wait --json
 
 # Step 4: Verify no updates remain
-REMAINING=$(mainwpctl abilities run list-updates-v1 --json | jq '.data.data.total // 0')
+REMAINING=$(mainwpcontrol abilities run list-updates-v1 --json | jq '.data.data.total // 0')
 echo "$REMAINING updates remaining after run"
 ```
 
@@ -524,12 +524,12 @@ jobs:
 ```yaml
       - name: Login
         run: >
-          mainwpctl login
+          mainwpcontrol login
           --url $DASHBOARD_URL
           --username $DASHBOARD_USER
 ```
 
-- `env`: Sets job-level environment variables so every `mainwpctl` step can authenticate. GitHub runners often do not persist credentials in an OS keychain between steps, so `MAINWP_APP_PASSWORD` must stay available for the whole job.
+- `env`: Sets job-level environment variables so every `mainwpcontrol` step can authenticate. GitHub runners often do not persist credentials in an OS keychain between steps, so `MAINWP_APP_PASSWORD` must stay available for the whole job.
 - `${{ secrets.DASHBOARD_URL }}`: GitHub replaces this with the encrypted secret value at runtime. The actual value never appears in logs.
 - The `>` after `run:` is YAML syntax for a folded string. It joins the following indented lines into a single command, which makes long commands easier to read.
 
@@ -539,7 +539,7 @@ jobs:
       - name: Preview updates
         id: preview
         run: |
-          PREVIEW=$(mainwpctl abilities run list-updates-v1 --json)
+          PREVIEW=$(mainwpcontrol abilities run list-updates-v1 --json)
           COUNT=$(echo "$PREVIEW" | jq '.data.data.total // 0')
           echo "count=$COUNT" >> "$GITHUB_OUTPUT"
           echo "### Preview: $COUNT updates pending" >> "$GITHUB_STEP_SUMMARY"
@@ -555,7 +555,7 @@ jobs:
       - name: Apply updates
         if: steps.preview.outputs.count != '0'
         run: >
-          mainwpctl abilities run run-updates-v1
+          mainwpcontrol abilities run run-updates-v1
           --confirm --force --wait --json
 ```
 
@@ -568,7 +568,7 @@ jobs:
       - name: Verify
         if: steps.preview.outputs.count != '0'
         run: |
-          REMAINING=$(mainwpctl abilities run list-updates-v1 --json | jq '.data.data.total // 0')
+          REMAINING=$(mainwpcontrol abilities run list-updates-v1 --json | jq '.data.data.total // 0')
           echo "### $REMAINING updates remaining after run" >> "$GITHUB_STEP_SUMMARY"
 ```
 
@@ -602,14 +602,14 @@ jobs:
 
       - name: Login
         run: >
-          mainwpctl login
+          mainwpcontrol login
           --url $DASHBOARD_URL
           --username $DASHBOARD_USER
 
       - name: Preview updates
         id: preview
         run: |
-          PREVIEW=$(mainwpctl abilities run list-updates-v1 --json)
+          PREVIEW=$(mainwpcontrol abilities run list-updates-v1 --json)
           COUNT=$(echo "$PREVIEW" | jq '.data.data.total // 0')
           echo "count=$COUNT" >> "$GITHUB_OUTPUT"
           echo "### Preview: $COUNT updates pending" >> "$GITHUB_STEP_SUMMARY"
@@ -617,13 +617,13 @@ jobs:
       - name: Apply updates
         if: steps.preview.outputs.count != '0'
         run: >
-          mainwpctl abilities run run-updates-v1
+          mainwpcontrol abilities run run-updates-v1
           --confirm --force --wait --json
 
       - name: Verify
         if: steps.preview.outputs.count != '0'
         run: |
-          REMAINING=$(mainwpctl abilities run list-updates-v1 --json | jq '.data.data.total // 0')
+          REMAINING=$(mainwpcontrol abilities run list-updates-v1 --json | jq '.data.data.total // 0')
           echo "### $REMAINING updates remaining after run" >> "$GITHUB_STEP_SUMMARY"
 ```
 
@@ -681,7 +681,7 @@ The default wait timeout is 300 seconds (5 minutes). For large networks with man
 To increase the timeout, add the `--wait-timeout` flag with a value in seconds:
 
 ```bash
-mainwpctl abilities run run-updates-v1 --confirm --force --wait --wait-timeout 600 --json
+mainwpcontrol abilities run run-updates-v1 --confirm --force --wait --wait-timeout 600 --json
 ```
 
 This increases the timeout to 10 minutes (600 seconds).
@@ -689,7 +689,7 @@ This increases the timeout to 10 minutes (600 seconds).
 If the command still times out, the updates are not cancelled. They continue running on the MainWP server. The CLI stops waiting. You can check the progress of a running job with:
 
 ```bash
-mainwpctl jobs watch <job-id>
+mainwpcontrol jobs watch <job-id>
 ```
 
 Replace `<job-id>` with the job ID from the timeout output. This command connects to the job and shows its progress until it finishes.
@@ -703,7 +703,7 @@ To see which updates failed, check the `results` array in the JSON output. Each 
 To see what is still pending after a run:
 
 ```bash
-mainwpctl abilities run list-updates-v1 --json
+mainwpcontrol abilities run list-updates-v1 --json
 ```
 
 ### "Updates remaining" Shows a Non-Zero Count After Running
@@ -722,7 +722,7 @@ The `set -e` directive tells bash to stop the script immediately if any command 
 To debug, run each command from the script individually in your terminal to find which one is failing and why. Common causes:
 
 - `jq` is not installed (install it with `brew install jq` or `sudo apt-get install jq`)
-- MainWP Control is not authenticated (run `mainwpctl doctor` to check)
+- MainWP Control is not authenticated (run `mainwpcontrol doctor` to check)
 - A network error caused a non-zero exit code
 
 ### GitHub Actions: "Login Failed"

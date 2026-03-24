@@ -40,7 +40,7 @@ An **Application Password** is a special password that WordPress generates for e
 1. Log in to your WordPress Dashboard site (the site where MainWP Dashboard is installed).
 2. In the left sidebar, go to **Users** then click **Your Profile** (or **Profile**).
 3. Scroll down to the section titled **Application Passwords**.
-4. In the **New Application Password Name** field, type a descriptive name such as `mainwpctl`.
+4. In the **New Application Password Name** field, type a descriptive name such as `mainwpcontrol`.
 5. Click **Add New Application Password**.
 6. WordPress displays the generated password. It looks something like this:
 
@@ -65,31 +65,31 @@ Install MainWP Control globally using npm (npm is the package manager that comes
 npm install -g @mainwp/control
 ```
 
-This downloads MainWP Control and makes the `mainwpctl` command available anywhere on your machine.
+This downloads MainWP Control and makes the `mainwpcontrol` command available anywhere on your machine.
 
 **Alternative -- run without installing globally:**
 
 If you prefer not to install globally, you can use `npx` which runs the package directly:
 
 ```bash
-npx mainwpctl --version
+npx --package=@mainwp/control mainwpcontrol --version
 ```
 
-`npx` downloads the package temporarily each time you run it. For this guide, the examples use `mainwpctl` directly, but you can substitute `npx mainwpctl` anywhere you see `mainwpctl`.
+`npx` downloads the package temporarily each time you run it. For this guide, the examples use `mainwpcontrol` directly, but you can substitute `npx --package=@mainwp/control mainwpcontrol` anywhere you see `mainwpcontrol`.
 
 **Verify the installation:**
 
 ```bash
-mainwpctl --version
+mainwpcontrol --version
 ```
 
 Expected output:
 
 ```
-mainwpctl/x.y.z darwin-arm64 node-vNN.NN.N
+mainwpcontrol/x.y.z darwin-arm64 node-vNN.NN.N
 ```
 
-You should see `mainwpctl/` followed by a version number. If you see `command not found`, make sure Node.js 20+ is installed and try opening a new terminal window.
+You should see `mainwpcontrol/` followed by a version number. If you see `command not found`, make sure Node.js 20+ is installed and try opening a new terminal window.
 
 ---
 
@@ -100,7 +100,7 @@ Before setting up GitHub Actions, verify that your credentials work by logging i
 Run the interactive login command:
 
 ```bash
-mainwpctl login
+mainwpcontrol login
 ```
 
 MainWP Control will prompt you for three pieces of information:
@@ -114,7 +114,7 @@ After entering your credentials, MainWP Control stores them in a local profile s
 **Verify the connection:**
 
 ```bash
-mainwpctl doctor
+mainwpcontrol doctor
 ```
 
 Expected output:
@@ -143,7 +143,7 @@ Expected output:
   ✓ System is ready
 ```
 
-The key line is `✓ System is ready`. If any check fails, run `mainwpctl doctor -v` for details. If authentication fails, double-check your URL (make sure it includes `https://`), username, and Application Password.
+The key line is `✓ System is ready`. If any check fails, run `mainwpcontrol doctor -v` for details. If authentication fails, double-check your URL (make sure it includes `https://`), username, and Application Password.
 
 **Note:** The GitHub Actions workflow will use the same credentials, but it reads them from GitHub Secrets instead of a local profile. The next step sets that up.
 
@@ -229,7 +229,7 @@ jobs:
         with:
           node-version: '20'
 
-      - name: Install mainwpctl
+      - name: Install mainwpcontrol
         run: npm install -g @mainwp/control
 ```
 
@@ -246,14 +246,14 @@ jobs:
 ```yaml
       - name: Authenticate
         run: >
-          mainwpctl login
+          mainwpcontrol login
           --url $DASHBOARD_URL
           --username $DASHBOARD_USER
 ```
 
-- `env:` sets job-level environment variables so every `mainwpctl` step can authenticate. GitHub runners often do not persist credentials in an OS keychain between steps, so `MAINWP_APP_PASSWORD` must stay available for the whole job.
+- `env:` sets job-level environment variables so every `mainwpcontrol` step can authenticate. GitHub runners often do not persist credentials in an OS keychain between steps, so `MAINWP_APP_PASSWORD` must stay available for the whole job.
 - `${{ secrets.NAME }}` is GitHub Actions syntax for reading a secret. GitHub replaces this with the actual value at runtime and automatically masks it in logs.
-- `run: >` uses a YAML feature called **folding**. The `>` character means "join the following indented lines into a single line." This lets you split a long command across multiple lines for readability. The actual command that runs is: `mainwpctl login --url $DASHBOARD_URL --username $DASHBOARD_USER`
+- `run: >` uses a YAML feature called **folding**. The `>` character means "join the following indented lines into a single line." This lets you split a long command across multiple lines for readability. The actual command that runs is: `mainwpcontrol login --url $DASHBOARD_URL --username $DASHBOARD_USER`
 - The `--url` and `--username` flags provide credentials non-interactively, which is necessary because GitHub Actions runs without a terminal and cannot prompt for input.
 
 ---
@@ -263,9 +263,9 @@ jobs:
 ```yaml
       - name: Check plugin across sites
         run: |
-          mainwpctl abilities run list-sites-v1 --json | \
+          mainwpcontrol abilities run list-sites-v1 --json | \
             jq -r '.data.data.items[].id' | while read SITE_ID; do
-              PLUGINS=$(mainwpctl abilities run get-site-plugins-v1 \
+              PLUGINS=$(mainwpcontrol abilities run get-site-plugins-v1 \
                 --input "{\"site_id_or_domain\": $SITE_ID}" --json 2>/dev/null)
               SUCCESS=$(echo "$PLUGINS" | jq -r '.success // false')
               if [ "$SUCCESS" != "true" ]; then
@@ -284,13 +284,13 @@ This is the core of the workflow. Here is what each piece does:
 
 - `run: |` uses a YAML **literal block**. The `|` character means "keep the following lines exactly as written, including line breaks." This is used for multi-line scripts.
 
-- **`mainwpctl abilities run list-sites-v1 --json`** calls the MainWP API to fetch a list of all connected sites. The `--json` flag tells mainwpctl to output structured JSON instead of human-readable text.
+- **`mainwpcontrol abilities run list-sites-v1 --json`** calls the MainWP API to fetch a list of all connected sites. The `--json` flag tells mainwpcontrol to output structured JSON instead of human-readable text.
 
 - **`jq -r '.data.data.items[].id'`** extracts the site IDs from the JSON response. `jq` is a command-line JSON processor (it comes pre-installed on GitHub's Ubuntu runners). The `-r` flag outputs raw text without quotes. `.data.data.items[].id` is a jq filter that means "from the outer `data` object, navigate into the inner `data` object, get the `items` array, and for each element, extract the `id` field."
 
 - **`| while read SITE_ID; do ... done`** is a shell loop. The `|` (pipe) sends the list of site IDs into the loop, which processes them one at a time. Each iteration stores one site ID in the variable `SITE_ID`.
 
-- **`mainwpctl abilities run get-site-plugins-v1 --input "{\"site_id_or_domain\": $SITE_ID}" --json`** fetches the list of plugins installed on a specific site. The `--input` flag passes the site identifier as a JSON parameter. The backslashes (`\"`) are needed to include quotes inside the JSON string.
+- **`mainwpcontrol abilities run get-site-plugins-v1 --input "{\"site_id_or_domain\": $SITE_ID}" --json`** fetches the list of plugins installed on a specific site. The `--input` flag passes the site identifier as a JSON parameter. The backslashes (`\"`) are needed to include quotes inside the JSON string.
 
 - **The error check** (`SUCCESS` / `continue`) handles sites that are disconnected or unreachable. If the plugins call fails, the script emits a warning and skips to the next site instead of crashing.
 
@@ -327,20 +327,20 @@ jobs:
         with:
           node-version: '20'
 
-      - name: Install mainwpctl
+      - name: Install mainwpcontrol
         run: npm install -g @mainwp/control
 
       - name: Authenticate
         run: >
-          mainwpctl login
+          mainwpcontrol login
           --url $DASHBOARD_URL
           --username $DASHBOARD_USER
 
       - name: Check plugin across sites
         run: |
-          mainwpctl abilities run list-sites-v1 --json | \
+          mainwpcontrol abilities run list-sites-v1 --json | \
             jq -r '.data.data.items[].id' | while read SITE_ID; do
-              PLUGINS=$(mainwpctl abilities run get-site-plugins-v1 \
+              PLUGINS=$(mainwpcontrol abilities run get-site-plugins-v1 \
                 --input "{\"site_id_or_domain\": $SITE_ID}" --json 2>/dev/null)
               SUCCESS=$(echo "$PLUGINS" | jq -r '.success // false')
               if [ "$SUCCESS" != "true" ]; then
@@ -450,10 +450,10 @@ The `plugin` input uses the **plugin slug**, not the display name. The slug is t
 | Contact Form 7 | `contact-form-7` |
 | Wordfence Security | `wordfence` |
 
-If you are unsure of a plugin's slug, you can check it using mainwpctl on your local machine:
+If you are unsure of a plugin's slug, you can check it using mainwpcontrol on your local machine:
 
 ```bash
-mainwpctl abilities run get-site-plugins-v1 \
+mainwpcontrol abilities run get-site-plugins-v1 \
   --input '{"site_id_or_domain": 1}' \
   --json | jq -r '.data.data.plugins[].slug'
 ```

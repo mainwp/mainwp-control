@@ -1,5 +1,5 @@
 #!/bin/bash
-# regenerate.sh - Regenerate shell completion scripts for mainwpctl
+# regenerate.sh - Regenerate shell completion scripts for mainwpcontrol
 #
 # This script helps developers update completion scripts after CLI changes.
 # Run this after adding, removing, or modifying commands or flags.
@@ -14,44 +14,44 @@ PROJECT_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 echo "Shell Completion Regeneration Helper"
 echo "====================================="
 echo ""
-echo "The mainwpctl completion scripts are manually maintained to provide"
+echo "The mainwpcontrol completion scripts are manually maintained to provide"
 echo "optimal completion behavior with dynamic profile name completion."
 echo ""
 echo "After adding, removing, or modifying commands/flags, you should update:"
 echo ""
-echo "  1. $SCRIPT_DIR/mainwpctl.bash"
+echo "  1. $SCRIPT_DIR/mainwpcontrol.bash"
 echo "     - Update 'commands' variable for new top-level commands"
 echo "     - Update '*_commands' variables for new subcommands"
 echo "     - Update '*_flags' variables for new flags"
 echo ""
-echo "  2. $SCRIPT_DIR/mainwpctl.zsh"
+echo "  2. $SCRIPT_DIR/mainwpcontrol.zsh"
 echo "     - Update 'commands' array for new top-level commands"
 echo "     - Update subcommand arrays in respective functions"
 echo "     - Update _arguments calls for new flags"
 echo ""
 echo "Testing completions:"
 echo "  # Bash"
-echo "  source $SCRIPT_DIR/mainwpctl.bash"
-echo "  mainwpctl <TAB>"
+echo "  source $SCRIPT_DIR/mainwpcontrol.bash"
+echo "  mainwpcontrol <TAB>"
 echo ""
 echo "  # Zsh"
-echo "  source $SCRIPT_DIR/mainwpctl.zsh"
-echo "  mainwpctl <TAB>"
+echo "  source $SCRIPT_DIR/mainwpcontrol.zsh"
+echo "  mainwpcontrol <TAB>"
 echo ""
 
 # Verify files exist
 echo "Checking completion files..."
 
-if [[ -f "$SCRIPT_DIR/mainwpctl.bash" ]]; then
-    echo "  [OK] mainwpctl.bash"
+if [[ -f "$SCRIPT_DIR/mainwpcontrol.bash" ]]; then
+    echo "  [OK] mainwpcontrol.bash"
 else
-    echo "  [MISSING] mainwpctl.bash"
+    echo "  [MISSING] mainwpcontrol.bash"
 fi
 
-if [[ -f "$SCRIPT_DIR/mainwpctl.zsh" ]]; then
-    echo "  [OK] mainwpctl.zsh"
+if [[ -f "$SCRIPT_DIR/mainwpcontrol.zsh" ]]; then
+    echo "  [OK] mainwpcontrol.zsh"
 else
-    echo "  [MISSING] mainwpctl.zsh"
+    echo "  [MISSING] mainwpcontrol.zsh"
 fi
 
 if [[ -f "$SCRIPT_DIR/profile-completer.sh" ]]; then

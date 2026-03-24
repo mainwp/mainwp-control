@@ -2,12 +2,12 @@
  * E2E Test: Non-TTY Behavior
  *
  * Validates behavior in non-interactive (piped/CI) environments.
- * Ensures mainwpctl doesn't hang in CI pipelines and provides
+ * Ensures mainwpcontrol doesn't hang in CI pipelines and provides
  * appropriate error messages for terminal-dependent features.
  *
  * INVARIANTS TESTED:
- * - Bare `mainwpctl` in non-TTY exits with code 1 and guidance
- * - `mainwpctl "message"` in non-TTY works (single-message mode)
+ * - Bare `mainwpcontrol` in non-TTY exits with code 1 and guidance
+ * - `mainwpcontrol "message"` in non-TTY works (single-message mode)
  * - --quiet suppresses stdout, exit code reflects success/failure
  * - --json output works in pipe
  * - Destructive --confirm without --force in non-TTY exits with error
@@ -179,10 +179,10 @@ function createCommandInstance<T extends ChatCommand | AbilitiesRun>(
 
   const mockConfig = {
     root: '/mock/root',
-    bin: 'mainwpctl',
-    name: 'mainwpctl',
+    bin: 'mainwpcontrol',
+    name: 'mainwpcontrol',
     version: '1.0.0',
-    pjson: { name: 'mainwpctl', version: '1.0.0' },
+    pjson: { name: 'mainwpcontrol', version: '1.0.0' },
     dataDir: '/mock/data',
     cacheDir: '/mock/cache',
     configDir: '/mock/config',

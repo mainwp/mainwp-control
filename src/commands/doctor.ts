@@ -1,5 +1,5 @@
 /**
- * Doctor Command for mainwpctl
+ * Doctor Command for mainwpcontrol
  *
  * Diagnoses configuration issues and validates connectivity.
  *
@@ -127,7 +127,7 @@ export default class DoctorCommand extends BaseCommand {
           name: 'Profiles',
           status: 'fail',
           message: 'No profiles configured',
-          details: 'Run `mainwpctl login` to create a profile',
+          details: 'Run `mainwpcontrol login` to create a profile',
         };
       }
 
@@ -194,7 +194,7 @@ export default class DoctorCommand extends BaseCommand {
           name: 'Active Profile',
           status: 'fail',
           message: 'No active profile',
-          details: 'Run `mainwpctl login` or `mainwpctl profile use <name>`',
+          details: 'Run `mainwpcontrol login` or `mainwpcontrol profile use <name>`',
         };
       }
 
@@ -238,7 +238,7 @@ export default class DoctorCommand extends BaseCommand {
           status: 'fail',
           message: 'No credentials found',
           details:
-            'Run `mainwpctl login` or set MAINWP_APP_PASSWORD environment variable',
+            'Run `mainwpcontrol login` or set MAINWP_APP_PASSWORD environment variable',
         };
       }
 

@@ -1,5 +1,5 @@
 /**
- * Schema Validator for mainwpctl
+ * Schema Validator for mainwpcontrol
  *
  * AJV-based input validation against ability JSON schemas.
  * Caches compiled schemas for performance.
@@ -97,7 +97,7 @@ export class SchemaValidator {
       throw new SchemaValidationError(
         `Invalid input for ability "${abilityName}": ${errorMessages}`,
         result.errors,
-        `Check the ability schema with \`mainwpctl abilities info ${abilityName}\` for required fields and types`
+        `Check the ability schema with \`mainwpcontrol abilities info ${abilityName}\` for required fields and types`
       );
     }
 

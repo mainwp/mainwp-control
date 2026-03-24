@@ -1,5 +1,5 @@
 /**
- * Human-readable output formatter for mainwpctl
+ * Human-readable output formatter for mainwpcontrol
  */
 
 import { isMainWPCTLError } from '../utils/errors.js';

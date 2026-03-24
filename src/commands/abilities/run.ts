@@ -1,5 +1,5 @@
 /**
- * Abilities run command for mainwpctl
+ * Abilities run command for mainwpcontrol
  *
  * Execute abilities with safety enforcement.
  * Routes through SafetyController for destructive actions.
@@ -111,7 +111,7 @@ export default class AbilitiesRun extends BaseCommand {
     const ability = await executor.getAbility(args.name);
     if (!ability) {
       throw new InputError(
-        `Ability not found: ${args.name}. Run \`mainwpctl abilities list\` to see available abilities.`
+        `Ability not found: ${args.name}. Run \`mainwpcontrol abilities list\` to see available abilities.`
       );
     }
 
@@ -579,7 +579,7 @@ export default class AbilitiesRun extends BaseCommand {
       '',
       formatKeyValue('Job ID', jobId),
       '',
-      `Monitor progress with: mainwpctl jobs watch ${jobId}`,
+      `Monitor progress with: mainwpcontrol jobs watch ${jobId}`,
     ].join('\n');
   }
 
@@ -592,10 +592,10 @@ export default class AbilitiesRun extends BaseCommand {
       this.logToStderr(formatWarning(`"${abilityName}" is a destructive ability.`));
       this.logToStderr('');
       this.logToStderr('To preview changes:');
-      this.logToStderr(`  mainwpctl abilities run ${abilityName} --dry-run --input '{...}'`);
+      this.logToStderr(`  mainwpcontrol abilities run ${abilityName} --dry-run --input '{...}'`);
       this.logToStderr('');
       this.logToStderr('To execute after preview:');
-      this.logToStderr(`  mainwpctl abilities run ${abilityName} --confirm --input '{...}'`);
+      this.logToStderr(`  mainwpcontrol abilities run ${abilityName} --confirm --input '{...}'`);
       this.logToStderr('');
     }
   }

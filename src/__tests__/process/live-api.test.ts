@@ -1,5 +1,5 @@
 /**
- * Live Integration Tests for mainwpctl
+ * Live Integration Tests for mainwpcontrol
  *
  * Exercises the CLI against a real MainWP Dashboard (local testbed).
  * All destructive abilities use --dry-run only — never executes mutations.
@@ -134,7 +134,7 @@ describe.skipIf(!dashboardOnline)('live integration tests', () => {
   it('smoke: --help exits 0', async () => {
     const r = await cli(['--help']);
     expect(r.exitCode).toBe(0);
-    expect(r.stdout).toContain('mainwpctl');
+    expect(r.stdout).toContain('mainwpcontrol');
   });
 
   // ── Group 2: Login ──────────────────────────────────────────────────────

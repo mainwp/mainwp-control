@@ -1,5 +1,5 @@
 /**
- * Safety Controller for mainwpctl
+ * Safety Controller for mainwpcontrol
  *
  * Enforces the destructive action protocol defined in PLAN.md:
  * - Safety check happens BEFORE any network call

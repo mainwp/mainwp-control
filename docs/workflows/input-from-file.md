@@ -1,6 +1,6 @@
 # Input from File
 
-> Pass complex parameters to mainwpctl using JSON files, stdin pipes, or heredocs instead of typing everything on the command line.
+> Pass complex parameters to mainwpcontrol using JSON files, stdin pipes, or heredocs instead of typing everything on the command line.
 
 MainWP Control is a command-line tool for managing your MainWP Dashboard and all the WordPress sites connected to it. Some operations need structured data as input: site IDs, lists of plugins, or nested configuration objects. This guide shows you three ways to pass that structured data without wrestling with long, error-prone command-line strings.
 
@@ -20,7 +20,7 @@ MainWP Control is a command-line tool for managing your MainWP Dashboard and all
 Some MainWP Control abilities need more than a flag. For example, updating specific plugins on a specific site requires a JSON object with a site ID and a list of plugin slugs. Typing this as an `--input` flag works for simple cases:
 
 ```bash
-mainwpctl abilities run get-site-v1 --input '{"site_id_or_domain": 5}' --json
+mainwpcontrol abilities run get-site-v1 --input '{"site_id_or_domain": 5}' --json
 ```
 
 But when parameters get complex (nested objects, arrays, multiple fields), inline JSON becomes hard to read and easy to get wrong. A misplaced quote or missing comma can cause confusing errors.
@@ -60,7 +60,7 @@ MainWP Control authenticates with your MainWP Dashboard using a WordPress Applic
 1. Log in to your WordPress Dashboard site as an administrator.
 2. Go to **Users > Your Profile** (click your username in the top-right, then "Edit Profile", or navigate to `/wp-admin/profile.php`).
 3. Scroll down to the **Application Passwords** section near the bottom of the page.
-4. In the "New Application Password Name" field, type a name you will recognize later, for example: `mainwpctl`
+4. In the "New Application Password Name" field, type a name you will recognize later, for example: `mainwpcontrol`
 5. Click **Add New Application Password**.
 6. WordPress will display a password that looks something like this:
 
@@ -71,7 +71,7 @@ MainWP Control authenticates with your MainWP Dashboard using a WordPress Applic
 7. **Copy this password immediately.** WordPress will not show it again. If you lose it, you will need to create a new one.
 8. Store it somewhere secure (a password manager is ideal).
 
-The spaces in the password are optional. mainwpctl accepts the password with or without them.
+The spaces in the password are optional. mainwpcontrol accepts the password with or without them.
 
 ---
 
@@ -92,24 +92,24 @@ npm install -g @mainwp/control
 If you prefer not to install globally, you can run MainWP Control on demand using `npx`:
 
 ```bash
-npx mainwpctl --version
+npx --package=@mainwp/control mainwpcontrol --version
 ```
 
-`npx` downloads and runs the package temporarily. Every example in this guide uses `mainwpctl` directly. If you chose Option B, replace `mainwpctl` with `npx mainwpctl` in every command.
+`npx` downloads and runs the package temporarily. Every example in this guide uses `mainwpcontrol` directly. If you chose Option B, replace `mainwpcontrol` with `npx --package=@mainwp/control mainwpcontrol` in every command.
 
 ### Verify the installation
 
 ```bash
-mainwpctl --version
+mainwpcontrol --version
 ```
 
 Expected output:
 
 ```
-mainwpctl/x.y.z
+mainwpcontrol/x.y.z
 ```
 
-You should see `mainwpctl/` followed by a version number. The exact values depend on your system.
+You should see `mainwpcontrol/` followed by a version number. The exact values depend on your system.
 
 ---
 
@@ -118,7 +118,7 @@ You should see `mainwpctl/` followed by a version number. The exact values depen
 Run the interactive login command:
 
 ```bash
-mainwpctl login
+mainwpcontrol login
 ```
 
 MainWP Control will prompt you for three pieces of information:
@@ -132,7 +132,7 @@ Enter each value when prompted. MainWP Control will test the connection and stor
 ### Verify authentication
 
 ```bash
-mainwpctl doctor
+mainwpcontrol doctor
 ```
 
 Expected output:
@@ -203,13 +203,13 @@ Save the file in a directory you can easily navigate to in your terminal.
 Here is what each part means:
 
 - `{` and `}`: the outer curly braces define a JSON object (a collection of key-value pairs)
-- `"site_id_or_domain"`: the key, which tells mainwpctl which parameter you are setting
+- `"site_id_or_domain"`: the key, which tells mainwpcontrol which parameter you are setting
 - `:` separates the key from the value
 - `5`: the value (a number representing the site ID in your MainWP Dashboard)
 
 This is the simplest possible parameter file. It passes a single site ID to an ability.
 
-**How do you find your site ID?** Run `mainwpctl abilities run list-sites-v1 --json` to see all your connected sites. Each site in the output will have an `id` field. Replace `5` with your actual site ID.
+**How do you find your site ID?** Run `mainwpcontrol abilities run list-sites-v1 --json` to see all your connected sites. Each site in the output will have an `id` field. Replace `5` with your actual site ID.
 
 ### A more complex example
 
@@ -222,7 +222,7 @@ For updating specific plugins on a site, you might need:
 }
 ```
 
-This adds a second parameter called `plugins`. The value is an array (a list) containing two plugin slugs. A plugin slug is the short name used in the plugin's directory. You can find it by running `mainwpctl abilities run get-site-plugins-v1 --input '{"site_id_or_domain": 5}' --json` and looking at the `slug` field for each plugin.
+This adds a second parameter called `plugins`. The value is an array (a list) containing two plugin slugs. A plugin slug is the short name used in the plugin's directory. You can find it by running `mainwpcontrol abilities run get-site-plugins-v1 --input '{"site_id_or_domain": 5}' --json` and looking at the `slug` field for each plugin.
 
 Notice the comma after `5` on the first line. Commas separate items within an object. There is no comma after the last item (`"plugins"` line).
 
@@ -233,12 +233,12 @@ Notice the comma after `5` on the first line. Commas separate items within an ob
 Now that you have a `params.json` file, use it with the `--input-file` flag:
 
 ```bash
-mainwpctl abilities run get-site-v1 --input-file params.json --json
+mainwpcontrol abilities run get-site-v1 --input-file params.json --json
 ```
 
 Here is what each part of this command does:
 
-- `mainwpctl abilities run`: tells MainWP Control to execute an ability
+- `mainwpcontrol abilities run`: tells MainWP Control to execute an ability
 - `get-site-v1`: the name of the ability (fetches details about a specific site)
 - `--input-file params.json`: read the parameters from your `params.json` file instead of the command line
 - `--json`: output the result as structured JSON (easier to read and use in scripts)
@@ -246,7 +246,7 @@ Here is what each part of this command does:
 The file path (`params.json`) is relative to the directory where you run the command. If you are in `/home/user/projects` and the file is at `/home/user/projects/params.json`, then `params.json` works. You can also use an absolute path:
 
 ```bash
-mainwpctl abilities run get-site-v1 --input-file /home/user/projects/params.json --json
+mainwpcontrol abilities run get-site-v1 --input-file /home/user/projects/params.json --json
 ```
 
 Expected output (your values will differ):
@@ -277,7 +277,7 @@ Expected output (your values will differ):
 Some abilities make changes: updating plugins, deleting themes, modifying site settings. These are called destructive operations. For safety, MainWP Control requires you to explicitly confirm them:
 
 ```bash
-mainwpctl abilities run update-site-plugins-v1 --input-file params.json --confirm --force
+mainwpcontrol abilities run update-site-plugins-v1 --input-file params.json --confirm --force
 ```
 
 - `--confirm`: tells MainWP Control you have reviewed the action and want to proceed
@@ -298,14 +298,14 @@ Think of it like a conveyor belt: the command on the left produces data, the pip
 ### Basic pipe
 
 ```bash
-echo '{"site_id_or_domain": 5}' | mainwpctl abilities run get-site-v1 --input - --json
+echo '{"site_id_or_domain": 5}' | mainwpcontrol abilities run get-site-v1 --input - --json
 ```
 
 Here is what happens:
 
 1. `echo '{"site_id_or_domain": 5}'`: the `echo` command outputs the JSON string to the terminal
 2. `|`: the pipe takes that output and sends it as input to the next command
-3. `mainwpctl abilities run get-site-v1 --input - --json`: mainwpctl runs the ability, and `--input -` tells it to read parameters from stdin (the `-` character means "read from the pipe instead of from a flag value")
+3. `mainwpcontrol abilities run get-site-v1 --input - --json`: mainwpcontrol runs the ability, and `--input -` tells it to read parameters from stdin (the `-` character means "read from the pipe instead of from a flag value")
 
 Expected output:
 
@@ -328,20 +328,20 @@ Expected output:
 
 ### Pipe from a file
 
-You can also pipe the contents of a file into mainwpctl:
+You can also pipe the contents of a file into mainwpcontrol:
 
 ```bash
-cat params.json | mainwpctl abilities run get-site-v1 --input - --json
+cat params.json | mainwpcontrol abilities run get-site-v1 --input - --json
 ```
 
-`cat` is a command that reads a file and outputs its contents. The pipe then sends those contents to mainwpctl. This is equivalent to `--input-file params.json` but is useful when you want to chain multiple commands together or add processing steps between reading the file and sending it to MainWP Control.
+`cat` is a command that reads a file and outputs its contents. The pipe then sends those contents to mainwpcontrol. This is equivalent to `--input-file params.json` but is useful when you want to chain multiple commands together or add processing steps between reading the file and sending it to MainWP Control.
 
 ### Pipe from another command
 
 You can generate JSON dynamically and pipe it directly:
 
 ```bash
-printf '{"site_id_or_domain": %d}' 5 | mainwpctl abilities run get-site-v1 --input - --json
+printf '{"site_id_or_domain": %d}' 5 | mainwpcontrol abilities run get-site-v1 --input - --json
 ```
 
 `printf` is like `echo` but gives you more control over formatting. The `%d` is a placeholder that gets replaced with the number `5`. This is useful in scripts where the site ID comes from a variable or another command's output.
@@ -361,7 +361,7 @@ The syntax `<<'EOF'` means: "everything from here until you see `EOF` on its own
 ### Basic heredoc
 
 ```bash
-mainwpctl abilities run get-site-v1 --input - --json <<'EOF'
+mainwpcontrol abilities run get-site-v1 --input - --json <<'EOF'
 {
   "site_id_or_domain": 5
 }
@@ -370,7 +370,7 @@ EOF
 
 Here is what each part does:
 
-- `mainwpctl abilities run get-site-v1 --input - --json`: runs the ability, reading parameters from stdin
+- `mainwpcontrol abilities run get-site-v1 --input - --json`: runs the ability, reading parameters from stdin
 - `<<'EOF'`: starts the heredoc. The single quotes around `EOF` are important (explained below)
 - The lines between `<<'EOF'` and `EOF` are the JSON content sent as stdin
 - `EOF` on its own line (no spaces before it, nothing after it): ends the heredoc
@@ -397,7 +397,7 @@ Expected output:
 ### A more complex heredoc
 
 ```bash
-mainwpctl abilities run update-site-plugins-v1 --input - --confirm --force <<'EOF'
+mainwpcontrol abilities run update-site-plugins-v1 --input - --confirm --force <<'EOF'
 {
   "site_id_or_domain": 5,
   "plugins": ["akismet", "wordfence"]
@@ -418,13 +418,13 @@ For JSON, **always use `<<'EOF'` (with single quotes)**. Here is why:
 
 ```bash
 # With quotes - CORRECT for JSON
-mainwpctl abilities run get-site-v1 --input - --json <<'EOF'
+mainwpcontrol abilities run get-site-v1 --input - --json <<'EOF'
 {"site_id_or_domain": 5}
 EOF
-# mainwpctl receives: {"site_id_or_domain": 5}
+# mainwpcontrol receives: {"site_id_or_domain": 5}
 
 # Without quotes - DANGEROUS for JSON
-mainwpctl abilities run get-site-v1 --input - --json <<EOF
+mainwpcontrol abilities run get-site-v1 --input - --json <<EOF
 {"site_id_or_domain": 5}
 EOF
 # If there were a $variable in the JSON, the shell would try to expand it
@@ -441,7 +441,7 @@ Since JSON never uses shell variables, always quote the marker to prevent accide
 |--------|----------|---------|
 | `--input '...'` | Simple, one-line JSON | `--input '{"site_id_or_domain": 5}'` |
 | `--input-file` | Reusable parameter files, complex JSON, version-controlled configs | `--input-file deploy-params.json` |
-| `--input -` (pipe) | Dynamically generated parameters, chaining commands | `echo '...' \| mainwpctl ... --input -` |
+| `--input -` (pipe) | Dynamically generated parameters, chaining commands | `echo '...' \| mainwpcontrol ... --input -` |
 | `--input -` (heredoc) | Multi-line JSON in scripts without creating a file | `<<'EOF' ... EOF` |
 
 **Rules of thumb:**
@@ -459,14 +459,14 @@ All three methods should produce identical output for the same input. Try runnin
 
 ```bash
 # Method 1: inline
-mainwpctl abilities run get-site-v1 --input '{"site_id_or_domain": 5}' --json
+mainwpcontrol abilities run get-site-v1 --input '{"site_id_or_domain": 5}' --json
 
 # Method 2: file
 echo '{"site_id_or_domain": 5}' > test-params.json
-mainwpctl abilities run get-site-v1 --input-file test-params.json --json
+mainwpcontrol abilities run get-site-v1 --input-file test-params.json --json
 
 # Method 3: heredoc
-mainwpctl abilities run get-site-v1 --input - --json <<'EOF'
+mainwpcontrol abilities run get-site-v1 --input - --json <<'EOF'
 {"site_id_or_domain": 5}
 EOF
 ```
@@ -518,7 +518,7 @@ Remove the comma after the last key-value pair in an object or the last element 
 
 - **Use the full (absolute) path** to avoid ambiguity:
   ```bash
-  mainwpctl abilities run get-site-v1 --input-file /home/user/params.json --json
+  mainwpcontrol abilities run get-site-v1 --input-file /home/user/params.json --json
   ```
 - **Or make sure you are in the right directory.** Run `pwd` to see your current directory, and `ls` to list files in it. The file must be in that directory (or you must specify the path to it).
 - **Filenames are case-sensitive on Linux and macOS.** `Params.json` is not the same as `params.json`.
@@ -527,7 +527,7 @@ Remove the comma after the last key-value pair in an object or the last element 
 
 - **Make sure the pipe is correct.** The JSON-producing command must come before the `|`:
   ```bash
-  echo '{"site_id_or_domain": 5}' | mainwpctl abilities run get-site-v1 --input - --json
+  echo '{"site_id_or_domain": 5}' | mainwpcontrol abilities run get-site-v1 --input - --json
   ```
 - **If using a heredoc**, make sure the closing `EOF` is on its own line with no leading spaces or tabs. Even one space before `EOF` will cause the shell to miss it:
   ```
@@ -546,7 +546,7 @@ Remove the comma after the last key-value pair in an object or the last element 
 Use the `abilities info` command to see the expected input schema for any ability:
 
 ```bash
-mainwpctl abilities info get-site-v1
+mainwpcontrol abilities info get-site-v1
 ```
 
 This shows you which fields are required, which are optional, and what types they expect (string, number, array, etc.). Use this output to build your JSON parameter file.
@@ -556,7 +556,7 @@ This shows you which fields are required, which are optional, and what types the
 Try running your command with `--debug` for more detailed error output:
 
 ```bash
-mainwpctl abilities run get-site-v1 --input-file params.json --json --debug
+mainwpcontrol abilities run get-site-v1 --input-file params.json --json --debug
 ```
 
 The debug output will show you what MainWP Control received as input and where it failed.

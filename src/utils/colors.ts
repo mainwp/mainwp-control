@@ -1,5 +1,5 @@
 /**
- * Shared color utilities for mainwpctl
+ * Shared color utilities for mainwpcontrol
  *
  * Respects NO_COLOR env var and non-TTY detection.
  * All terminal coloring should go through these functions.

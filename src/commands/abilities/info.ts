@@ -1,5 +1,5 @@
 /**
- * Abilities info command for mainwpctl
+ * Abilities info command for mainwpcontrol
  *
  * Shows detailed information about a specific ability.
  */
@@ -37,7 +37,7 @@ export default class AbilitiesInfo extends BaseCommand {
 
     if (!ability) {
       throw new InputError(
-        `Ability not found: ${args.name}. Run \`mainwpctl abilities list\` to see available abilities.`
+        `Ability not found: ${args.name}. Run \`mainwpcontrol abilities list\` to see available abilities.`
       );
     }
 

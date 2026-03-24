@@ -36,7 +36,7 @@ Application Passwords are a WordPress feature that lets external tools (like Mai
 1. Log in to your WordPress Dashboard site as an administrator.
 2. Navigate to **Users > Your Profile** (or click your name in the top-right corner and select "Edit Profile").
 3. Scroll down to the **Application Passwords** section near the bottom of the page.
-4. In the **"New Application Password Name"** field, type a name to identify this credential, for example `mainwpctl`.
+4. In the **"New Application Password Name"** field, type a name to identify this credential, for example `mainwpcontrol`.
 5. Click **"Add New Application Password"**.
 6. WordPress will display a generated password. It looks something like this:
 
@@ -57,7 +57,7 @@ MainWP Control is a command-line tool distributed as an npm package. npm is the 
 
 ### Option A: Install globally (recommended)
 
-A global install makes `mainwpctl` available as a command anywhere on your system:
+A global install makes `mainwpcontrol` available as a command anywhere on your system:
 
 ```bash
 npm install -g @mainwp/control
@@ -68,7 +68,7 @@ npm install -g @mainwp/control
 If you cannot or prefer not to install packages globally, you can use `npx` to run MainWP Control on demand. npx downloads and runs the package temporarily:
 
 ```bash
-npx mainwpctl
+npx --package=@mainwp/control mainwpcontrol
 ```
 
 ### Verify the installation
@@ -76,16 +76,16 @@ npx mainwpctl
 Run the following command to confirm MainWP Control is installed and working:
 
 ```bash
-mainwpctl --version
+mainwpcontrol --version
 ```
 
 Expected output:
 
 ```
-mainwpctl/x.y.z darwin-arm64 node-vNN.NN.N
+mainwpcontrol/x.y.z darwin-arm64 node-vNN.NN.N
 ```
 
-You should see `mainwpctl/` followed by a version number. The exact values depend on your system.
+You should see `mainwpcontrol/` followed by a version number. The exact values depend on your system.
 
 ---
 
@@ -96,7 +96,7 @@ MainWP Control needs to know which MainWP Dashboard to connect to and how to aut
 Run:
 
 ```bash
-mainwpctl login
+mainwpcontrol login
 ```
 
 You will be prompted for three pieces of information:
@@ -112,7 +112,7 @@ After entering these, MainWP Control stores your credentials in your system's ke
 Run the built-in diagnostic command:
 
 ```bash
-mainwpctl doctor
+mainwpcontrol doctor
 ```
 
 Expected output:
@@ -141,7 +141,7 @@ Expected output:
   ✓ System is ready
 ```
 
-The key line is `✓ System is ready`. If any check fails, run `mainwpctl doctor -v` for details. If authentication fails, double-check your URL, username, and Application Password.
+The key line is `✓ System is ready`. If any check fails, run `mainwpcontrol doctor -v` for details. If authentication fails, double-check your URL, username, and Application Password.
 
 ---
 
@@ -178,7 +178,7 @@ The version number may vary. Any version will work for our purposes.
 Start by listing all sites connected to your MainWP Dashboard:
 
 ```bash
-mainwpctl abilities run list-sites-v1 --json
+mainwpcontrol abilities run list-sites-v1 --json
 ```
 
 Expected output (abbreviated):
@@ -213,7 +213,7 @@ Expected output (abbreviated):
 The exact sites will match your Dashboard. Now extract the count using jq:
 
 ```bash
-mainwpctl abilities run list-sites-v1 --json | jq '.data.data.items | length'
+mainwpcontrol abilities run list-sites-v1 --json | jq '.data.data.items | length'
 ```
 
 Here is what the jq expression means:
@@ -234,7 +234,7 @@ The number will match how many sites are connected to your Dashboard.
 ### Pending update count
 
 ```bash
-mainwpctl abilities run list-updates-v1 --json | jq '.data.data.total // 0'
+mainwpcontrol abilities run list-updates-v1 --json | jq '.data.data.total // 0'
 ```
 
 The jq expression `.data.data.total // 0` means: "get the `total` field from the inner `data` object, or use `0` if it does not exist." The `//` operator is jq's alternative operator, providing a fallback value when a field is missing or null.
@@ -250,7 +250,7 @@ This is the total number of pending updates (plugins, themes, and core) across a
 ### Disconnected site count
 
 ```bash
-mainwpctl abilities run list-sites-v1 --json | jq '[.data.data.items[] | select(.status != "connected")] | length'
+mainwpcontrol abilities run list-sites-v1 --json | jq '[.data.data.items[] | select(.status != "connected")] | length'
 ```
 
 This jq expression is more involved, so here is what each part does:
@@ -290,7 +290,7 @@ StatsD is a protocol for sending metrics to monitoring systems. It is text-based
 Start with getting the count and printing it:
 
 ```bash
-SITE_COUNT=$(mainwpctl abilities run list-sites-v1 --json | jq '.data.data.items | length')
+SITE_COUNT=$(mainwpcontrol abilities run list-sites-v1 --json | jq '.data.data.items | length')
 echo "Site count: $SITE_COUNT"
 ```
 
@@ -305,7 +305,7 @@ Site count: 12
 Next, format it as a StatsD metric:
 
 ```bash
-SITE_COUNT=$(mainwpctl abilities run list-sites-v1 --json | jq '.data.data.items | length')
+SITE_COUNT=$(mainwpcontrol abilities run list-sites-v1 --json | jq '.data.data.items | length')
 echo "mainwp.sites.total:${SITE_COUNT}|g"
 ```
 
@@ -324,7 +324,7 @@ Here is what this string means:
 Finally, send it to StatsD:
 
 ```bash
-mainwpctl abilities run list-sites-v1 --json | \
+mainwpcontrol abilities run list-sites-v1 --json | \
   jq '.data.data.items | length' | \
   xargs -I {} echo "mainwp.sites.total:{}|g" | \
   nc -u -w1 localhost 8125
@@ -332,7 +332,7 @@ mainwpctl abilities run list-sites-v1 --json | \
 
 Each line in this pipeline does one thing:
 
-1. `mainwpctl abilities run list-sites-v1 --json`: Fetches the site data as JSON from your MainWP Dashboard.
+1. `mainwpcontrol abilities run list-sites-v1 --json`: Fetches the site data as JSON from your MainWP Dashboard.
 2. `jq '.data.data.items | length'`: Extracts the site count from the JSON.
 3. `xargs -I {} echo "mainwp.sites.total:{}|g"`: Formats the count as a StatsD metric string. `xargs` takes the input (the count) and passes it to the `echo` command. `-I {}` means "replace `{}` with the input value."
 4. `nc -u -w1 localhost 8125`: Sends the formatted string via UDP (`-u`) to localhost port 8125 with a 1-second timeout (`-w1`).
@@ -348,7 +348,7 @@ There is no output from this command if it succeeds. The metric is sent silently
 The same pattern works for any metric. Here is the one-liner for pending updates:
 
 ```bash
-mainwpctl abilities run list-updates-v1 --json | \
+mainwpcontrol abilities run list-updates-v1 --json | \
   jq '.data.data.total // 0' | \
   xargs -I {} echo "mainwp.updates.pending:{}|g" | \
   nc -u -w1 localhost 8125
@@ -356,7 +356,7 @@ mainwpctl abilities run list-updates-v1 --json | \
 
 The only differences from the previous step:
 
-- The mainwpctl command fetches updates instead of sites (`list-updates-v1` instead of `list-sites-v1`).
+- The mainwpcontrol command fetches updates instead of sites (`list-updates-v1` instead of `list-sites-v1`).
 - The jq expression extracts `.data.data.total` instead of the sites array length.
 - The metric name is `mainwp.updates.pending` instead of `mainwp.sites.total`.
 
@@ -369,7 +369,7 @@ What happens when MainWP Control fails, for example if your Dashboard is unreach
 Error handling fixes this. Here is a version that detects failure and sends a different metric to alert you:
 
 ```bash
-RESULT=$(mainwpctl abilities run list-sites-v1 --json 2>/dev/null)
+RESULT=$(mainwpcontrol abilities run list-sites-v1 --json 2>/dev/null)
 EXIT=$?
 
 if [ $EXIT -ne 0 ]; then
@@ -429,7 +429,7 @@ Add the following below the `send_metric` function:
 
 ```bash
 # Site count and disconnected count
-SITES=$(mainwpctl abilities run list-sites-v1 --json 2>/dev/null)
+SITES=$(mainwpcontrol abilities run list-sites-v1 --json 2>/dev/null)
 if [ $? -eq 0 ]; then
   TOTAL=$(echo "$SITES" | jq '.data.data.items | length')
   DISCONNECTED=$(echo "$SITES" | jq '[.data.data.items[] | select(.status != "connected")] | length')
@@ -440,7 +440,7 @@ else
 fi
 ```
 
-Notice that we call `mainwpctl abilities run list-sites-v1` only once and extract two metrics (total count and disconnected count) from the same response. This is efficient: each API call takes a few seconds, so reusing the result saves time.
+Notice that we call `mainwpcontrol abilities run list-sites-v1` only once and extract two metrics (total count and disconnected count) from the same response. This is efficient: each API call takes a few seconds, so reusing the result saves time.
 
 The `$? -eq 0` check means "the exit code equals zero," i.e., the command succeeded. `-eq` means "equal to."
 
@@ -450,7 +450,7 @@ Add this below the site metrics block:
 
 ```bash
 # Pending updates
-UPDATES=$(mainwpctl abilities run list-updates-v1 --json 2>/dev/null)
+UPDATES=$(mainwpcontrol abilities run list-updates-v1 --json 2>/dev/null)
 if [ $? -eq 0 ]; then
   PENDING=$(echo "$UPDATES" | jq '.data.data.total // 0')
   send_metric "mainwp.updates.pending:${PENDING}|g"
@@ -475,7 +475,7 @@ send_metric() {
 }
 
 # Site count and disconnected count
-SITES=$(mainwpctl abilities run list-sites-v1 --json 2>/dev/null)
+SITES=$(mainwpcontrol abilities run list-sites-v1 --json 2>/dev/null)
 if [ $? -eq 0 ]; then
   TOTAL=$(echo "$SITES" | jq '.data.data.items | length')
   DISCONNECTED=$(echo "$SITES" | jq '[.data.data.items[] | select(.status != "connected")] | length')
@@ -486,7 +486,7 @@ else
 fi
 
 # Pending updates
-UPDATES=$(mainwpctl abilities run list-updates-v1 --json 2>/dev/null)
+UPDATES=$(mainwpcontrol abilities run list-updates-v1 --json 2>/dev/null)
 if [ $? -eq 0 ]; then
   PENDING=$(echo "$UPDATES" | jq '.data.data.total // 0')
   send_metric "mainwp.updates.pending:${PENDING}|g"
@@ -573,7 +573,7 @@ Run through this checklist to confirm everything is connected:
 
 3. **If using Datadog:** Open Metrics Explorer and search for `mainwp`. You should see your metrics listed with recent data points.
 
-4. **If you do not see metrics**, test the StatsD connection directly to rule out mainwpctl as the problem:
+4. **If you do not see metrics**, test the StatsD connection directly to rule out mainwpcontrol as the problem:
 
    ```bash
    echo "test.metric:1|g" | nc -u -w1 localhost 8125
@@ -585,7 +585,7 @@ Run through this checklist to confirm everything is connected:
 
 ## Adapting for Other Monitoring Tools
 
-The metrics-extraction commands (`mainwpctl` + `jq`) are the same regardless of where you send the data. Only the "send" step changes.
+The metrics-extraction commands (`mainwpcontrol` + `jq`) are the same regardless of where you send the data. Only the "send" step changes.
 
 ### Prometheus / Node Exporter
 
@@ -661,13 +661,13 @@ This appends a timestamped line to the log file each time the script runs. The `
 Test the jq parsing in isolation to see what value is being extracted:
 
 ```bash
-mainwpctl abilities run list-sites-v1 --json | jq '.data.data.items | length'
+mainwpcontrol abilities run list-sites-v1 --json | jq '.data.data.items | length'
 ```
 
 If the output is empty or shows a jq error, the JSON structure may have changed. Check the raw output:
 
 ```bash
-mainwpctl abilities run list-sites-v1 --json
+mainwpcontrol abilities run list-sites-v1 --json
 ```
 
 Look at the actual structure and adjust the jq expressions accordingly.
@@ -678,7 +678,7 @@ Look at the actual structure and adjust the jq expressions accordingly.
   - On Linux: `grep CRON /var/log/syslog`
   - On macOS: `log show --predicate 'process == "cron"' --last 1h`
 
-- **Use full paths in cron.** Cron does not load your shell profile, so commands like `mainwpctl` and `jq` may not be found by their short names. Add a `PATH` line at the top of your crontab:
+- **Use full paths in cron.** Cron does not load your shell profile, so commands like `mainwpcontrol` and `jq` may not be found by their short names. Add a `PATH` line at the top of your crontab:
 
   ```
   PATH=/usr/local/bin:/usr/bin:/bin:/opt/homebrew/bin

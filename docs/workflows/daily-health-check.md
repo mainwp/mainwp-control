@@ -35,7 +35,7 @@ Application Passwords are a WordPress feature that lets external tools (like Mai
 1. Log in to your WordPress Dashboard site as an administrator.
 2. Navigate to **Users > Your Profile** (or click your name in the top-right corner and select "Edit Profile").
 3. Scroll down to the **Application Passwords** section near the bottom of the page.
-4. In the **"New Application Password Name"** field, type a name to identify this credential, for example `mainwpctl`.
+4. In the **"New Application Password Name"** field, type a name to identify this credential, for example `mainwpcontrol`.
 5. Click **"Add New Application Password"**.
 6. WordPress will display a generated password. It looks something like this:
 
@@ -56,7 +56,7 @@ MainWP Control is a command-line tool distributed as an npm package. npm is the 
 
 ### Option A: Install globally (recommended)
 
-A global install makes `mainwpctl` available as a command anywhere on your system:
+A global install makes `mainwpcontrol` available as a command anywhere on your system:
 
 ```bash
 npm install -g @mainwp/control
@@ -67,7 +67,7 @@ npm install -g @mainwp/control
 If you cannot or prefer not to install packages globally, you can use `npx` to run MainWP Control on demand. npx downloads and runs the package temporarily:
 
 ```bash
-npx mainwpctl
+npx --package=@mainwp/control mainwpcontrol
 ```
 
 ### Option C: Install in a project directory
@@ -78,23 +78,23 @@ If you are integrating MainWP Control into an existing project:
 npm install @mainwp/control
 ```
 
-Then run it with `npx mainwpctl` from that project directory.
+Then run it with `npx mainwpcontrol` from that project directory.
 
 ### Verify the installation
 
 Run the following command to confirm MainWP Control is installed and working:
 
 ```bash
-mainwpctl --version
+mainwpcontrol --version
 ```
 
 Expected output:
 
 ```
-mainwpctl/x.y.z darwin-arm64 node-vNN.NN.N
+mainwpcontrol/x.y.z darwin-arm64 node-vNN.NN.N
 ```
 
-You should see `mainwpctl/` followed by version information. The exact values depend on your system and Node.js version.
+You should see `mainwpcontrol/` followed by version information. The exact values depend on your system and Node.js version.
 
 ---
 
@@ -105,7 +105,7 @@ MainWP Control needs to know which MainWP Dashboard to connect to and how to aut
 Run:
 
 ```bash
-mainwpctl login
+mainwpcontrol login
 ```
 
 You will be prompted for three pieces of information:
@@ -121,7 +121,7 @@ After entering these, MainWP Control stores your credentials in your system's ke
 Run the built-in diagnostic command:
 
 ```bash
-mainwpctl doctor
+mainwpcontrol doctor
 ```
 
 Expected output:
@@ -150,7 +150,7 @@ Expected output:
   ✓ System is ready
 ```
 
-The key line is `✓ System is ready`. If any check fails, run `mainwpctl doctor -v` for details. If authentication fails, double-check your URL, username, and Application Password.
+The key line is `✓ System is ready`. If any check fails, run `mainwpcontrol doctor -v` for details. If authentication fails, double-check your URL, username, and Application Password.
 
 ---
 
@@ -182,7 +182,7 @@ Before writing the script, confirm the webhook works by sending a test message. 
 
 ```bash
 curl -X POST -H 'Content-Type: application/json' \
-  -d '{"text":"Test from mainwpctl setup"}' \
+  -d '{"text":"Test from mainwpcontrol setup"}' \
   'https://hooks.slack.com/services/YOUR/WEBHOOK/URL'
 ```
 
@@ -194,7 +194,7 @@ Expected result in your terminal:
 ok
 ```
 
-Expected result in Slack: A message reading "Test from mainwpctl setup" appears in the channel you selected.
+Expected result in Slack: A message reading "Test from mainwpcontrol setup" appears in the channel you selected.
 
 If you see an error or the message does not appear, double-check that you copied the full webhook URL and that the Slack app is still active.
 
@@ -220,7 +220,7 @@ Enter the following content:
 #!/bin/bash
 # mainwp-health-check.sh - Check MainWP site connectivity
 
-RESULT=$(mainwpctl abilities run list-sites-v1 --json 2>/dev/null)
+RESULT=$(mainwpcontrol abilities run list-sites-v1 --json 2>/dev/null)
 echo "$RESULT"
 ```
 
@@ -228,7 +228,7 @@ Here is what each line does:
 
 - `#!/bin/bash`: This is called a **shebang**. It tells your operating system which program to use to run this script. `/bin/bash` is the Bash shell, which is available on macOS and virtually all Linux systems.
 - `# mainwp-health-check.sh ...`: Lines starting with `#` are **comments**. They are ignored when the script runs and exist only to help humans understand the code.
-- `RESULT=$(mainwpctl abilities run list-sites-v1 --json 2>/dev/null)`: This runs the MainWP Control command that lists all sites, captures its output into a **variable** called `RESULT`. The `--json` flag tells MainWP Control to output structured JSON data instead of human-readable text. The `2>/dev/null` part hides any warning messages so only the JSON output is captured.
+- `RESULT=$(mainwpcontrol abilities run list-sites-v1 --json 2>/dev/null)`: This runs the MainWP Control command that lists all sites, captures its output into a **variable** called `RESULT`. The `--json` flag tells MainWP Control to output structured JSON data instead of human-readable text. The `2>/dev/null` part hides any warning messages so only the JSON output is captured.
 - `echo "$RESULT"`: This prints the captured output to the terminal so you can see it.
 
 Save the file (in nano: press `Ctrl+O`, then `Enter`, then `Ctrl+X` to exit).
@@ -275,13 +275,13 @@ The exact sites and details will match your MainWP Dashboard. The important thin
 
 An **exit code** is a number that every command returns when it finishes. An exit code of `0` means success. Any other number means something went wrong. The variable `$?` contains the exit code of the most recently run command.
 
-Update your script to check whether the mainwpctl command succeeded:
+Update your script to check whether the mainwpcontrol command succeeded:
 
 ```bash
 #!/bin/bash
 # mainwp-health-check.sh - Check MainWP site connectivity
 
-RESULT=$(mainwpctl abilities run list-sites-v1 --json 2>/dev/null)
+RESULT=$(mainwpcontrol abilities run list-sites-v1 --json 2>/dev/null)
 EXIT=$?
 
 if [ $EXIT -ne 0 ]; then
@@ -294,7 +294,7 @@ echo "Command succeeded. Site data retrieved."
 
 New lines explained:
 
-- `EXIT=$?`: Captures the exit code of the mainwpctl command into a variable called `EXIT`.
+- `EXIT=$?`: Captures the exit code of the mainwpcontrol command into a variable called `EXIT`.
 - `if [ $EXIT -ne 0 ]; then`: This is a **conditional**. `-ne` means "not equal to". So this reads: "if the exit code is not equal to zero, then..."
 - `echo "Health check command failed with exit code $EXIT"`: Prints an error message that includes the actual exit code.
 - `exit 1`: Stops the script immediately and reports failure (exit code 1).
@@ -348,7 +348,7 @@ Now update the script to count disconnected sites:
 #!/bin/bash
 # mainwp-health-check.sh - Check MainWP site connectivity
 
-RESULT=$(mainwpctl abilities run list-sites-v1 --json 2>/dev/null)
+RESULT=$(mainwpcontrol abilities run list-sites-v1 --json 2>/dev/null)
 EXIT=$?
 
 if [ $EXIT -ne 0 ]; then
@@ -399,7 +399,7 @@ Now we bring it all together. When the health check fails or finds disconnected 
 SLACK_WEBHOOK_URL="https://hooks.slack.com/services/YOUR/WEBHOOK/URL"
 
 # Run the health check
-RESULT=$(mainwpctl abilities run list-sites-v1 --json 2>/dev/null)
+RESULT=$(mainwpcontrol abilities run list-sites-v1 --json 2>/dev/null)
 EXIT=$?
 
 # Alert if the command itself failed
@@ -531,7 +531,7 @@ For example, if the script is in your home directory, the line might be:
 0 7 * * * /Users/yourname/mainwp-health-check.sh
 ```
 
-**Note on PATH:** Cron runs in a minimal environment. It does not load your shell profile, so commands like `mainwpctl` or `jq` may not be found by their short names. If you encounter issues, add a `PATH` line at the top of your crontab:
+**Note on PATH:** Cron runs in a minimal environment. It does not load your shell profile, so commands like `mainwpcontrol` or `jq` may not be found by their short names. If you encounter issues, add a `PATH` line at the top of your crontab:
 
 ```
 PATH=/usr/local/bin:/usr/bin:/bin:/opt/homebrew/bin
@@ -618,7 +618,7 @@ jq is not installed on your system. Install it:
   - On Linux: `grep CRON /var/log/syslog`
   - On macOS: `log show --predicate 'process == "cron"' --last 1h`
 
-- **Make sure you used full paths** for both the script and any commands inside it (mainwpctl, jq, curl). Cron does not load your shell profile, so it may not find programs by their short names. Adding a `PATH` line to the top of your crontab (as shown in Step 8) usually resolves this.
+- **Make sure you used full paths** for both the script and any commands inside it (mainwpcontrol, jq, curl). Cron does not load your shell profile, so it may not find programs by their short names. Adding a `PATH` line to the top of your crontab (as shown in Step 8) usually resolves this.
 
 - **On macOS**, you may need to grant Terminal (or your terminal app) **Full Disk Access** in **System Settings > Privacy & Security > Full Disk Access**. Without this, cron may be silently blocked from running scripts.
 
@@ -633,10 +633,10 @@ chmod +x mainwp-health-check.sh
 If MainWP Control itself fails with a permission error, check that your authentication is still valid:
 
 ```bash
-mainwpctl doctor -v
+mainwpcontrol doctor -v
 ```
 
-If the doctor command reports authentication issues, run `mainwpctl login` again.
+If the doctor command reports authentication issues, run `mainwpcontrol login` again.
 
 ### Authentication errors in cron
 

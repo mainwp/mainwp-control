@@ -1,8 +1,8 @@
 /**
  * Process-level tests for the `abilities list` command
  *
- * Verifies that `mainwpctl abilities list` correctly fetches and displays
- * abilities from the Dashboard API. Each test runs mainwpctl as a child
+ * Verifies that `mainwpcontrol abilities list` correctly fetches and displays
+ * abilities from the Dashboard API. Each test runs mainwpcontrol as a child
  * process against a mock HTTP server with an isolated config directory.
  */
 

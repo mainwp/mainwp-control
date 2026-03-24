@@ -1,5 +1,5 @@
 /**
- * JSON output envelope for mainwpctl
+ * JSON output envelope for mainwpcontrol
  *
  * This structure is stable and should not be changed without a major version bump.
  */

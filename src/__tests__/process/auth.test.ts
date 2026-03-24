@@ -1,7 +1,7 @@
 /**
  * Process-level tests for the login command
  *
- * Verifies authentication flow end-to-end by spawning mainwpctl as a child
+ * Verifies authentication flow end-to-end by spawning mainwpcontrol as a child
  * process against a mock HTTP server. Each test gets a fresh, empty config
  * directory to ensure isolation.
  */

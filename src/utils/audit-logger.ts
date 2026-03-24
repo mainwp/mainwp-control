@@ -1,9 +1,9 @@
 /**
- * Audit Logger for mainwpctl
+ * Audit Logger for mainwpcontrol
  *
  * Logs all destructive actions with preview, user decision, and execution result.
  *
- * Log location: ~/.config/mainwpctl/audit.log
+ * Log location: ~/.config/mainwpcontrol/audit.log
  * Format: Newline-delimited JSON (NDJSON)
  * Rotation: When file exceeds 10MB, rotates to audit.log.1, audit.log.2, etc.
  * Retention: Keeps last 5 rotated files

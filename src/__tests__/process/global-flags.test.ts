@@ -2,7 +2,7 @@
  * Process-Level Tests: Global Flags
  *
  * Validates cross-cutting CLI flags (--json, --quiet, --profile, --debug)
- * and the defaultJsonOutput setting by spawning mainwpctl as a child
+ * and the defaultJsonOutput setting by spawning mainwpcontrol as a child
  * process against a mock HTTP server. Each test gets a fresh, isolated
  * config directory.
  */

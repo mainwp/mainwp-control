@@ -1,5 +1,5 @@
 /**
- * HTTP Client for mainwpctl
+ * HTTP Client for mainwpcontrol
  *
  * Single abstraction for all API traffic.
  * INVARIANT: All HTTP requests MUST go through this module.
@@ -340,7 +340,7 @@ export class HttpClient {
       Authorization: this.authHeader,
       'Content-Type': 'application/json',
       Accept: 'application/json',
-      'User-Agent': `mainwpctl/${PKG_VERSION}`,
+      'User-Agent': `mainwpcontrol/${PKG_VERSION}`,
       ...custom,
     };
   }
@@ -357,7 +357,7 @@ export class HttpClient {
         throw new AuthError(
           'Authentication failed. Check your credentials.',
           sanitizedData,
-          'Run `mainwpctl login` to update your credentials'
+          'Run `mainwpcontrol login` to update your credentials'
         );
       case 403:
         throw new AuthError(
@@ -403,7 +403,7 @@ export class HttpClient {
     ENOTFOUND: () => new NetworkError(
       'Host not found. Check the Dashboard URL.',
       undefined,
-      'Check the Dashboard URL in your profile with `mainwpctl config show`'
+      'Check the Dashboard URL in your profile with `mainwpcontrol config show`'
     ),
     CERT_HAS_EXPIRED: () => new TLSError(
       'SSL certificate error. Use --skip-ssl-verify if needed.',

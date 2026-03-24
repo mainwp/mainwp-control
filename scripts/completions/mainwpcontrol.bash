@@ -1,11 +1,11 @@
 #!/bin/bash
-# mainwpctl bash completion script
+# mainwpcontrol bash completion script
 #
 # Installation:
-#   source /path/to/mainwpctl/scripts/completions/mainwpctl.bash
+#   source /path/to/mainwpcontrol/scripts/completions/mainwpcontrol.bash
 #
 # Or add to ~/.bashrc:
-#   source /path/to/mainwpctl/scripts/completions/mainwpctl.bash
+#   source /path/to/mainwpcontrol/scripts/completions/mainwpcontrol.bash
 
 # Determine the directory where this script is located
 _MAINWPCTL_COMPLETION_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -15,7 +15,7 @@ if [[ -f "${_MAINWPCTL_COMPLETION_DIR}/profile-completer.sh" ]]; then
     source "${_MAINWPCTL_COMPLETION_DIR}/profile-completer.sh"
 fi
 
-_mainwpctl_completions() {
+_mainwpcontrol_completions() {
     local cur prev words cword
     _init_completion -n : || return
 
@@ -71,8 +71,8 @@ _mainwpctl_completions() {
         --profile|-p)
             # Complete with profile names
             local profiles
-            if type _mainwpctl_get_profiles &>/dev/null; then
-                profiles=$(_mainwpctl_get_profiles)
+            if type _mainwpcontrol_get_profiles &>/dev/null; then
+                profiles=$(_mainwpcontrol_get_profiles)
                 COMPREPLY=($(compgen -W "$profiles" -- "$cur"))
             fi
             return 0
@@ -163,8 +163,8 @@ _mainwpctl_completions() {
                         # Complete with profile names for these subcommands
                         if [[ "$cur" != -* ]]; then
                             local profiles
-                            if type _mainwpctl_get_profiles &>/dev/null; then
-                                profiles=$(_mainwpctl_get_profiles)
+                            if type _mainwpcontrol_get_profiles &>/dev/null; then
+                                profiles=$(_mainwpcontrol_get_profiles)
                                 COMPREPLY=($(compgen -W "$profiles" -- "$cur"))
                             fi
                         else
@@ -190,4 +190,4 @@ _mainwpctl_completions() {
 }
 
 # Register the completion function
-complete -F _mainwpctl_completions mainwpctl
+complete -F _mainwpcontrol_completions mainwpcontrol

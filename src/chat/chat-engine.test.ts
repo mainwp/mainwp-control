@@ -2061,7 +2061,7 @@ describe('ChatEngine', () => {
 
         const history = engine.getHistory();
         expect(history[0]!.role).toBe('system');
-        expect(history[0]!.content).toContain('mainwpctl');
+        expect(history[0]!.content).toContain('mainwpcontrol');
       });
 
       it('should keep most recent N messages after truncation', async () => {

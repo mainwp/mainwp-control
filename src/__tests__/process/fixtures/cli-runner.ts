@@ -58,7 +58,7 @@ export async function runCLI(
     MAINWP_ALLOW_HTTP: '1',
     // Skip native keytar — process tests run with isolated HOME where
     // macOS Keychain access is slow/unavailable.
-    MAINWPCTL_NO_KEYTAR: '1',
+    MAINWPCONTROL_NO_KEYTAR: '1',
     // Spread any extra env
     ...options.env,
   };

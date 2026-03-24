@@ -26,7 +26,7 @@ describe('smoke tests', () => {
     if (configWithoutProfile) await configWithoutProfile.cleanup();
   });
 
-  it('mainwpctl --help exits 0 and shows usage info', async () => {
+  it('mainwpcontrol --help exits 0 and shows usage info', async () => {
     // --help does not require a profile, so an empty config dir is fine
     configWithoutProfile = await ConfigDir.create({ profiles: [] });
 
@@ -39,11 +39,11 @@ describe('smoke tests', () => {
     const hasUsageInfo =
       /usage/i.test(combined) ||
       /commands/i.test(combined) ||
-      /mainwpctl/i.test(combined);
+      /mainwpcontrol/i.test(combined);
     expect(hasUsageInfo).toBe(true);
   });
 
-  it('mainwpctl abilities --help exits 0', async () => {
+  it('mainwpcontrol abilities --help exits 0', async () => {
     configWithoutProfile = await ConfigDir.create({ profiles: [] });
 
     const result = await runCLI(['abilities', '--help'], {
@@ -53,7 +53,7 @@ describe('smoke tests', () => {
     expect(result.exitCode).toBe(0);
   });
 
-  it('mainwpctl nonexistent exits non-zero with error on stderr', async () => {
+  it('mainwpcontrol nonexistent exits non-zero with error on stderr', async () => {
     configWithoutProfile = await ConfigDir.create({ profiles: [] });
 
     const result = await runCLI(['nonexistent'], {
@@ -64,7 +64,7 @@ describe('smoke tests', () => {
     expect(result.stderr.length).toBeGreaterThan(0);
   });
 
-  it('bare mainwpctl in non-TTY shows help and exits 0', async () => {
+  it('bare mainwpcontrol in non-TTY shows help and exits 0', async () => {
     // When no command is provided, oclif shows the top-level help and exits 0
     // (the default "chat" command is not invoked for bare invocation)
     configWithProfile = await ConfigDir.create({
@@ -91,7 +91,7 @@ describe('smoke tests', () => {
     expect(combined).toMatch(/commands/i);
   });
 
-  it('bare mainwpctl in non-TTY without profile also shows help and exits 0', async () => {
+  it('bare mainwpcontrol in non-TTY without profile also shows help and exits 0', async () => {
     // Even without a profile, bare invocation shows help (no command runs)
     configWithoutProfile = await ConfigDir.create({ profiles: [] });
 
@@ -102,7 +102,7 @@ describe('smoke tests', () => {
     expect(result.exitCode).toBe(0);
   });
 
-  it('mainwpctl "some message" exits 2 with command-not-found error', async () => {
+  it('mainwpcontrol "some message" exits 2 with command-not-found error', async () => {
     // oclif treats the argument as a command name lookup, not as a chat message arg.
     // Since there is no command called "some message", oclif exits with a command-not-found error.
     configWithProfile = await ConfigDir.create({

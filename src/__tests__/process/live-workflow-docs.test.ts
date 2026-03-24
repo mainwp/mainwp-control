@@ -218,7 +218,7 @@ describe.skipIf(!dashboardOnline)('workflow documentation tests', () => {
     });
 
     it('--input-file produces identical result to inline', async () => {
-      const tmpFile = join(tmpdir(), `mainwpctl-test-params-${Date.now()}.json`);
+      const tmpFile = join(tmpdir(), `mainwpcontrol-test-params-${Date.now()}.json`);
       writeFileSync(tmpFile, JSON.stringify({ site_id_or_domain: firstConnectedSiteId }));
 
       try {

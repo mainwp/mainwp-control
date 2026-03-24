@@ -13,7 +13,7 @@ import type { Ability } from '../core/abilities-executor.js';
  * Core system prompt content
  * Derived from CHAT_PROMPT.md (authoritative document)
  */
-const CORE_PROMPT = `You are an AI assistant embedded in MainWP Control (\`mainwpctl\`), a command-line tool for MainWP Dashboard management.
+const CORE_PROMPT = `You are an AI assistant embedded in MainWP Control (\`mainwpcontrol\`), a command-line tool for MainWP Dashboard management.
 
 ## Role
 

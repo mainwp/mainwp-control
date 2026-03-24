@@ -1,5 +1,5 @@
 /**
- * OpenAI Provider for mainwpctl
+ * OpenAI Provider for mainwpcontrol
  *
  * Implements LLM provider interface for OpenAI GPT models.
  */

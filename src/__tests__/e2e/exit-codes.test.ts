@@ -125,10 +125,10 @@ function createRunCommand(
 
   const mockConfig = {
     root: '/mock/root',
-    bin: 'mainwpctl',
-    name: 'mainwpctl',
+    bin: 'mainwpcontrol',
+    name: 'mainwpcontrol',
     version: '1.0.0',
-    pjson: { name: 'mainwpctl', version: '1.0.0' },
+    pjson: { name: 'mainwpcontrol', version: '1.0.0' },
     dataDir: '/mock/data',
     cacheDir: '/mock/cache',
     configDir: '/mock/config',

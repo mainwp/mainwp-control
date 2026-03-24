@@ -1,5 +1,5 @@
 /**
- * Interactive prompting utilities for mainwpctl
+ * Interactive prompting utilities for mainwpcontrol
  *
  * Handles user confirmation for destructive actions.
  * Auto-declines in non-interactive mode unless explicit flags are used.

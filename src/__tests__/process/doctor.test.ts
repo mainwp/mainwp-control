@@ -1,7 +1,7 @@
 /**
  * Process-level tests for the doctor command
  *
- * Verifies diagnostic checks end-to-end by spawning mainwpctl as a child
+ * Verifies diagnostic checks end-to-end by spawning mainwpcontrol as a child
  * process against a mock HTTP server. Each test gets a fresh config
  * directory to ensure isolation.
  *
