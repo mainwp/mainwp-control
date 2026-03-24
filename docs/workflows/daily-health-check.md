@@ -16,6 +16,15 @@ By the end of this guide you will have:
 - **Slack notifications** when any site is disconnected or unreachable
 - **A cron job** that runs this check automatically every day
 
+> **Windows users:** This guide builds a bash script and schedules it with cron, both native to macOS and Linux. The `mainwpcontrol` commands themselves work fine on Windows, but the scripting and scheduling around them don't translate directly.
+>
+> Your best options:
+> - **Git Bash** (comes with Git for Windows) lets you follow this guide for manual runs.
+> - **GitHub Actions** handles the scheduling for you and runs on Linux in the cloud. See the [Monthly Batch Updates](monthly-batch-updates.md) guide (Option B) for a template you can adapt.
+> - **WSL** works for following this guide as-is, but WSL isn't always running in the background, so cron jobs may not fire reliably unless you configure it to auto-start.
+
+**Already using MainWP Control?** If `mainwpcontrol doctor` shows "System is ready", skip to [Step 4: Create a Slack Incoming Webhook](#step-4-create-a-slack-incoming-webhook).
+
 ---
 
 ## Prerequisites

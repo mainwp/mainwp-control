@@ -6,6 +6,8 @@ When you manage dozens (or hundreds) of WordPress sites through MainWP, it is ea
 
 You do not need prior experience with command-line tools, GitHub Actions, or scripting. Every concept is explained the first time it appears.
 
+**Already using MainWP Control?** If `mainwpcontrol doctor` shows "System is ready", skip to [Step 4: Add Secrets to Your GitHub Repository](#step-4-add-secrets-to-your-github-repository).
+
 ---
 
 ## What You'll Set Up
@@ -90,6 +92,14 @@ Expected output:
 ```
 
 You should see `@mainwp/control/` followed by a version number. If you see `command not found`, make sure Node.js 20+ is installed and try opening a new terminal window.
+
+> **Windows PowerShell note:** When running `mainwpcontrol` locally with `--input`, you need to escape the inner double quotes:
+>
+> ```powershell
+> mainwpcontrol abilities run get-site-plugins-v1 --input '{\"site_id_or_domain\": 1}' --json
+> ```
+>
+> The GitHub Actions workflow runs on Linux, so this quoting issue only affects local testing. You can also use `--input-file params.json` to avoid it entirely.
 
 ---
 

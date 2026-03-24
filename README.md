@@ -66,6 +66,20 @@ mainwpcontrol abilities run list-updates-v1 --json
 mainwpcontrol abilities run get-site-v1 --input '{"site_id": 1}' --json
 ```
 
+On Windows PowerShell, escape the inner quotes:
+
+```powershell
+mainwpcontrol abilities run get-site-v1 --input '{\"site_id\": 1}' --json
+```
+
+To skip quoting issues entirely, use a JSON file (works on every platform):
+
+```bash
+mainwpcontrol abilities run get-site-v1 --input-file params.json --json
+```
+
+See [Input from File](docs/workflows/input-from-file.md) for more on this approach.
+
 **Preview a destructive action before running it:**
 
 ```bash
@@ -165,6 +179,28 @@ When you run a command, the output appears in your terminal. A few things to kno
 - **`--json`** tells `mainwpcontrol` to output structured JSON (useful for scripting and piping to other tools)
 - **Exit codes** indicate success (`0`) or failure (`1` through `5`). You won't see them directly, but scripts and CI use them to decide what happens next. Run `echo $?` (macOS/Linux) or `echo $LASTEXITCODE` (PowerShell) after a command to check.
 
+### JSON quoting on the command line
+
+When you pass JSON with `--input`, quoting depends on your shell:
+
+```bash
+# macOS / Linux / Git Bash on Windows
+mainwpcontrol abilities run get-site-v1 --input '{"site_id": 1}' --json
+
+# Windows PowerShell
+mainwpcontrol abilities run get-site-v1 --input '{\"site_id\": 1}' --json
+```
+
+Windows strips the inner double quotes unless you escape them with backslashes. If this gets annoying (and it will, with longer JSON), put your parameters in a file and use `--input-file`:
+
+```bash
+mainwpcontrol abilities run get-site-v1 --input-file params.json --json
+```
+
+This works the same on every platform. See [Input from File](docs/workflows/input-from-file.md) for details.
+
+**Git Bash on Windows** (comes with Git for Windows) handles quoting the same way macOS and Linux do. If you use Git Bash, all the examples in this documentation work without changes.
+
 </details>
 
 ---
@@ -190,6 +226,12 @@ mainwpcontrol abilities run list-sites-v1 --json
 
 # Run with input parameters
 mainwpcontrol abilities run get-site-v1 --input '{"site_id": 1}' --json
+
+# Windows PowerShell: escape inner quotes
+mainwpcontrol abilities run get-site-v1 --input '{\"site_id\": 1}' --json
+
+# Or use a file (works everywhere)
+mainwpcontrol abilities run get-site-v1 --input-file params.json --json
 ```
 
 ### Profiles

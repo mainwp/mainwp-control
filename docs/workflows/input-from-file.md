@@ -17,10 +17,20 @@ MainWP Control is a command-line tool for managing your MainWP Dashboard and all
 
 ## Why Use File Input?
 
+> **Windows users:** `--input-file` and `--input -` (stdin) work the same on every platform. Inline `--input '...'` has quoting differences on Windows that make it error-prone for anything beyond simple values. If you're on Windows, `--input-file` is the path of least resistance.
+>
+> **Git Bash users:** If you use Git Bash (comes with Git for Windows), all the bash examples in this guide work without changes.
+
+**Already using MainWP Control?** If `mainwpcontrol doctor` shows "System is ready", skip to [Step 4: Create a JSON Parameters File](#step-4-create-a-json-parameters-file).
+
 Some MainWP Control abilities need more than a flag. For example, updating specific plugins on a specific site requires a JSON object with a site ID and a list of plugin slugs. Typing this as an `--input` flag works for simple cases:
 
 ```bash
+# macOS / Linux / Git Bash
 mainwpcontrol abilities run get-site-v1 --input '{"site_id_or_domain": 5}' --json
+
+# Windows PowerShell (escape inner quotes with backslashes)
+mainwpcontrol abilities run get-site-v1 --input '{\"site_id_or_domain\": 5}' --json
 ```
 
 But when parameters get complex (nested objects, arrays, multiple fields), inline JSON becomes hard to read and easy to get wrong. A misplaced quote or missing comma can cause confusing errors.
@@ -351,6 +361,8 @@ Expected output is the same as before: the site details as JSON.
 ---
 
 ## Step 7: Use a Heredoc for Inline Multi-line JSON
+
+> **Windows note:** Heredocs are a bash/zsh feature and do not work in PowerShell or cmd.exe. On Windows, use `--input-file` instead. It gives you the same benefit (readable multi-line JSON in a separate file) without any platform-specific syntax.
 
 ### What is a heredoc?
 
