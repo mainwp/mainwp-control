@@ -40,6 +40,9 @@
       "@oclif/plugin-help",
       "@oclif/plugin-autocomplete"
     ],
+    "hooks": {
+      "command_not_found": "./dist/hooks/command-not-found.js"
+    },
     "topicSeparator": " ",
     "macos": {
       "identifier": "com.mainwp.mainwpcontrol"

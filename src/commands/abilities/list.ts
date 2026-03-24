@@ -7,6 +7,7 @@
 import { Flags } from '@oclif/core';
 import { BaseCommand, commonFlags } from '../../lib/base-command.js';
 import { formatTable, formatHeading } from '../../output/formatter.js';
+import { color, colors } from '../../utils/colors.js';
 
 export default class AbilitiesList extends BaseCommand {
   static description = 'List available abilities';
@@ -94,7 +95,19 @@ export default class AbilitiesList extends BaseCommand {
             return [a.name, a.label || a.description.slice(0, 50), type];
           });
 
-          lines.push(formatTable(headers, rows));
+          // Render table with usage sub-rows under each ability
+          const tableStr = formatTable(headers, rows);
+          const tableLines = tableStr.split('\n');
+          // Header and separator
+          lines.push(tableLines[0] ?? '', tableLines[1] ?? '');
+          // Data rows with copy-pasteable usage hints
+          for (let j = 0; j < catAbilities.length; j++) {
+            lines.push(tableLines[j + 2] ?? '');
+            const ability = catAbilities[j]!;
+            const shortName = ability.name.split('/').pop() ?? ability.name;
+            lines.push(color(`    mainwpcontrol abilities run ${shortName}`, colors.dim));
+          }
+
           lines.push('');
         }
 
