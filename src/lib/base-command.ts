@@ -296,7 +296,7 @@ export abstract class BaseCommand extends Command {
     const redacted: Record<string, unknown> = {};
 
     for (const [key, value] of Object.entries(context)) {
-      if (sensitiveKeys.includes(key.toLowerCase())) {
+      if (sensitiveKeys.some(s => key.toLowerCase() === s)) {
         redacted[key] = '[REDACTED]';
         continue;
       }

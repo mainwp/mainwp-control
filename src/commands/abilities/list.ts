@@ -9,6 +9,55 @@ import { BaseCommand, commonFlags } from '../../lib/base-command.js';
 import { formatTable, formatHeading } from '../../output/formatter.js';
 import { color, colors } from '../../utils/colors.js';
 import { stripControlChars } from '../../utils/terminal-sanitizer.js';
+import type { Ability } from '../../core/abilities-executor.js';
+
+/**
+ * Build a copy-pasteable usage hint for an ability.
+ * If the ability has required parameters, includes --input with placeholder values.
+ */
+function buildUsageHint(shortName: string, ability: Ability): string {
+  const schema = ability.input_schema as
+    | { required?: string[]; properties?: Record<string, { type?: string }> }
+    | undefined;
+  const required = schema?.required;
+  if (!required || required.length === 0) {
+    return `mainwpcontrol abilities run ${shortName}`;
+  }
+
+  const properties = schema?.properties ?? {};
+  const params: Record<string, unknown> = {};
+
+  for (const paramName of required) {
+    params[paramName] = placeholderFor(paramName, properties[paramName]?.type);
+  }
+
+  return `mainwpcontrol abilities run ${shortName} --input '${JSON.stringify(params)}'`;
+}
+
+function placeholderFor(name: string, type?: string): unknown {
+  // Specific names first
+  if (name === 'job_id') return 'sync_abc123';
+  if (name === 'url') return 'https://example.com';
+  if (name === 'admin_username') return 'admin';
+  if (name === 'name') return 'My Name';
+  if (name === 'action') return 'ignore';
+  if (name === 'type') return 'plugin';
+  if (name === 'slug') return 'akismet/akismet.php';
+  if (name === 'theme') return 'theme-slug';
+  if (name === 'plugins') return ['akismet/akismet.php'];
+  if (name === 'themes') return ['theme-slug'];
+  if (name === 'slugs') return ['slug'];
+
+  // Pattern-based names
+  if (name.endsWith('_id_or_email') || name.endsWith('_id_or_domain')) return 1;
+  if (name.endsWith('_id')) return 1;
+
+  // Fall back to schema type
+  if (type === 'integer' || type === 'number') return 1;
+  if (type === 'boolean') return true;
+  if (type === 'array') return ['value'];
+  return 'value';
+}
 
 export default class AbilitiesList extends BaseCommand {
   static description = 'List available abilities';
@@ -107,7 +156,8 @@ export default class AbilitiesList extends BaseCommand {
             const ability = catAbilities[j]!;
             const safeName = stripControlChars(ability.name);
             const shortName = safeName.split('/').pop() ?? safeName;
-            lines.push(color(`    mainwpcontrol abilities run ${shortName}`, colors.dim));
+            const hint = buildUsageHint(shortName, ability);
+            lines.push(color(`    ${hint}`, colors.dim));
           }
 
           lines.push('');

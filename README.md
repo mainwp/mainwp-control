@@ -8,7 +8,7 @@ A CLI for managing your MainWP Dashboard from the terminal. List sites, push upd
 
 ## Quick Start
 
-> **On Windows?** Use [Git Bash](https://gitforwindows.org/) and every example below works without changes.
+> **On Windows?** Use [Git Bash](https://gitforwindows.org/) and every example below works without changes. For scheduled workflows (cron), see [WSL](https://learn.microsoft.com/en-us/windows/wsl/install).
 
 You need Node.js 20+ and a MainWP Dashboard (v6+) with an [Application Password](https://make.wordpress.org/core/2020/11/05/application-passwords-integration-guide/).
 
@@ -65,10 +65,10 @@ mainwpcontrol abilities run list-updates-v1 --json
 **Get details for a specific site:**
 
 ```bash
-mainwpcontrol abilities run get-site-v1 --input '{"site_id": 1}' --json
+mainwpcontrol abilities run get-site-v1 --input '{"site_id_or_domain": 1}' --json
 ```
 
-> **Windows?** This works as-is in [Git Bash](https://gitforwindows.org/). In PowerShell, escape the inner quotes: `'{\"site_id\": 1}'`. Or skip quoting entirely with `--input-file` ([details](docs/workflows/input-from-file.md)).
+> **Windows?** This works as-is in [Git Bash](https://gitforwindows.org/). In PowerShell, escape the inner quotes: `'{\"site_id_or_domain\": 1}'`. Or skip quoting entirely with `--input-file` ([details](docs/workflows/input-from-file.md)).
 
 **Preview a destructive action before running it:**
 
@@ -175,10 +175,10 @@ When you pass JSON with `--input`, quoting depends on your shell:
 
 ```bash
 # macOS / Linux / Git Bash on Windows
-mainwpcontrol abilities run get-site-v1 --input '{"site_id": 1}' --json
+mainwpcontrol abilities run get-site-v1 --input '{"site_id_or_domain": 1}' --json
 
 # Windows PowerShell
-mainwpcontrol abilities run get-site-v1 --input '{\"site_id\": 1}' --json
+mainwpcontrol abilities run get-site-v1 --input '{\"site_id_or_domain\": 1}' --json
 ```
 
 **Git Bash on Windows** (comes with [Git for Windows](https://gitforwindows.org/)) handles quoting the same way macOS and Linux do. If you use Git Bash, all the examples in this documentation work without changes.
@@ -215,10 +215,10 @@ mainwpcontrol abilities info list-sites-v1
 mainwpcontrol abilities run list-sites-v1 --json
 
 # Run with input parameters
-mainwpcontrol abilities run get-site-v1 --input '{"site_id": 1}' --json
+mainwpcontrol abilities run get-site-v1 --input '{"site_id_or_domain": 1}' --json
 
 # Windows PowerShell: escape inner quotes (Git Bash doesn't need this)
-mainwpcontrol abilities run get-site-v1 --input '{\"site_id\": 1}' --json
+mainwpcontrol abilities run get-site-v1 --input '{\"site_id_or_domain\": 1}' --json
 
 # Or use a file (works everywhere)
 mainwpcontrol abilities run get-site-v1 --input-file params.json --json
@@ -401,11 +401,11 @@ fi
 mainwpcontrol abilities run update-site-plugins-v1 --input-file params.json --json
 
 # From stdin
-echo '{"site_id": 1}' | mainwpcontrol abilities run get-site-v1 --input - --json
+echo '{"site_id_or_domain": 1}' | mainwpcontrol abilities run get-site-v1 --input - --json
 
 # Heredoc
 mainwpcontrol abilities run get-site-v1 --input - --json <<EOF
-{"site_id": 1}
+{"site_id_or_domain": 1}
 EOF
 ```
 
@@ -585,7 +585,7 @@ npm run lint       # Check code style
 ```bash
 export MAINWP_API_URL=https://your-dashboard.example.com
 export MAINWP_USER=your-admin-username
-export MAINWP_APP_PASSWORD=your-application-password
+export MAINWP_APP_PASSWORD='your-application-password'
 
 npm run test:live
 ```

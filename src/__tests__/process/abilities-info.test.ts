@@ -179,10 +179,10 @@ describe('abilities info command', () => {
     expect(envelope.success).toBe(true);
     expect(envelope.data.name).toBe('mainwp/get-site-v1');
 
-    // get-site-v1 has site_id as a required input parameter
+    // get-site-v1 has site_id_or_domain as a required input parameter
     expect(envelope.data.inputSchema.type).toBe('object');
-    expect(envelope.data.inputSchema.properties).toHaveProperty('site_id');
-    expect(envelope.data.inputSchema.required).toContain('site_id');
+    expect(envelope.data.inputSchema.properties).toHaveProperty('site_id_or_domain');
+    expect(envelope.data.inputSchema.required).toContain('site_id_or_domain');
   });
 
   // ---------------------------------------------------------------------------

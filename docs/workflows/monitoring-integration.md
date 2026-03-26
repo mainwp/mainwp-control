@@ -705,7 +705,7 @@ Look at the actual structure and adjust the jq expressions accordingly.
 Cron runs in a minimal environment and may not have access to your system keychain where MainWP Control stores credentials. If the script works when you run it manually but fails from cron, set the credentials as environment variables directly in your crontab:
 
 ```
-MAINWP_APP_PASSWORD=your-app-password
+MAINWP_APP_PASSWORD='your-app-password'
 */5 * * * * /full/path/to/mainwp-metrics.sh
 ```
 

@@ -68,6 +68,17 @@ describe('abilities list command', () => {
     expect(output).toContain('run-updates-v1');
     expect(output).toContain('list-updates-v1');
     expect(output).toContain('get-site-plugins-v1');
+
+    // Abilities with required params show --input in their example
+    expect(output).toContain('abilities run get-site-v1 --input');
+    expect(output).toContain('"site_id_or_domain"');
+
+    // Abilities without required params show bare command (no --input)
+    const listSitesLine = output.split('\n').find(
+      (l: string) => l.includes('abilities run list-sites-v1'),
+    );
+    expect(listSitesLine).toBeDefined();
+    expect(listSitesLine).not.toContain('--input');
   });
 
   // ---------------------------------------------------------------------------
