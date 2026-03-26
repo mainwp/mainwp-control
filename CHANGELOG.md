@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.1.0-beta.1] - 2026-03-26
+
 ### Added
 
 - Required params shown in abilities list examples
@@ -57,6 +59,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Unimplemented `cancelJob` and `listJobs` from BatchManager
 
-[Unreleased]: https://github.com/mainwp/mainwp-control/compare/v1.0.1...HEAD
+[Unreleased]: https://github.com/mainwp/mainwp-control/compare/v1.1.0-beta.1...HEAD
+[1.1.0-beta.1]: https://github.com/mainwp/mainwp-control/compare/v1.0.1...v1.1.0-beta.1
 [1.0.1]: https://github.com/mainwp/mainwp-control/compare/v1.0.0...v1.0.1
 [1.0.0]: https://github.com/mainwp/mainwp-control/releases/tag/v1.0.0
