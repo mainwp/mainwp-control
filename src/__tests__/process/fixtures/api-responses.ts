@@ -100,8 +100,8 @@ export const STANDARD_ABILITIES = [
     category: 'sites',
     input_schema: {
       type: 'object',
-      properties: { site_id: { type: 'integer', description: 'Site ID' } },
-      required: ['site_id'],
+      properties: { site_id_or_domain: { type: 'integer', description: 'Site ID or domain' } },
+      required: ['site_id_or_domain'],
     },
   }),
   mockAbility({
@@ -110,8 +110,8 @@ export const STANDARD_ABILITIES = [
     category: 'sites',
     input_schema: {
       type: 'object',
-      properties: { site_id: { type: 'integer', description: 'Site ID' } },
-      required: ['site_id'],
+      properties: { site_id_or_domain: { type: 'integer', description: 'Site ID or domain' } },
+      required: ['site_id_or_domain'],
     },
   }),
   mockAbility({ name: 'mainwp/sync-sites-v1', category: 'sites' }),
@@ -123,8 +123,8 @@ export const STANDARD_ABILITIES = [
     category: 'plugins',
     input_schema: {
       type: 'object',
-      properties: { site_id: { type: 'integer', description: 'Site ID' } },
-      required: ['site_id'],
+      properties: { site_id_or_domain: { type: 'integer', description: 'Site ID or domain' } },
+      required: ['site_id_or_domain'],
     },
   }),
   mockAbility({

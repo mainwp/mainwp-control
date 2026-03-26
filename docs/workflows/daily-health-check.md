@@ -652,7 +652,7 @@ If the doctor command reports authentication issues, run `mainwpcontrol login` a
 Cron runs in a minimal environment and may not have access to your system keychain where MainWP Control stores credentials. If the health check works when you run it manually but fails from cron, you can set the credentials as environment variables directly in your crontab:
 
 ```
-MAINWP_APP_PASSWORD=your-app-password
+MAINWP_APP_PASSWORD='your-app-password'
 0 7 * * * /full/path/to/mainwp-health-check.sh
 ```
 

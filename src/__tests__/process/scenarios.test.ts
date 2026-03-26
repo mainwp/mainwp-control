@@ -448,7 +448,7 @@ describe('Scenario: Plugin Deployment Verification', () => {
     const result = await runWithProfile(
       [
         'abilities', 'run', 'get-site-plugins-v1',
-        '--input', '{"site_id": 1}',
+        '--input', '{"site_id_or_domain": 1}',
         '--json',
       ],
       config,
@@ -491,14 +491,14 @@ describe('Scenario: Plugin Deployment Verification', () => {
     expect(plugins[2]).toMatchObject({ name: 'woocommerce', version: '8.5', active: false });
   });
 
-  it('step 4: site_id is sent as query param (GET for readonly)', async () => {
+  it('site_id_or_domain is sent as query param (GET for readonly)', async () => {
     await loginCLI(server, config);
     server.setRunResponse('get-site-plugins-v1', abilityRunSuccess(site1Plugins));
 
     await runWithProfile(
       [
         'abilities', 'run', 'get-site-plugins-v1',
-        '--input', '{"site_id": 1}',
+        '--input', '{"site_id_or_domain": 1}',
         '--json',
       ],
       config,
@@ -508,7 +508,7 @@ describe('Scenario: Plugin Deployment Verification', () => {
     const req = server.getLastRequest('/run');
     expect(req).toBeDefined();
     expect(req!.method).toBe('GET');
-    expect(req!.query['input[site_id]']).toBe('1');
+    expect(req!.query['input[site_id_or_domain]']).toBe('1');
   });
 
   it('full flow: login → list sites → get plugins for first site', async () => {
@@ -537,7 +537,7 @@ describe('Scenario: Plugin Deployment Verification', () => {
     const pluginsResult = await runWithProfile(
       [
         'abilities', 'run', 'get-site-plugins-v1',
-        '--input', JSON.stringify({ site_id: firstSiteId }),
+        '--input', JSON.stringify({ site_id_or_domain: firstSiteId }),
         '--json',
       ],
       config,
@@ -613,7 +613,7 @@ describe('Scenario: Input Methods Equivalence', () => {
     const result = await runWithProfile(
       [
         'abilities', 'run', 'get-site-v1',
-        '--input', '{"site_id": 5}',
+        '--input', '{"site_id_or_domain": 5}',
         '--json',
       ],
       config,
@@ -632,7 +632,7 @@ describe('Scenario: Input Methods Equivalence', () => {
   });
 
   it('method 2: --input-file exits 0 with correct data', async () => {
-    await writeFile(tmpFilePath, JSON.stringify({ site_id: 5 }), 'utf-8');
+    await writeFile(tmpFilePath, JSON.stringify({ site_id_or_domain: 5 }), 'utf-8');
     server.setRunResponse('get-site-v1', abilityRunSuccess(singleSitePayload));
 
     const result = await runWithProfile(
@@ -666,7 +666,7 @@ describe('Scenario: Input Methods Equivalence', () => {
         '--json',
       ],
       config,
-      { stdin: '{"site_id": 5}' },
+      { stdin: '{"site_id_or_domain": 5}' },
     );
 
     expect(result.exitCode).toBe(0);
@@ -682,7 +682,7 @@ describe('Scenario: Input Methods Equivalence', () => {
   });
 
   it('all 3 methods produce equivalent server-side params', async () => {
-    const inputJson = '{"site_id": 5}';
+    const inputJson = '{"site_id_or_domain": 5}';
     const results: Array<{ method: string; query: Record<string, string>; response: unknown }> = [];
 
     // Method 1: --input inline
@@ -730,9 +730,9 @@ describe('Scenario: Input Methods Equivalence', () => {
     });
 
     // All three should have sent the same query params to the server
-    expect(results[0]!.query['input[site_id]']).toBe('5');
-    expect(results[1]!.query['input[site_id]']).toBe('5');
-    expect(results[2]!.query['input[site_id]']).toBe('5');
+    expect(results[0]!.query['input[site_id_or_domain]']).toBe('5');
+    expect(results[1]!.query['input[site_id_or_domain]']).toBe('5');
+    expect(results[2]!.query['input[site_id_or_domain]']).toBe('5');
 
     // All three query objects should be equivalent
     expect(results[0]!.query).toEqual(results[1]!.query);
@@ -747,7 +747,7 @@ describe('Scenario: Input Methods Equivalence', () => {
   });
 
   it('all 3 methods use GET for readonly ability', async () => {
-    const inputJson = '{"site_id": 5}';
+    const inputJson = '{"site_id_or_domain": 5}';
     const methods: string[] = [];
 
     // Inline

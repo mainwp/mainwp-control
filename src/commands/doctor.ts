@@ -333,7 +333,7 @@ export default class DoctorCommand extends BaseCommand {
       };
     }
 
-    const requiredAbilities = ['list-sites-v1', 'get-site-v1'];
+    const requiredAbilities = ['mainwp/list-sites-v1', 'mainwp/get-site-v1'];
     const missing = requiredAbilities.filter(
       (name) => !abilities.find((a) => a.name === name)
     );

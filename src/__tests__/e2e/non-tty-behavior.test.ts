@@ -577,7 +577,7 @@ describe('E2E: Non-TTY Behavior', () => {
           json: false,
           quiet: false,
           debug: false,
-          input: '{"site_id": 1}',
+          input: '{"site_id_or_domain": 1}',
           'dry-run': false,
           confirm: true,
           force: false, // No --force

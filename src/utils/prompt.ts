@@ -136,7 +136,7 @@ export async function promptForPassword(question: string): Promise<string> {
           stdin.removeListener('data', onData);
           rl.close();
           process.stdout.write('\n');
-          process.exit(1);
+          process.exit(130);
           break;
 
         case '\u007F': // Backspace

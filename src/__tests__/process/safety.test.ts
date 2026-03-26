@@ -55,7 +55,7 @@ describe('safety / destructive action handling', () => {
     );
 
     const result = await runCLI(
-      ['abilities', 'run', 'delete-site-v1', '--input', '{"site_id":1}', '--dry-run', '--json'],
+      ['abilities', 'run', 'delete-site-v1', '--input', '{"site_id_or_domain":1}', '--dry-run', '--json'],
       {
         xdgConfigHome: config.xdgHome,
         env: { MAINWP_APP_PASSWORD: 'test-pass' },
@@ -78,7 +78,7 @@ describe('safety / destructive action handling', () => {
     const body = runReq.body as Record<string, unknown>;
     const input = body['input'] as Record<string, unknown>;
     expect(input).toHaveProperty('dry_run', true);
-    expect(input).toHaveProperty('site_id', 1);
+    expect(input).toHaveProperty('site_id_or_domain', 1);
 
     // confirm must NOT be present
     expect(input).not.toHaveProperty('confirm');
@@ -121,7 +121,7 @@ describe('safety / destructive action handling', () => {
     const result = await runCLI(
       [
         'abilities', 'run', 'delete-site-v1',
-        '--input', '{"site_id":1}',
+        '--input', '{"site_id_or_domain":1}',
         '--confirm', '--force', '--json',
       ],
       {
@@ -152,7 +152,7 @@ describe('safety / destructive action handling', () => {
     const confirmInput = (confirmReq!.body as Record<string, unknown>)['input'] as Record<string, unknown>;
     expect(confirmInput).toHaveProperty('confirm', true);
     expect(confirmInput).toHaveProperty('user_confirmed', true);
-    expect(confirmInput).toHaveProperty('site_id', 1);
+    expect(confirmInput).toHaveProperty('site_id_or_domain', 1);
 
     // The dry_run request should also be present
     const dryRunReq = runRequests.find((r) => {
@@ -180,7 +180,7 @@ describe('safety / destructive action handling', () => {
     const result = await runCLI(
       [
         'abilities', 'run', 'delete-site-v1',
-        '--input', '{"site_id":1}',
+        '--input', '{"site_id_or_domain":1}',
         '--dry-run', '--confirm',
       ],
       {
@@ -213,7 +213,7 @@ describe('safety / destructive action handling', () => {
     const result = await runCLI(
       [
         'abilities', 'run', 'delete-site-v1',
-        '--input', '{"site_id":1}',
+        '--input', '{"site_id_or_domain":1}',
         '--json',
       ],
       {
@@ -250,7 +250,7 @@ describe('safety / destructive action handling', () => {
     const result = await runCLI(
       [
         'abilities', 'run', 'delete-site-v1',
-        '--input', '{"site_id":1}',
+        '--input', '{"site_id_or_domain":1}',
         '--confirm', '--json',
       ],
       {

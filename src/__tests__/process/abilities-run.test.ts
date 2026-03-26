@@ -108,7 +108,7 @@ describe('abilities run', () => {
   });
 
   // -------------------------------------------------------------------------
-  // 2. get-site-v1 --input '{"site_id": 5}' --json → GET with query params
+  // 2. get-site-v1 --input '{"site_id_or_domain": 5}' --json → GET with query params
   // -------------------------------------------------------------------------
   describe('get-site-v1 --input (inline JSON)', () => {
     it('exits 0 and sends input as query params on a GET request', async () => {
@@ -116,7 +116,7 @@ describe('abilities run', () => {
 
       const result = await run([
         'abilities', 'run', 'get-site-v1',
-        '--input', '{"site_id": 5}',
+        '--input', '{"site_id_or_domain": 5}',
         '--json',
       ]);
 
@@ -129,7 +129,7 @@ describe('abilities run', () => {
       const req = server.getLastRequest('/run');
       expect(req).toBeDefined();
       expect(req!.method).toBe('GET');
-      expect(req!.query['input[site_id]']).toBe('5');
+      expect(req!.query['input[site_id_or_domain]']).toBe('5');
     });
   });
 
@@ -148,7 +148,7 @@ describe('abilities run', () => {
     });
 
     it('reads input from the specified file and sends it as query params', async () => {
-      await writeFile(tmpFile, JSON.stringify({ site_id: 5 }), 'utf-8');
+      await writeFile(tmpFile, JSON.stringify({ site_id_or_domain: 5 }), 'utf-8');
       server.setRunResponse('get-site-v1', abilityRunSuccess(singleSitePayload));
 
       const result = await run([
@@ -162,16 +162,16 @@ describe('abilities run', () => {
       const envelope = result.json as { success: boolean; data: Record<string, unknown> };
       expect(envelope.success).toBe(true);
 
-      // Verify the server received site_id in query params (GET for readonly)
+      // Verify the server received site_id_or_domain in query params (GET for readonly)
       const req = server.getLastRequest('/run');
       expect(req).toBeDefined();
       expect(req!.method).toBe('GET');
-      expect(req!.query['input[site_id]']).toBe('5');
+      expect(req!.query['input[site_id_or_domain]']).toBe('5');
     });
   });
 
   // -------------------------------------------------------------------------
-  // 4. echo '{"site_id": 5}' | mainwpcontrol abilities run get-site-v1 --input - --json
+  // 4. echo '{"site_id_or_domain": 5}' | mainwpcontrol abilities run get-site-v1 --input - --json
   // -------------------------------------------------------------------------
   describe('get-site-v1 --input - (stdin pipe)', () => {
     it('reads input from stdin and sends it as query params', async () => {
@@ -179,7 +179,7 @@ describe('abilities run', () => {
 
       const result = await run(
         ['abilities', 'run', 'get-site-v1', '--input', '-', '--json'],
-        { stdin: '{"site_id": 5}' },
+        { stdin: '{"site_id_or_domain": 5}' },
       );
 
       expect(result.exitCode).toBe(0);
@@ -187,11 +187,11 @@ describe('abilities run', () => {
       const envelope = result.json as { success: boolean; data: Record<string, unknown> };
       expect(envelope.success).toBe(true);
 
-      // Verify the server received site_id in query params (GET for readonly)
+      // Verify the server received site_id_or_domain in query params (GET for readonly)
       const req = server.getLastRequest('/run');
       expect(req).toBeDefined();
       expect(req!.method).toBe('GET');
-      expect(req!.query['input[site_id]']).toBe('5');
+      expect(req!.query['input[site_id_or_domain]']).toBe('5');
     });
   });
 
