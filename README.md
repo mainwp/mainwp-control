@@ -1,5 +1,7 @@
 # MainWP Control
 
+*A [MainWP Labs](https://mainwp.com/mainwp-labs/) project, powered by MainWP*
+
 A CLI for managing your MainWP Dashboard from the terminal. List sites, push updates, sync data, run batch operations across dozens of sites. The command is `mainwpcontrol`.
 
 **Looking for the MCP Server instead?** [MainWP MCP Server](https://github.com/mainwp/mainwp-mcp) is for conversational AI management inside Claude, Cursor, or any MCP-compatible client. MainWP Control is for automation: cron jobs, CI/CD pipelines, monitoring scripts, and batch operations. Both talk to the same Abilities API with the same safety model.
