@@ -76,15 +76,22 @@ export class ContextWindow {
   /**
    * Find the first safe cut index at or after the ideal cut point.
    *
-   * @returns Index of the first `user` message at or after the ideal cut
-   *   point (never 0, the system prompt), or null when none exists.
+   * A safe boundary is the start of a genuine user turn. A `user` message
+   * immediately followed by a `tool` message is NOT a genuine turn start —
+   * ChatEngine injects a synthetic `User approved: yes` message between an
+   * assistant tool-call and its confirm result, and cutting there would
+   * orphan the tool result from its assistant tool-call (the same failure a
+   * real user turn, always followed by an assistant response, cannot produce).
+   *
+   * @returns Index of the first genuine user-turn boundary at or after the
+   *   ideal cut point (never 0, the system prompt), or null when none exists.
    */
   private findSafeCut(messages: Message[]): number | null {
     // shouldTruncate() guarantees maxMessages is a positive number here
     const idealCut = messages.length - (this.maxMessages as number);
 
     for (let i = Math.max(1, idealCut); i < messages.length; i++) {
-      if (messages[i]?.role === 'user') {
+      if (messages[i]?.role === 'user' && messages[i + 1]?.role !== 'tool') {
         return i;
       }
     }

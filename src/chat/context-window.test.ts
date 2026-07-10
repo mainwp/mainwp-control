@@ -142,5 +142,46 @@ describe('ContextWindow', () => {
       const messages: Message[] = [];
       expect(window.truncate(messages)).toBe(messages);
     });
+
+    // Regression: ChatEngine injects a synthetic `User approved: yes` user
+    // message between an assistant tool-call and its confirm result. Treating
+    // that as a real turn boundary would cut there and orphan the tool result.
+    it('does not cut at the synthetic approval message (defers instead)', () => {
+      const window = new ContextWindow(3);
+      const messages = [
+        system,
+        user('delete site 1'),
+        assistant('tc-delete'),
+        user('User approved: yes'),
+        tool('delete-site-v1'),
+      ];
+
+      // Only boundary at/after the ideal cut is the synthetic approval, whose
+      // next message is a tool result — not a real turn start, so defer.
+      expect(window.truncate(messages)).toBe(messages);
+    });
+
+    it('catches up cleanly at the next real user turn after an approval', () => {
+      const window = new ContextWindow(3);
+      const messages = [
+        system,
+        user('delete site 1'),
+        assistant('tc-delete'),
+        user('User approved: yes'),
+        tool('delete-site-v1'),
+        assistant('done'),
+        user('next question'),
+      ];
+
+      const result = window.truncate(messages);
+
+      expect(result).toEqual([system, user('next question')]);
+      // No orphaned tool result
+      for (let i = 1; i < result.length; i++) {
+        if (result[i]!.role === 'tool') {
+          expect(result[i - 1]!.role).toBe('assistant');
+        }
+      }
+    });
   });
 });

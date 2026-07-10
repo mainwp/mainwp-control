@@ -8,6 +8,7 @@
 import { HttpClient, type HttpClientConfig, createHttpClient } from './http-client.js';
 import { APIError, InputError } from '../utils/errors.js';
 import { getInputSanitizer } from '../validation/input-sanitizer.js';
+import { isKnownDestructiveName } from './safety-controller.js';
 
 /**
  * Ability annotation metadata
@@ -287,6 +288,17 @@ export class AbilitiesExecutor {
     input: Record<string, unknown>,
     options?: ExecutionOptions
   ): Record<string, unknown> {
+    // INVARIANT: dry_run and confirm are mutually exclusive. Callers enforce
+    // this upstream (SafetyController.validateExecutionFlags, oclif exclusive
+    // flags); assert here too so no code path can emit a request carrying both.
+    if (options?.dryRun && options?.confirm) {
+      throw new InputError(
+        'dry_run and confirm cannot both be set',
+        undefined,
+        'This is an internal error — preview and execute are separate steps.'
+      );
+    }
+
     const merged = { ...input };
 
     delete merged['dry_run'];
@@ -314,13 +326,20 @@ export class AbilitiesExecutor {
   ): 'GET' | 'POST' | 'DELETE' {
     const annotations = ability.meta?.annotations;
 
-    // If readonly, use GET
-    if (annotations?.readonly) {
+    // Resolve destructiveness the same way SafetyController does — annotations
+    // OR a known-destructive name — so transport never disagrees with policy.
+    // A name-destructive ability must never go out as GET (readonly transport),
+    // even if a hostile/buggy server marks it readonly.
+    const destructive =
+      annotations?.destructive || isKnownDestructiveName(ability.name);
+
+    // Read-only (and not name-destructive) → GET
+    if (annotations?.readonly && !destructive) {
       return 'GET';
     }
 
-    // If destructive and idempotent, use DELETE
-    if (annotations?.destructive && annotations?.idempotent) {
+    // Destructive and idempotent → DELETE
+    if (destructive && annotations?.idempotent) {
       return 'DELETE';
     }
 

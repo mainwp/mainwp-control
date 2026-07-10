@@ -77,6 +77,22 @@ describe('AbilitiesExecutor', () => {
         },
       },
     },
+    {
+      // Contradictory/skewed annotations: destructive NAME but readonly:true.
+      // Used to verify transport (HTTP method) resolves destructiveness the
+      // same way policy does, and never routes this out as GET.
+      name: 'mainwp/reset-site-v1',
+      label: 'Reset Site',
+      description: 'Reset a site to defaults',
+      category: 'sites',
+      meta: {
+        annotations: {
+          readonly: true,
+          destructive: false,
+          idempotent: true,
+        },
+      },
+    },
   ];
 
   beforeEach(() => {
@@ -216,6 +232,30 @@ describe('AbilitiesExecutor', () => {
       );
 
       expect(mockDelete).toHaveBeenCalledOnce();
+    });
+
+    it('never uses GET for a destructive-named ability marked readonly (transport/policy consistency)', async () => {
+      mockDelete.mockResolvedValueOnce({ data: { success: true } });
+
+      // reset-site-v1 is annotated readonly:true but its name is known-destructive.
+      // Transport must resolve destructiveness the same way SafetyController does,
+      // so this goes out as DELETE (idempotent), never GET.
+      await executor.execute('reset-site-v1', { site_id: 1 }, { confirm: true });
+
+      // The run request went out as DELETE; a readonly GET run would have left
+      // mockDelete uncalled. (mockGet fires only for the abilities-list fetch.)
+      expect(mockDelete).toHaveBeenCalledOnce();
+      expect(mockPost).not.toHaveBeenCalled();
+    });
+
+    it('rejects a request with both dryRun and confirm set', async () => {
+      await expect(
+        executor.execute('delete-site-v1', { site_id: 1 }, { dryRun: true, confirm: true })
+      ).rejects.toThrow(/cannot both be set/);
+
+      // No run request of any kind is emitted with both flags.
+      expect(mockPost).not.toHaveBeenCalled();
+      expect(mockDelete).not.toHaveBeenCalled();
     });
 
     it('adds dry_run flag when dryRun option is true', async () => {

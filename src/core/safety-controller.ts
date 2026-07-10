@@ -68,12 +68,53 @@ const DEFAULT_ANNOTATIONS: AbilityAnnotations = {
   idempotent: false,
 };
 
+/**
+ * Known-destructive ability name patterns.
+ *
+ * Defense-in-depth: an ability whose name matches is treated as destructive
+ * regardless of what the API reports, so a compromised or buggy server cannot
+ * downgrade a destructive ability to bypass the safety flow. Intentionally
+ * verb-conservative — each verb is unambiguously destructive on its own; we do
+ * not add generic verbs like `update-` that are frequently non-destructive,
+ * since that would force preview+confirm on safe abilities and erode trust.
+ *
+ * Exported so transport (HTTP-method selection in AbilitiesExecutor) resolves
+ * destructiveness the same way policy does, instead of trusting raw annotations.
+ */
+const DESTRUCTIVE_NAME_PATTERNS = [
+  /^(?:mainwp\/)?delete-/,
+  /^(?:mainwp\/)?disconnect-/,
+  /^(?:mainwp\/)?suspend-/,
+  /^(?:mainwp\/)?deactivate-/,
+  /^(?:mainwp\/)?remove-/,
+  /^(?:mainwp\/)?run-updates-/,
+  /^(?:mainwp\/)?update-all-/,
+  /^(?:mainwp\/)?reset-/,
+  /^(?:mainwp\/)?restore-/,
+  /^(?:mainwp\/)?rollback-/,
+  /^(?:mainwp\/)?wipe-/,
+  /^(?:mainwp\/)?purge-/,
+  /^(?:mainwp\/)?uninstall-/,
+];
+
+/**
+ * Whether an ability name matches a known-destructive pattern.
+ * Single source of truth for the name-based destructive override, shared by
+ * safety classification and HTTP-method selection.
+ */
+export function isKnownDestructiveName(name: string): boolean {
+  return DESTRUCTIVE_NAME_PATTERNS.some((pattern) => pattern.test(name));
+}
+
 export class SafetyController {
   /**
-   * Classify an ability's safety requirements
+   * Classify an ability's safety requirements.
    *
-   * Safety classification derives ONLY from ability annotations.
-   * No heuristics are permitted.
+   * Classification is the MORE RESTRICTIVE of the API annotations and a
+   * conservative name-based destructive override (see DESTRUCTIVE_NAME_PATTERNS):
+   * an ability is destructive if its annotations say so OR its name matches.
+   * The name override is deliberate defense-in-depth against a server that
+   * under-reports destructiveness; it never downgrades, only upgrades.
    */
   classify(ability: Ability): SafetyClassification {
     const annotations = this.validateAnnotations(
@@ -95,33 +136,8 @@ export class SafetyController {
     };
   }
 
-  /**
-   * Known-destructive ability name patterns.
-   * These abilities require the safety flow regardless of API-reported annotations.
-   *
-   * Defense-in-depth only: intentionally verb-conservative. Each verb here is
-   * unambiguously destructive on its own; we do not add generic verbs like
-   * `update-` that are frequently non-destructive, since that would force
-   * the preview+confirm flow on safe abilities and erode trust in the prompt.
-   */
-  private static readonly DESTRUCTIVE_PATTERNS = [
-    /^(?:mainwp\/)?delete-/,
-    /^(?:mainwp\/)?disconnect-/,
-    /^(?:mainwp\/)?suspend-/,
-    /^(?:mainwp\/)?deactivate-/,
-    /^(?:mainwp\/)?remove-/,
-    /^(?:mainwp\/)?run-updates-/,
-    /^(?:mainwp\/)?update-all-/,
-    /^(?:mainwp\/)?reset-/,
-    /^(?:mainwp\/)?restore-/,
-    /^(?:mainwp\/)?rollback-/,
-    /^(?:mainwp\/)?wipe-/,
-    /^(?:mainwp\/)?purge-/,
-    /^(?:mainwp\/)?uninstall-/,
-  ];
-
   private isKnownDestructivePattern(name: string): boolean {
-    return SafetyController.DESTRUCTIVE_PATTERNS.some(pattern => pattern.test(name));
+    return isKnownDestructiveName(name);
   }
 
   /**

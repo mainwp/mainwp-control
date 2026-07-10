@@ -140,6 +140,20 @@ export class InputSanitizer {
         );
       }
       for (const key of keys) {
+        // SECURITY: reject keys containing PHP query-structural characters.
+        // On the GET/DELETE transport, a key like `confirm]` serializes to
+        // `input[confirm%5D]=…`, which PHP url-decodes and parses back to
+        // `input.confirm`, aliasing a control flag past the exact-name strip
+        // in AbilitiesExecutor.buildEffectiveParams. Plain field names never
+        // contain brackets, so rejecting them closes the canonicalization
+        // hole for control flags and every other field.
+        if (key.includes('[') || key.includes(']')) {
+          throw new InputError(
+            `Invalid characters in input key at "${path}.${key}"`,
+            { path, key },
+            'Input property names cannot contain "[" or "]" characters'
+          );
+        }
         this.validateValue((value as Record<string, unknown>)[key], depth + 1, `${path}.${key}`);
       }
     }

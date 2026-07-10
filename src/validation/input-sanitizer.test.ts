@@ -122,6 +122,28 @@ describe('InputSanitizer — sanitize() enforcement', () => {
 
     expect(sanitizer.sanitize(input)).toBe(input);
   });
+
+  // SECURITY: keys with PHP query-structural brackets can canonicalize on the
+  // server to alias a control flag (e.g. `confirm]` -> input.confirm) past the
+  // exact-name strip in AbilitiesExecutor. Reject them at the input boundary.
+  it('rejects a key containing a "]" bracket (control-flag canonicalization)', () => {
+    const input = { 'confirm]': true } as Record<string, unknown>;
+
+    expect(() => sanitizer.sanitize(input)).toThrow(InputError);
+    expect(() => sanitizer.sanitize(input)).toThrow(/Invalid characters in input key/);
+  });
+
+  it('rejects a key containing a "[" bracket', () => {
+    const input = { 'foo[bar': 1 } as Record<string, unknown>;
+
+    expect(() => sanitizer.sanitize(input)).toThrow(/Invalid characters in input key/);
+  });
+
+  it('rejects a bracketed key nested inside an object', () => {
+    const input = { outer: { 'dry_run]': true } } as Record<string, unknown>;
+
+    expect(() => sanitizer.sanitize(input)).toThrow(InputError);
+  });
 });
 
 describe('InputSanitizer — sanitizeErrorMessage', () => {
