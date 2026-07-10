@@ -193,7 +193,7 @@ export default class Login extends BaseCommand {
           lines.push('');
           lines.push(formatWarning('Credentials NOT saved to keychain.'));
           if (keychainResult.error) {
-            lines.push(`  Reason: ${keychainResult.error}`);
+            lines.push(`  Reason: ${stripControlChars(keychainResult.error)}`);
           }
           lines.push(
             '  Future commands must continue receiving MAINWP_APP_PASSWORD because plaintext credentials are not stored locally.'

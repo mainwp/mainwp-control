@@ -78,6 +78,22 @@ describe('AbilitiesExecutor', () => {
       },
     },
     {
+      // String-typed annotation from a buggy/hostile server. SafetyController
+      // validates annotations with strict boolean checks and treats this as
+      // unset; transport must resolve it the same way (POST, never GET).
+      name: 'mainwp/get-stats-v1',
+      label: 'Get Stats',
+      description: 'Site statistics',
+      category: 'sites',
+      meta: {
+        annotations: {
+          readonly: 'true',
+          destructive: false,
+          idempotent: true,
+        },
+      },
+    } as unknown as Ability,
+    {
       // Contradictory/skewed annotations: destructive NAME but readonly:true.
       // Used to verify transport (HTTP method) resolves destructiveness the
       // same way policy does, and never routes this out as GET.
@@ -246,6 +262,19 @@ describe('AbilitiesExecutor', () => {
       // mockDelete uncalled. (mockGet fires only for the abilities-list fetch.)
       expect(mockDelete).toHaveBeenCalledOnce();
       expect(mockPost).not.toHaveBeenCalled();
+    });
+
+    it('treats non-boolean annotation values as unset for method selection', async () => {
+      mockPost.mockResolvedValueOnce({ data: { success: true } });
+
+      // get-stats-v1 carries readonly: "true" (string). SafetyController's
+      // strict boolean validation ignores it, so transport must too:
+      // the run goes out as POST, never a readonly GET.
+      await executor.execute('get-stats-v1', {});
+
+      expect(mockPost).toHaveBeenCalledOnce();
+      // The only GET was the abilities-list fetch, not a readonly run.
+      expect(mockGet).toHaveBeenCalledOnce();
     });
 
     it('rejects a request with both dryRun and confirm set', async () => {

@@ -30,6 +30,7 @@ import {
 import { maskPassword, maskApiKey } from '../../utils/format.js';
 import { color, colors } from '../../utils/colors.js';
 import { formatDivider, formatSection, formatStatusIcon } from '../../output/formatter.js';
+import { stripControlChars } from '../../utils/terminal-sanitizer.js';
 
 /**
  * Configuration display structure
@@ -109,7 +110,7 @@ export default class ConfigShowCommand extends BaseCommand {
     if (this.jsonOutput) {
       this.output(configDisplay);
     } else {
-      this.displayConfig(configDisplay, flags.verbose);
+      await this.displayConfig(configDisplay, flags.verbose);
     }
   }
 
@@ -265,16 +266,17 @@ export default class ConfigShowCommand extends BaseCommand {
   /**
    * Display configuration in human-readable format
    */
-  private displayConfig(config: ConfigDisplay, verbose: boolean): void {
+  private async displayConfig(config: ConfigDisplay, verbose: boolean): Promise<void> {
     this.log('\n  MainWP Control CLI - Configuration\n');
     this.log(formatDivider());
 
     // Profile Configuration Section
     const profileRows: string[] = [];
     if (config.profile.active) {
-      profileRows.push(`    Active Profile: ${color(config.profile.active, colors.green)}`);
-      profileRows.push(`    Dashboard URL:  ${config.profile.dashboardUrl}`);
-      profileRows.push(`    Username:       ${config.profile.username}`);
+      // Config-file values are user-editable on disk — sanitize before display.
+      profileRows.push(`    Active Profile: ${color(stripControlChars(config.profile.active), colors.green)}`);
+      profileRows.push(`    Dashboard URL:  ${stripControlChars(config.profile.dashboardUrl ?? '')}`);
+      profileRows.push(`    Username:       ${stripControlChars(config.profile.username ?? '')}`);
       profileRows.push(
         `    SSL Verify:     ${
           config.profile.skipSSLVerification ? color('Disabled', colors.yellow) : color('Enabled', colors.green)
@@ -301,11 +303,14 @@ export default class ConfigShowCommand extends BaseCommand {
     } else {
       profileRows.push(`    ${color('No active profile configured', colors.yellow)}`);
       profileRows.push(`    ${color('Run `mainwpcontrol login` or `mainwpcontrol profile use <name>`', colors.gray)}`);
-
-      // Show available profiles count
-      this.showAvailableProfilesHint();
     }
     this.log(formatSection('Profile Configuration', profileRows));
+
+    // Show available profiles count right after the profile section.
+    // Awaited (not fire-and-forget) so its output lands in deterministic order.
+    if (!config.profile.active) {
+      await this.showAvailableProfilesHint();
+    }
 
     // LLM Provider Section
     const llmRows: string[] = [];
@@ -427,7 +432,7 @@ export default class ConfigShowCommand extends BaseCommand {
       const profileStore = getProfileStore();
       const profiles = await profileStore.list();
       if (profiles.length > 0) {
-        this.log(`    ${color(`${profiles.length} profile(s) available: ${profiles.map((p) => p.name).join(', ')}`, colors.gray)}`);
+        this.log(`    ${color(`${profiles.length} profile(s) available: ${stripControlChars(profiles.map((p) => p.name).join(', '))}`, colors.gray)}`);
       }
     } catch {
       // Ignore errors

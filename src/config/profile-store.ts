@@ -9,6 +9,7 @@ import { join } from 'node:path';
 import { ConfigError } from '../utils/errors.js';
 import { getConfigDir } from './settings.js';
 import { atomicWriteFile } from './fs-utils.js';
+import { stripControlChars } from '../utils/terminal-sanitizer.js';
 
 /**
  * Profile data (credentials stored separately in keychain)
@@ -176,8 +177,8 @@ export class ProfileStore {
       !data.profiles.some((p) => p.name === data.activeProfile)
     ) {
       console.error(
-        `Warning: Active profile "${data.activeProfile}" no longer exists. ` +
-        `Falling back to "${data.profiles[0]?.name ?? 'none'}".`
+        `Warning: Active profile "${stripControlChars(data.activeProfile)}" no longer exists. ` +
+        `Falling back to "${stripControlChars(data.profiles[0]?.name ?? 'none')}".`
       );
       data.activeProfile = data.profiles[0]?.name;
     }

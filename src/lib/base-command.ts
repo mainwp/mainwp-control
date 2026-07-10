@@ -305,25 +305,31 @@ export abstract class BaseCommand extends Command {
     const redacted: Record<string, unknown> = {};
 
     for (const [key, value] of Object.entries(context)) {
-      if (isSensitiveKey(key)) {
-        redacted[key] = '[REDACTED]';
-        continue;
-      }
-
-      if (typeof value === 'string' && value.length > 300) {
-        redacted[key] = `${value.slice(0, 297)}...`;
-        continue;
-      }
-
-      if (value && typeof value === 'object' && !Array.isArray(value)) {
-        redacted[key] = this.redactDebugContext(value as Record<string, unknown>);
-        continue;
-      }
-
-      redacted[key] = value;
+      redacted[key] = isSensitiveKey(key) ? '[REDACTED]' : this.redactDebugValue(value);
     }
 
     return redacted;
+  }
+
+  /**
+   * Redact a single debug-context value: truncate long strings, recurse into
+   * arrays and objects. Kept separate from redactSensitiveKeys() because
+   * debug output also truncates — delegating would lose that for nested data.
+   */
+  private redactDebugValue(value: unknown): unknown {
+    if (typeof value === 'string' && value.length > 300) {
+      return `${value.slice(0, 297)}...`;
+    }
+
+    if (Array.isArray(value)) {
+      return value.map((item) => this.redactDebugValue(item));
+    }
+
+    if (value && typeof value === 'object') {
+      return this.redactDebugContext(value as Record<string, unknown>);
+    }
+
+    return value;
   }
 
   /**

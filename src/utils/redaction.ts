@@ -22,8 +22,10 @@
  * codebase's API surface collides with it today.
  */
 const SENSITIVE_KEY_SUBSTRINGS = [
-  'password', 'secret', 'token', 'authorization', 'auth', 'cookie',
-  'apikey', 'api_key', 'bearer', 'credential', 'private_key',
+  // 'auth' also substring-matches 'authorization'; normalization folds
+  // 'api_key'/'api-key' into 'apikey' — don't re-add those spellings.
+  'password', 'secret', 'token', 'auth', 'cookie',
+  'apikey', 'bearer', 'credential', 'private_key',
   'signing_key', 'encryption_key',
 ] as const;
 

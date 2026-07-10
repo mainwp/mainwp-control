@@ -330,16 +330,19 @@ export class AbilitiesExecutor {
     // OR a known-destructive name — so transport never disagrees with policy.
     // A name-destructive ability must never go out as GET (readonly transport),
     // even if a hostile/buggy server marks it readonly.
+    // Strict === true matches SafetyController.validateAnnotations(): a
+    // non-boolean annotation value (e.g. readonly: "true" from a buggy or
+    // hostile server) must not be treated as set.
     const destructive =
-      annotations?.destructive || isKnownDestructiveName(ability.name);
+      annotations?.destructive === true || isKnownDestructiveName(ability.name);
 
     // Read-only (and not name-destructive) → GET
-    if (annotations?.readonly && !destructive) {
+    if (annotations?.readonly === true && !destructive) {
       return 'GET';
     }
 
     // Destructive and idempotent → DELETE
-    if (destructive && annotations?.idempotent) {
+    if (destructive && annotations?.idempotent === true) {
       return 'DELETE';
     }
 

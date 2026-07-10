@@ -11,7 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Chat context truncation no longer orphans tool results mid tool-calling loop or at the destructive-action approval step, which could cause provider API errors on the next message
 - Caller-cancelled requests now report "Request cancelled" instead of "Request timed out"
-- HTTP method selection now resolves destructiveness the same way the safety classifier does, so a destructive-named ability is never sent as a read-only GET even if the server mislabels it
+- HTTP method selection now resolves destructiveness the same way the safety classifier does, so a destructive-named ability is never sent as a read-only GET even if the server mislabels it; non-boolean annotation values (e.g. `readonly: "true"` as a string) are likewise ignored for method selection, matching the classifier's strict validation
 - Keychain credential-removal failures now warn in non-interactive (CI) runs instead of only when attached to a terminal
 - Warning shown when the active profile no longer exists and the CLI falls back to another profile
 
@@ -23,10 +23,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- `doctor` and `config show` human-readable output now strips terminal escape sequences from error- and config-derived text, matching the sanitization the `--json` path already applied
 - Input keys containing `[` or `]` are now rejected — they could canonicalize server-side (PHP query parsing) to alias a control flag like `confirm` past the executor's flag-stripping guard
 - Mutual exclusion of `dry_run` and `confirm` is now also asserted at the executor boundary, not only at the flag layer
 - Updated `undici` to 7.28.0, resolving TLS certificate validation bypass and response queue poisoning advisories
-- Updated `@oclif/core`, `@oclif/plugin-help`, and transitive dependencies — `npm audit` now reports zero vulnerabilities
+- Updated `@oclif/core`, `@oclif/plugin-help`, `@oclif/plugin-autocomplete`, and transitive dependencies — `npm audit` now reports zero vulnerabilities
 
 ## [1.1.0-beta.1] - 2026-03-26
 

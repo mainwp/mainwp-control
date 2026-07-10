@@ -166,10 +166,10 @@ describe('InputSanitizer — sanitizeErrorMessage', () => {
   });
 
   it('redacts absolute filesystem paths', () => {
-    const message = "ENOENT: no such file or directory, open '/Users/dennis/.config/mainwpcontrol/settings.json'";
+    const message = "ENOENT: no such file or directory, open '/Users/alice/.config/mainwpcontrol/settings.json'";
     const sanitized = sanitizer.sanitizeErrorMessage(message);
 
-    expect(sanitized).not.toContain('/Users/dennis');
+    expect(sanitized).not.toContain('/Users/alice');
     expect(sanitized).toContain('[PATH]');
   });
 
