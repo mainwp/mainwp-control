@@ -56,6 +56,53 @@ export function formatHeading(text: string): string {
 }
 
 /**
+ * Status for pass/warn/fail style reports (doctor, config show)
+ */
+export type StatusKind = 'pass' | 'warn' | 'fail';
+
+/**
+ * Format a colored status icon for pass/warn/fail states
+ */
+export function formatStatusIcon(status: StatusKind): string {
+  switch (status) {
+    case 'pass':
+      return color('✓', colors.green);
+    case 'warn':
+      return color('⚠', colors.yellow);
+    case 'fail':
+      return color('✗', colors.red);
+  }
+}
+
+/**
+ * Get the color code associated with a pass/warn/fail status
+ */
+export function getStatusColor(status: StatusKind): string {
+  switch (status) {
+    case 'pass':
+      return colors.green;
+    case 'warn':
+      return colors.yellow;
+    case 'fail':
+      return colors.red;
+  }
+}
+
+/**
+ * Format a fixed-width horizontal divider used by report-style commands
+ */
+export function formatDivider(width = 40): string {
+  return '  ' + '─'.repeat(width);
+}
+
+/**
+ * Format a titled section from pre-formatted rows
+ */
+export function formatSection(title: string, rows: string[]): string {
+  return [`\n  ${color(title, colors.bold)}`, ...rows].join('\n');
+}
+
+/**
  * Format a key-value pair
  */
 export function formatKeyValue(key: string, value: unknown): string {

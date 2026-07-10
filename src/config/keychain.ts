@@ -177,9 +177,9 @@ export class Keychain {
       try {
         await withTimeout(kt.deletePassword(SERVICE_NAME, profileName), KEYTAR_TIMEOUT_MS);
       } catch (error) {
-        if (process.stderr.isTTY) {
-          console.error(`Warning: Failed to remove credentials from keychain: ${(error as Error).message}`);
-        }
+        // Always warn, including non-TTY/CI runs — a silent failure here
+        // leaves stale credentials in the keychain with no visible signal.
+        console.error(`Warning: Failed to remove credentials from keychain: ${(error as Error).message}`);
       }
     }
   }

@@ -30,7 +30,14 @@ const PROGRESS_BAR_WIDTH = 30;
 const TERMINAL_LINE_WIDTH = 80;
 
 /** Maximum number of result items to preview */
-const RESULTS_PREVIEW_LIMIT = 5;
+export const RESULTS_PREVIEW_LIMIT = 5;
+
+/**
+ * Check if a job status is terminal (job finished, no further polling)
+ */
+export function isTerminalStatus(status: string): boolean {
+  return status === 'completed' || status === 'failed' || status === 'partial';
+}
 
 export default class JobsWatch extends BaseCommand {
   static description = 'Monitor batch job status';
@@ -203,20 +210,17 @@ export default class JobsWatch extends BaseCommand {
       return Math.round((status.processed / status.total) * 100);
     }
 
-    // Estimate based on status
-    switch (status.status) {
-      case 'pending':
-        return 0;
-      case 'running':
-        return 50;
-      case 'completed':
-        return 100;
-      case 'failed':
-      case 'partial':
-        return status.progress ?? 0;
-      default:
-        return 0;
+    if (status.status === 'completed') {
+      return 100;
     }
+
+    if (isTerminalStatus(status.status)) {
+      // failed or partial
+      return status.progress ?? 0;
+    }
+
+    // Estimate based on non-terminal status
+    return status.status === 'running' ? 50 : 0;
   }
 
   /**
@@ -266,14 +270,14 @@ export default class JobsWatch extends BaseCommand {
     // Header
     if (timedOut) {
       lines.push(formatWarning(`Job ${jobId} timed out after ${formatElapsed(elapsed)}`));
+    } else if (!isTerminalStatus(status.status)) {
+      lines.push(`Job ${jobId}: ${status.status}`);
     } else if (status.status === 'completed') {
       lines.push(formatSuccess(`Job ${jobId} completed`));
     } else if (status.status === 'failed') {
       lines.push(formatErrorText(`Job ${jobId} failed`));
-    } else if (status.status === 'partial') {
-      lines.push(formatWarning(`Job ${jobId} partially completed`));
     } else {
-      lines.push(`Job ${jobId}: ${status.status}`);
+      lines.push(formatWarning(`Job ${jobId} partially completed`));
     }
 
     lines.push('');

@@ -22,6 +22,7 @@ import {
 import { ExitCode } from '../utils/exit-codes.js';
 import { maskPassword, maskApiKey } from '../utils/format.js';
 import { color, colors } from '../utils/colors.js';
+import { formatDivider, formatStatusIcon, getStatusColor } from '../output/formatter.js';
 
 /**
  * Check result
@@ -434,11 +435,11 @@ export default class DoctorCommand extends BaseCommand {
    */
   private displayReport(report: DoctorReport, verbose: boolean): void {
     this.log('\n  MainWP Control CLI - System Check\n');
-    this.log('  ' + '─'.repeat(40));
+    this.log(formatDivider());
 
     for (const check of report.checks) {
-      const icon = this.getStatusIcon(check.status);
-      const statusColor = this.getStatusColorCode(check.status);
+      const icon = formatStatusIcon(check.status);
+      const statusColor = getStatusColor(check.status);
 
       this.log(`  ${icon} ${check.name}`);
       this.log(`     ${color(check.message, statusColor)}`);
@@ -451,7 +452,7 @@ export default class DoctorCommand extends BaseCommand {
       }
     }
 
-    this.log('  ' + '─'.repeat(40));
+    this.log(formatDivider());
 
     // Summary
     this.log(
@@ -468,31 +469,4 @@ export default class DoctorCommand extends BaseCommand {
     }
   }
 
-  /**
-   * Get status icon
-   */
-  private getStatusIcon(status: CheckResult['status']): string {
-    switch (status) {
-      case 'pass':
-        return color('✓', colors.green);
-      case 'warn':
-        return color('⚠', colors.yellow);
-      case 'fail':
-        return color('✗', colors.red);
-    }
-  }
-
-  /**
-   * Get status color code string
-   */
-  private getStatusColorCode(status: CheckResult['status']): string {
-    switch (status) {
-      case 'pass':
-        return colors.green;
-      case 'warn':
-        return colors.yellow;
-      case 'fail':
-        return colors.red;
-    }
-  }
 }

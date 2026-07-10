@@ -477,6 +477,7 @@ Step-by-step guides for common automation patterns:
 | 3 | Network error | Retry or check connectivity |
 | 4 | API error | Check ability parameters |
 | 5 | Internal error | Report bug |
+| 130 | Interrupted (SIGINT) | Ctrl-C during a password prompt — standard Unix 128+SIGINT convention, outside the 0-5 contract |
 
 ### Environment Variables
 

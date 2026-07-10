@@ -7,6 +7,7 @@
  */
 
 import { InputError } from '../utils/errors.js';
+import { isSensitiveKey as isSensitiveKeyShared, redactSensitiveKeys } from '../utils/redaction.js';
 
 /**
  * Default limits for input sanitization
@@ -34,22 +35,6 @@ export interface SanitizeOptions {
   maxObjectKeys?: number;
   maxInputSize?: number;
 }
-
-/**
- * Patterns that indicate sensitive data
- */
-const SENSITIVE_PATTERNS = [
-  /password/i,
-  /secret/i,
-  /token/i,
-  /api[_-]?key/i,
-  /auth/i,
-  /credential/i,
-  /private[_-]?key/i,
-  /bearer/i,
-  /signing[_-]?key/i,
-  /encryption[_-]?key/i,
-];
 
 /**
  * Patterns for redacting file paths
@@ -164,41 +149,14 @@ export class InputSanitizer {
    * Check if a key name appears to contain sensitive data
    */
   isSensitiveKey(key: string): boolean {
-    return SENSITIVE_PATTERNS.some((pattern) => pattern.test(key));
+    return isSensitiveKeyShared(key);
   }
 
   /**
    * Redact sensitive values in an object (for logging/errors)
    */
   redactSensitive(data: Record<string, unknown>): Record<string, unknown> {
-    return this.redactValue(data) as Record<string, unknown>;
-  }
-
-  /**
-   * Recursively redact sensitive values
-   */
-  private redactValue(value: unknown): unknown {
-    if (value === null || value === undefined) {
-      return value;
-    }
-
-    if (Array.isArray(value)) {
-      return value.map((item) => this.redactValue(item));
-    }
-
-    if (typeof value === 'object') {
-      const result: Record<string, unknown> = {};
-      for (const [key, val] of Object.entries(value)) {
-        if (this.isSensitiveKey(key)) {
-          result[key] = '[REDACTED]';
-        } else {
-          result[key] = this.redactValue(val);
-        }
-      }
-      return result;
-    }
-
-    return value;
+    return redactSensitiveKeys(data) as Record<string, unknown>;
   }
 
   /**

@@ -6,6 +6,7 @@
  */
 
 import { vi } from 'vitest';
+import type { Command } from '@oclif/core';
 import type { Ability, ExecutionResult } from '../../core/abilities-executor.js';
 import type { JobStatus } from '../../core/batch-manager.js';
 import type { LLMProvider, LLMResponse, Message, ChatOptions } from '../../chat/providers/provider.js';
@@ -230,6 +231,65 @@ export function createMockReadlineInterface(responses: string[] = []): MockReadl
     }),
     close: vi.fn(),
   };
+}
+
+// ============================================================================
+// Command Harness Factory
+// ============================================================================
+
+/**
+ * Output captured from a mocked command run
+ */
+export interface CapturedOutput {
+  stdout: string[];
+  stderr: string[];
+  exitCode?: number;
+}
+
+/**
+ * Create a command instance with a mocked oclif Config and captured
+ * log/logToStderr/exit/error output. Shared by the e2e command-harness
+ * factories, which layer command-specific `parse` wiring on top.
+ */
+export function createCommandHarness<T extends Command>(
+  CommandClass: new (argv: string[], config: unknown) => T,
+  argv: string[] = []
+): { command: T; output: CapturedOutput } {
+  const output: CapturedOutput = { stdout: [], stderr: [] };
+
+  const mockConfig = {
+    root: '/mock/root',
+    bin: 'mainwpcontrol',
+    name: 'mainwpcontrol',
+    version: '1.0.0',
+    pjson: { name: 'mainwpcontrol', version: '1.0.0' },
+    dataDir: '/mock/data',
+    cacheDir: '/mock/cache',
+    configDir: '/mock/config',
+    findCommand: vi.fn(),
+    runCommand: vi.fn(),
+    runHook: vi.fn(),
+  };
+
+  const command = new CommandClass(argv, mockConfig as never);
+
+  command.log = vi.fn((...args: unknown[]) => {
+    output.stdout.push(args.map(String).join(' '));
+  });
+  command.logToStderr = vi.fn((...args: unknown[]) => {
+    output.stderr.push(args.map(String).join(' '));
+  });
+  command.exit = vi.fn((code?: number) => {
+    output.exitCode = code ?? 0;
+    throw new Error(`EXIT:${code ?? 0}`);
+  }) as never;
+  command.error = vi.fn((message: string | Error, options?: { exit?: number }) => {
+    output.stderr.push(message instanceof Error ? message.message : message);
+    output.exitCode = options?.exit ?? 1;
+    throw new Error(`EXIT:${output.exitCode}`);
+  }) as never;
+
+  return { command, output };
 }
 
 // ============================================================================

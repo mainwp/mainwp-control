@@ -14,6 +14,7 @@ import {
   type StreamChunk,
   type ToolCall,
   registerProvider,
+  splitSystemMessage,
 } from './provider.js';
 import { makeProviderRequest } from './provider-fetch.js';
 import { readSSEStream } from './sse-reader.js';
@@ -127,18 +128,16 @@ export class GeminiProvider implements LLMProvider {
   async chat(messages: Message[], options?: ChatOptions): Promise<LLMResponse> {
     const model = options?.model ?? this.defaultModel;
 
-    // Extract system message
-    const systemMessage = messages.find((m) => m.role === 'system');
-    const chatMessages = messages.filter((m) => m.role !== 'system');
+    const { systemContent, chatMessages } = splitSystemMessage(messages);
 
     const requestBody: Record<string, unknown> = {
       contents: this.convertMessages(chatMessages),
     };
 
     // System instruction
-    if (systemMessage) {
+    if (systemContent !== undefined) {
       requestBody['systemInstruction'] = {
-        parts: [{ text: systemMessage.content }],
+        parts: [{ text: systemContent }],
       };
     }
 
@@ -162,12 +161,14 @@ export class GeminiProvider implements LLMProvider {
       requestBody['tools'] = [this.convertTools(options.tools)];
     }
 
-    const endpoint = `/models/${model}:generateContent`;
-    const response = await this.makeRequest<GeminiResponse>(
-      endpoint,
-      requestBody,
-      options?.signal
-    );
+    const response = await makeProviderRequest<GeminiResponse>({
+      url: `${this.baseUrl}/models/${model}:generateContent`,
+      headers: this.getHeaders(),
+      body: requestBody,
+      timeout: this.timeout,
+      signal: options?.signal,
+      providerName: 'Gemini',
+    });
 
     return this.convertResponse(response, model);
   }
@@ -178,17 +179,15 @@ export class GeminiProvider implements LLMProvider {
   ): AsyncGenerator<StreamChunk, void, undefined> {
     const model = options?.model ?? this.defaultModel;
 
-    // Extract system message
-    const systemMessage = messages.find((m) => m.role === 'system');
-    const chatMessages = messages.filter((m) => m.role !== 'system');
+    const { systemContent, chatMessages } = splitSystemMessage(messages);
 
     const requestBody: Record<string, unknown> = {
       contents: this.convertMessages(chatMessages),
     };
 
-    if (systemMessage) {
+    if (systemContent !== undefined) {
       requestBody['systemInstruction'] = {
-        parts: [{ text: systemMessage.content }],
+        parts: [{ text: systemContent }],
       };
     }
 
@@ -209,10 +208,7 @@ export class GeminiProvider implements LLMProvider {
 
     for await (const data of readSSEStream({
       url: `${this.baseUrl}/models/${model}:streamGenerateContent?alt=sse`,
-      headers: {
-        'Content-Type': 'application/json',
-        'x-goog-api-key': this.apiKey,
-      },
+      headers: this.getHeaders(),
       body: requestBody,
       signal: options?.signal,
       providerName: 'Gemini',
@@ -242,7 +238,11 @@ export class GeminiProvider implements LLMProvider {
           return;
         }
       } catch {
-        // Invalid JSON, skip line
+        // Invalid JSON, skip line — a systematically malformed stream would
+        // otherwise fail silently, so leave a trail when debugging
+        if (process.env['DEBUG']) {
+          console.debug('[Gemini] Skipped malformed SSE chunk');
+        }
       }
     }
 
@@ -370,26 +370,14 @@ export class GeminiProvider implements LLMProvider {
   }
 
   /**
-   * Make API request
+   * Get request headers
    */
-  private async makeRequest<T>(
-    endpoint: string,
-    body: Record<string, unknown>,
-    signal?: AbortSignal
-  ): Promise<T> {
-    return makeProviderRequest<T>({
-      url: `${this.baseUrl}${endpoint}`,
-      headers: {
-        'Content-Type': 'application/json',
-        'x-goog-api-key': this.apiKey,
-      },
-      body,
-      timeout: this.timeout,
-      signal,
-      providerName: 'Gemini',
-    });
+  private getHeaders(): Record<string, string> {
+    return {
+      'Content-Type': 'application/json',
+      'x-goog-api-key': this.apiKey,
+    };
   }
-
 }
 
 /**

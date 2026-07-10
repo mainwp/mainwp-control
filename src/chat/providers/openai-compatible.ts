@@ -270,7 +270,11 @@ export abstract class OpenAICompatibleProvider implements LLMProvider {
           return;
         }
       } catch {
-        // Invalid JSON, skip line
+        // Invalid JSON, skip line — a systematically malformed stream would
+        // otherwise fail silently, so leave a trail when debugging
+        if (process.env['DEBUG']) {
+          console.debug(`[${this.name}] Skipped malformed SSE chunk`);
+        }
       }
     }
 

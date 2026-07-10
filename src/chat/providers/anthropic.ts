@@ -14,6 +14,7 @@ import {
   type StreamChunk,
   type ToolCall,
   registerProvider,
+  splitSystemMessage,
 } from './provider.js';
 import { makeProviderRequest } from './provider-fetch.js';
 import { readSSEStream } from './sse-reader.js';
@@ -134,9 +135,7 @@ export class AnthropicProvider implements LLMProvider {
   async chat(messages: Message[], options?: ChatOptions): Promise<LLMResponse> {
     const model = options?.model ?? this.defaultModel;
 
-    // Extract system message
-    const systemMessage = messages.find((m) => m.role === 'system');
-    const chatMessages = messages.filter((m) => m.role !== 'system');
+    const { systemContent, chatMessages } = splitSystemMessage(messages);
 
     const requestBody: Record<string, unknown> = {
       model,
@@ -144,8 +143,8 @@ export class AnthropicProvider implements LLMProvider {
       max_tokens: options?.maxTokens ?? 4096,
     };
 
-    if (systemMessage) {
-      requestBody['system'] = systemMessage.content;
+    if (systemContent !== undefined) {
+      requestBody['system'] = systemContent;
     }
 
     if (options?.temperature !== undefined) {
@@ -160,11 +159,14 @@ export class AnthropicProvider implements LLMProvider {
       requestBody['tools'] = this.convertTools(options.tools);
     }
 
-    const response = await this.makeRequest<AnthropicResponse>(
-      '/v1/messages',
-      requestBody,
-      options?.signal
-    );
+    const response = await makeProviderRequest<AnthropicResponse>({
+      url: `${this.baseUrl}/v1/messages`,
+      headers: this.getHeaders(),
+      body: requestBody,
+      timeout: this.timeout,
+      signal: options?.signal,
+      providerName: 'Anthropic',
+    });
 
     return this.convertResponse(response);
   }
@@ -175,9 +177,7 @@ export class AnthropicProvider implements LLMProvider {
   ): AsyncGenerator<StreamChunk, void, undefined> {
     const model = options?.model ?? this.defaultModel;
 
-    // Extract system message
-    const systemMessage = messages.find((m) => m.role === 'system');
-    const chatMessages = messages.filter((m) => m.role !== 'system');
+    const { systemContent, chatMessages } = splitSystemMessage(messages);
 
     const requestBody: Record<string, unknown> = {
       model,
@@ -186,8 +186,8 @@ export class AnthropicProvider implements LLMProvider {
       stream: true,
     };
 
-    if (systemMessage) {
-      requestBody['system'] = systemMessage.content;
+    if (systemContent !== undefined) {
+      requestBody['system'] = systemContent;
     }
 
     if (options?.temperature !== undefined) {
@@ -258,7 +258,11 @@ export class AnthropicProvider implements LLMProvider {
           return;
         }
       } catch {
-        // Invalid JSON, skip line
+        // Invalid JSON, skip line — a systematically malformed stream would
+        // otherwise fail silently, so leave a trail when debugging
+        if (process.env['DEBUG']) {
+          console.debug('[Anthropic] Skipped malformed SSE chunk');
+        }
       }
     }
 
@@ -387,24 +391,6 @@ export class AnthropicProvider implements LLMProvider {
       'x-api-key': this.apiKey,
       'anthropic-version': API_VERSION,
     };
-  }
-
-  /**
-   * Make API request
-   */
-  private async makeRequest<T>(
-    endpoint: string,
-    body: Record<string, unknown>,
-    signal?: AbortSignal
-  ): Promise<T> {
-    return makeProviderRequest<T>({
-      url: `${this.baseUrl}${endpoint}`,
-      headers: this.getHeaders(),
-      body,
-      timeout: this.timeout,
-      signal,
-      providerName: 'Anthropic',
-    });
   }
 
 }

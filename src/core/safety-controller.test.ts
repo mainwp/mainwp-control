@@ -427,6 +427,79 @@ describe('M6: Known-destructive pattern defense-in-depth', () => {
     expect(classification.isDestructive).toBe(true);
     expect(classification.requiresSafetyFlow).toBe(true);
   });
+
+  it('forces destructive classification for reset-* patterns', () => {
+    const ability = createTestAbility('mainwp/reset-site-v1', {
+      destructive: false,
+      readonly: true,
+    });
+
+    const classification = controller.classify(ability);
+    expect(classification.isDestructive).toBe(true);
+    expect(classification.requiresSafetyFlow).toBe(true);
+  });
+
+  it('forces destructive classification for restore-* patterns', () => {
+    const ability = createTestAbility('restore-backup-v1', {
+      destructive: false,
+    });
+
+    const classification = controller.classify(ability);
+    expect(classification.isDestructive).toBe(true);
+    expect(classification.requiresSafetyFlow).toBe(true);
+  });
+
+  it('forces destructive classification for rollback-* patterns', () => {
+    const ability = createTestAbility('mainwp/rollback-plugin-v1', {
+      destructive: false,
+    });
+
+    const classification = controller.classify(ability);
+    expect(classification.isDestructive).toBe(true);
+    expect(classification.requiresSafetyFlow).toBe(true);
+  });
+
+  it('forces destructive classification for wipe-* patterns', () => {
+    const ability = createTestAbility('wipe-site-v1', {
+      destructive: false,
+    });
+
+    const classification = controller.classify(ability);
+    expect(classification.isDestructive).toBe(true);
+    expect(classification.requiresSafetyFlow).toBe(true);
+  });
+
+  it('forces destructive classification for purge-* patterns', () => {
+    const ability = createTestAbility('mainwp/purge-cache-v1', {
+      destructive: false,
+      readonly: true,
+    });
+
+    const classification = controller.classify(ability);
+    expect(classification.isDestructive).toBe(true);
+    expect(classification.requiresSafetyFlow).toBe(true);
+  });
+
+  it('forces destructive classification for uninstall-* patterns', () => {
+    const ability = createTestAbility('uninstall-plugin-v1', {
+      destructive: false,
+    });
+
+    const classification = controller.classify(ability);
+    expect(classification.isDestructive).toBe(true);
+    expect(classification.requiresSafetyFlow).toBe(true);
+  });
+
+  it('does not force destructive for generic update-* patterns', () => {
+    const ability = createTestAbility('update-site-settings-v1', {
+      destructive: false,
+      readonly: true,
+    });
+
+    const classification = controller.classify(ability);
+    expect(classification.isDestructive).toBe(false);
+    expect(classification.requiresSafetyFlow).toBe(false);
+  });
 });
 
 describe('ACTION_VERBS substring ordering', () => {

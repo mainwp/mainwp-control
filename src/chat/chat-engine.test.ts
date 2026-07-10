@@ -2296,16 +2296,52 @@ describe('ChatEngine', () => {
         // History should be managed
         const history = engine.getHistory();
         expect(history[0]!.role).toBe('system');
+
+        // Pairing integrity: truncation must never orphan a tool result from
+        // its preceding assistant tool call — providers reject orphaned
+        // tool results on the next call (regression test for the unsafe
+        // mid-tool-loop truncation fallback)
+        for (let i = 1; i < history.length; i++) {
+          if (history[i]!.role === 'tool') {
+            expect(history[i - 1]!.role).toBe('assistant');
+          }
+        }
+        // A truncation cut is only safe immediately before a user message,
+        // so the first non-system message is never a dangling tool result
+        expect(history[1]!.role).not.toBe('tool');
       });
 
-      it('should handle empty messages array gracefully', async () => {
+      it('should keep pairing integrity across the next turn after a mid-tool-loop overflow', async () => {
+        const mockProvider = createMockProvider([
+          createToolCallResponse('list-sites-v1', { page: 1 }),
+          createToolCallResponse('list-sites-v1', { page: 2 }),
+          createAnswerResponse('Found all sites'),
+          createAnswerResponse('Done'),
+        ]);
+
         const { engine } = createEngineWithContext({
-          maxContextMessages: 5,
+          provider: mockProvider,
+          maxContextMessages: 4,
+          executeHandler: () => createSuccessResult({ sites: [] }),
         });
 
-        // Before initialization, getContextStats should work
-        const stats = engine.getContextStats();
-        expect(stats.messageCount).toBe(-1); // No messages yet
+        // First turn overflows the window mid tool-loop (truncation is
+        // deferred until a safe boundary exists)
+        await engine.sendMessage('List all sites');
+        // Next user turn provides the safe boundary and the window catches up
+        await engine.sendMessage('Thanks');
+
+        const history = engine.getHistory();
+        expect(history[0]!.role).toBe('system');
+        // After a cut, the window is bounded again (system + max + current exchange)
+        expect(history.length).toBeLessThanOrEqual(6);
+        // And the cut landed on a user boundary, not inside a tool exchange
+        expect(history[1]!.role).toBe('user');
+        for (let i = 1; i < history.length; i++) {
+          if (history[i]!.role === 'tool') {
+            expect(history[i - 1]!.role).toBe('assistant');
+          }
+        }
       });
     });
 
@@ -2389,6 +2425,9 @@ describe('ChatEngine', () => {
     });
 
     describe('Configuration Tests', () => {
+      // The resolved maxContextMessages is observable through the system
+      // prompt's context-window constraint line (the stats accessor it was
+      // previously asserted through was speculative plumbing and is gone)
       it('should use provided maxContextMessages option', async () => {
         const { engine } = createEngineWithContext({
           maxContextMessages: 10,
@@ -2396,8 +2435,8 @@ describe('ChatEngine', () => {
 
         await engine.initialize();
 
-        const stats = engine.getContextStats();
-        expect(stats.maxMessages).toBe(10);
+        const systemPrompt = engine.getHistory()[0]?.content as string;
+        expect(systemPrompt).toContain('Context window: 10 messages');
       });
 
       it('should apply default limit (20) when not specified', async () => {
@@ -2413,8 +2452,8 @@ describe('ChatEngine', () => {
 
         await engine.initialize();
 
-        const stats = engine.getContextStats();
-        expect(stats.maxMessages).toBe(20);
+        const systemPrompt = engine.getHistory()[0]?.content as string;
+        expect(systemPrompt).toContain('Context window: 20 messages');
       });
 
       it('should apply default limit when undefined is passed (use 0 to disable)', async () => {
@@ -2426,19 +2465,8 @@ describe('ChatEngine', () => {
 
         await engine.initialize();
 
-        const stats = engine.getContextStats();
-        expect(stats.maxMessages).toBe(20);
-      });
-
-      it('should disable truncation when 0 is passed', async () => {
-        const { engine } = createEngineWithContext({
-          maxContextMessages: 0,
-        });
-
-        await engine.initialize();
-
-        const stats = engine.getContextStats();
-        expect(stats.maxMessages).toBe(0);
+        const systemPrompt = engine.getHistory()[0]?.content as string;
+        expect(systemPrompt).toContain('Context window: 20 messages');
       });
 
       it('should not include context constraint in system prompt when 0 is passed', async () => {
@@ -2467,54 +2495,6 @@ describe('ChatEngine', () => {
       });
     });
 
-    describe('Context Stats', () => {
-      it('should return correct message count', async () => {
-        const mockProvider = createMockProvider([
-          createAnswerResponse('Response 1'),
-          createAnswerResponse('Response 2'),
-        ]);
-
-        const { engine } = createEngineWithContext({
-          provider: mockProvider,
-          maxContextMessages: 20,
-        });
-
-        await engine.sendMessage('Message 1');
-        await engine.sendMessage('Message 2');
-
-        const stats = engine.getContextStats();
-        // 2 user + 2 assistant = 4 messages (excluding system prompt)
-        expect(stats.messageCount).toBe(4);
-      });
-
-      it('should return correct max messages value', async () => {
-        const { engine } = createEngineWithContext({
-          maxContextMessages: 15,
-        });
-
-        await engine.initialize();
-
-        const stats = engine.getContextStats();
-        expect(stats.maxMessages).toBe(15);
-      });
-
-      it('should estimate tokens based on character count', async () => {
-        const mockProvider = createMockProvider([
-          createAnswerResponse('This is a response with some text content'),
-        ]);
-
-        const { engine } = createEngineWithContext({
-          provider: mockProvider,
-          maxContextMessages: 20,
-        });
-
-        await engine.sendMessage('Hello world');
-
-        const stats = engine.getContextStats();
-        // Should have some estimated tokens
-        expect(stats.estimatedTokens).toBeGreaterThan(0);
-      });
-    });
   });
 
   // ==========================================================================

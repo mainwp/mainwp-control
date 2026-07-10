@@ -18,10 +18,12 @@ import {
 } from '../config/settings.js';
 import { createAbilitiesExecutor, type AbilitiesExecutor } from '../core/abilities-executor.js';
 import { createBatchManager, type BatchManager } from '../core/batch-manager.js';
+import type { HttpClientConfig } from '../core/http-client.js';
 import { isMainWPCTLError, ConfigError } from '../utils/errors.js';
 import { successOutput, errorOutput } from '../output/json-envelope.js';
 import { ExitCode } from '../utils/exit-codes.js';
 import { formatError, formatWarning } from '../output/formatter.js';
+import { isSensitiveKey } from '../utils/redaction.js';
 
 /**
  * Common flags available to all commands
@@ -110,6 +112,12 @@ export abstract class BaseCommand extends Command {
   private batchManagerInstance: BatchManager | undefined;
 
   /**
+   * Cached HTTP client config, so the keychain is only looked up once per
+   * process even if a command uses both getExecutor() and getBatchManager().
+   */
+  private clientConfig: HttpClientConfig | undefined;
+
+  /**
    * Whether this command needs a profile to be loaded.
    * Override to return false for commands like `login` that don't need a profile.
    */
@@ -182,11 +190,13 @@ export abstract class BaseCommand extends Command {
   }
 
   /**
-   * Get the AbilitiesExecutor instance
+   * Build (and cache) the HTTP client config for the current profile.
+   * Resolves the keychain password once per process — getExecutor() and
+   * getBatchManager() both call this instead of hitting the keychain themselves.
    */
-  protected async getExecutor(): Promise<AbilitiesExecutor> {
-    if (this.executor) {
-      return this.executor;
+  private async buildClientConfig(): Promise<HttpClientConfig> {
+    if (this.clientConfig) {
+      return this.clientConfig;
     }
 
     if (!this.currentProfile) {
@@ -198,16 +208,30 @@ export abstract class BaseCommand extends Command {
     }
 
     const keychain = getKeychain();
-    const password = await keychain.getOrThrow(this.currentProfile.name);
-    this.executor = createAbilitiesExecutor({
+    const appPassword = await keychain.getOrThrow(this.currentProfile.name);
+    this.clientConfig = {
       baseUrl: this.currentProfile.dashboardUrl,
       username: this.currentProfile.username,
-      appPassword: password,
+      appPassword,
       ...this.getTransportConfig(),
-    });
+    };
+
+    return this.clientConfig;
+  }
+
+  /**
+   * Get the AbilitiesExecutor instance
+   */
+  protected async getExecutor(): Promise<AbilitiesExecutor> {
+    if (this.executor) {
+      return this.executor;
+    }
+
+    const config = await this.buildClientConfig();
+    this.executor = createAbilitiesExecutor(config);
 
     this.debugLog('Initialized abilities executor', {
-      profile: this.currentProfile.name,
+      profile: this.currentProfile?.name,
       timeoutMs: this.settings.timeout,
       allowInsecureHttp: this.settings.allowInsecureHttp,
       skipSSLVerification: this.getTransportConfig().skipSSLVerification,
@@ -224,25 +248,11 @@ export abstract class BaseCommand extends Command {
       return this.batchManagerInstance;
     }
 
-    if (!this.currentProfile) {
-      throw new ConfigError(
-        'No profile loaded',
-        undefined,
-        'This is an internal error. Please report this issue.'
-      );
-    }
-
-    const keychain = getKeychain();
-    const appPassword = await keychain.getOrThrow(this.currentProfile.name);
-    this.batchManagerInstance = createBatchManager({
-      baseUrl: this.currentProfile.dashboardUrl,
-      username: this.currentProfile.username,
-      appPassword,
-      ...this.getTransportConfig(),
-    });
+    const config = await this.buildClientConfig();
+    this.batchManagerInstance = createBatchManager(config);
 
     this.debugLog('Initialized batch manager', {
-      profile: this.currentProfile.name,
+      profile: this.currentProfile?.name,
       timeoutMs: this.settings.timeout,
       allowInsecureHttp: this.settings.allowInsecureHttp,
       skipSSLVerification: this.getTransportConfig().skipSSLVerification,
@@ -292,11 +302,10 @@ export abstract class BaseCommand extends Command {
   }
 
   private redactDebugContext(context: Record<string, unknown>): Record<string, unknown> {
-    const sensitiveKeys = ['password', 'secret', 'token', 'authorization', 'cookie', 'apikey'];
     const redacted: Record<string, unknown> = {};
 
     for (const [key, value] of Object.entries(context)) {
-      if (sensitiveKeys.some(s => key.toLowerCase() === s)) {
+      if (isSensitiveKey(key)) {
         redacted[key] = '[REDACTED]';
         continue;
       }

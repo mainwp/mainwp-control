@@ -801,3 +801,51 @@ describe('HttpClient Manual Redirect Mode', () => {
     expect(fetchCall[1].redirect).toBe('manual');
   });
 });
+
+describe('HttpClient AbortError Attribution', () => {
+  const baseConfig: HttpClientConfig = {
+    baseUrl: 'https://dashboard.example.com',
+    username: 'admin',
+    appPassword: 'test-password',
+  };
+
+  beforeEach(() => {
+    mockFetch.mockReset();
+  });
+
+  function abortError(): Error {
+    const error = new Error('This operation was aborted');
+    error.name = 'AbortError';
+    return error;
+  }
+
+  it('reports "Request cancelled" when the caller signal aborted', async () => {
+    mockFetch.mockRejectedValueOnce(abortError());
+
+    const controller = new AbortController();
+    controller.abort();
+
+    const client = createHttpClient(baseConfig);
+    await expect(
+      client.get('/test', { signal: controller.signal })
+    ).rejects.toThrow('Request cancelled');
+  });
+
+  it('reports "Request timed out" when the abort was not caller-initiated', async () => {
+    mockFetch.mockRejectedValueOnce(abortError());
+
+    const client = createHttpClient(baseConfig);
+    await expect(client.get('/test')).rejects.toThrow('Request timed out');
+  });
+
+  it('reports "Request timed out" when a caller signal exists but never aborted', async () => {
+    mockFetch.mockRejectedValueOnce(abortError());
+
+    const controller = new AbortController();
+
+    const client = createHttpClient(baseConfig);
+    await expect(
+      client.get('/test', { signal: controller.signal })
+    ).rejects.toThrow('Request timed out');
+  });
+});

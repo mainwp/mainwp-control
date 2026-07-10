@@ -15,6 +15,8 @@ import {
   createMockProfile,
   createMockAbility,
   restoreEnvVars,
+  createCommandHarness,
+  type CapturedOutput,
 } from './test-helpers.js';
 
 // ============================================================================
@@ -104,51 +106,11 @@ import AbilitiesList from '../../commands/abilities/list.js';
 // Test Utilities
 // ============================================================================
 
-interface CapturedOutput {
-  stdout: string[];
-  stderr: string[];
-  exitCode?: number;
-}
-
 function createCommand<T extends AbilitiesRun | AbilitiesList>(
   CommandClass: new (argv: string[], config: unknown) => T,
   argv: string[] = []
 ): { command: T; output: CapturedOutput } {
-  const output: CapturedOutput = { stdout: [], stderr: [] };
-
-  const mockConfig = {
-    root: '/mock/root',
-    bin: 'mainwpcontrol',
-    name: 'mainwpcontrol',
-    version: '1.0.0',
-    pjson: { name: 'mainwpcontrol', version: '1.0.0' },
-    dataDir: '/mock/data',
-    cacheDir: '/mock/cache',
-    configDir: '/mock/config',
-    findCommand: vi.fn(),
-    runCommand: vi.fn(),
-    runHook: vi.fn(),
-  };
-
-  const command = new CommandClass(argv, mockConfig as never);
-
-  command.log = vi.fn((...args: unknown[]) => {
-    output.stdout.push(args.map(String).join(' '));
-  });
-  command.logToStderr = vi.fn((...args: unknown[]) => {
-    output.stderr.push(args.map(String).join(' '));
-  });
-  command.exit = vi.fn((code?: number) => {
-    output.exitCode = code ?? 0;
-    throw new Error(`EXIT:${code ?? 0}`);
-  }) as never;
-  command.error = vi.fn((message: string | Error, options?: { exit?: number }) => {
-    output.stderr.push(message instanceof Error ? message.message : message);
-    output.exitCode = options?.exit ?? 1;
-    throw new Error(`EXIT:${output.exitCode}`);
-  }) as never;
-
-  return { command, output };
+  return createCommandHarness(CommandClass, argv);
 }
 
 function findJsonOutput(lines: string[]): unknown | undefined {

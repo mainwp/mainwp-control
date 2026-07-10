@@ -118,14 +118,5 @@ export class ExponentialBackoff {
 
     return true;
   }
-
-  /**
-   * Get delay for a specific retry attempt (without advancing state)
-   */
-  getDelayForAttempt(attempt: number): number {
-    if (attempt === 0) return 0;
-    const delay = this.initialDelay * Math.pow(this.multiplier, attempt - 1);
-    return Math.min(delay, this.maxDelay);
-  }
 }
 

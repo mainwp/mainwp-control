@@ -175,6 +175,10 @@ export class ProfileStore {
       data.activeProfile &&
       !data.profiles.some((p) => p.name === data.activeProfile)
     ) {
+      console.error(
+        `Warning: Active profile "${data.activeProfile}" no longer exists. ` +
+        `Falling back to "${data.profiles[0]?.name ?? 'none'}".`
+      );
       data.activeProfile = data.profiles[0]?.name;
     }
   }

@@ -8,6 +8,7 @@
 import { createRequire } from 'node:module';
 import { Agent } from 'undici';
 import { NetworkError, TLSError, APIError, AuthError } from '../utils/errors.js';
+import { redactSensitiveKeys } from '../utils/redaction.js';
 
 const require = createRequire(import.meta.url);
 const { version: PKG_VERSION } = require('../../package.json') as { version: string };
@@ -197,7 +198,11 @@ export class HttpClient {
         return this.handleRedirect<T>(response, method, body, options, redirectCount);
       }
 
-      // Check response size via Content-Length header (pre-read guard)
+      // Check response size via Content-Length header (pre-read guard).
+      // REPORT-ONLY: this trusts the server-reported Content-Length; a server
+      // that lies about it still gets fully buffered by the post-read check
+      // below. Acceptable here since the only server we talk to is the
+      // trusted Dashboard the operator configured, not an arbitrary origin.
       const contentLength = response.headers.get('content-length');
       const parsedContentLength = contentLength ? parseInt(contentLength, 10) : NaN;
       if (!isNaN(parsedContentLength) && parsedContentLength > this.maxResponseSize) {
@@ -248,7 +253,9 @@ export class HttpClient {
       };
     } catch (error) {
       clearTimeout(timeoutId);
-      throw this.normalizeError(error);
+      // Distinguish caller cancellation from our own timeout: AbortSignal.any()
+      // erases which signal fired, so check the caller's signal directly.
+      throw this.normalizeError(error, options?.signal?.aborted === true);
     }
   }
 
@@ -425,12 +432,15 @@ export class HttpClient {
   /**
    * Normalize errors to MainWPCTLError types
    */
-  private normalizeError(error: unknown): Error {
+  private normalizeError(error: unknown, cancelled = false): Error {
     if (!(error instanceof Error)) {
       return new NetworkError(String(error));
     }
 
     if (error.name === 'AbortError') {
+      if (cancelled) {
+        return new NetworkError('Request cancelled');
+      }
       return new NetworkError(
         'Request timed out',
         undefined,
@@ -470,27 +480,7 @@ export class HttpClient {
    * Sanitize error data to prevent credential leaks
    */
   private sanitizeErrorData(data: unknown): unknown {
-    if (typeof data !== 'object' || data === null) return data;
-    if (Array.isArray(data)) return data.map(item => this.sanitizeErrorData(item));
-
-    const sanitized: Record<string, unknown> = {};
-    // Substring matching catches camelCase, snake_case, and header variants
-    // (e.g., accessToken, private_key, set-cookie, refreshToken)
-    const sensitiveSubstrings = [
-      'password', 'token', 'secret', 'authorization', 'cookie',
-      'apikey', 'api_key', 'bearer', 'credential', 'private_key',
-      'signing_key',
-    ];
-
-    for (const [key, value] of Object.entries(data)) {
-      const keyLower = key.toLowerCase();
-      if (sensitiveSubstrings.some(s => keyLower.includes(s))) {
-        sanitized[key] = '[REDACTED]';
-      } else {
-        sanitized[key] = this.sanitizeErrorData(value);
-      }
-    }
-    return sanitized;
+    return redactSensitiveKeys(data);
   }
 }
 

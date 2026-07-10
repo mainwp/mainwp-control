@@ -165,8 +165,6 @@ export interface SystemPromptConfig {
   includeSchemas: boolean;
   /** Maximum messages to keep in context (excluding system prompt). undefined = no limit */
   maxContextMessages?: number;
-  /** Maximum estimated tokens in context. Reserved for future use. */
-  maxContextTokens?: number;
 }
 
 /**

@@ -73,6 +73,8 @@ export class AbilitiesExecutor {
   private abilitiesCache: Map<string, Ability> | null = null;
   private cacheExpiry = 0;
   private readonly cacheTTL = 5 * 60 * 1000; // 5 minutes
+  /** In-flight cache fill, shared by concurrent callers to avoid a fetch stampede. */
+  private cacheFillPromise: Promise<void> | null = null;
 
   constructor(config: HttpClientConfig) {
     this.httpClient = createHttpClient(config);
@@ -122,8 +124,9 @@ export class AbilitiesExecutor {
       );
     }
 
-    // Build the request body
-    const body = this.buildRequestBody(input, options);
+    // Merge execution options into user input — the single place control
+    // flags are applied. Both request paths below format this same output.
+    const params = this.buildEffectiveParams(input, options);
 
     // Determine HTTP method based on annotations
     const method = this.getHttpMethod(ability, options);
@@ -140,17 +143,20 @@ export class AbilitiesExecutor {
 
       if (method === 'GET') {
         // For GET requests, nest input under input[key] (WordPress REST style).
-        // Control flags (dry_run, confirm) stay top-level.
-        const queryString = this.buildGetQueryString(input, options);
+        const queryString = this.buildGetQueryString(params);
         const url = queryString ? `${endpoint}?${queryString}` : endpoint;
         response = await this.httpClient.get<ExecutionResult<T>>(url, requestOptions);
       } else if (method === 'DELETE') {
-        const queryString = this.buildGetQueryString(input, options);
+        const queryString = this.buildGetQueryString(params);
         const url = queryString ? `${endpoint}?${queryString}` : endpoint;
         response = await this.httpClient.delete<ExecutionResult<T>>(url, requestOptions);
       } else {
         // POST with JSON body
-        response = await this.httpClient.post<ExecutionResult<T>>(endpoint, body, requestOptions);
+        response = await this.httpClient.post<ExecutionResult<T>>(
+          endpoint,
+          { input: params },
+          requestOptions
+        );
       }
 
       return this.normalizeResponse(response.data);
@@ -191,13 +197,30 @@ export class AbilitiesExecutor {
   }
 
   /**
-   * Ensure abilities cache is populated
+   * Ensure abilities cache is populated.
+   * Concurrent callers share one in-flight fetch instead of each starting
+   * their own paginated fetch (plausible in chat's tool-calling loop).
    */
   private async ensureCache(): Promise<void> {
     if (this.abilitiesCache && Date.now() < this.cacheExpiry) {
       return;
     }
 
+    if (this.cacheFillPromise) {
+      return this.cacheFillPromise;
+    }
+
+    this.cacheFillPromise = this.fillCache().finally(() => {
+      this.cacheFillPromise = null;
+    });
+
+    return this.cacheFillPromise;
+  }
+
+  /**
+   * Fetch all ability pages and populate the cache.
+   */
+  private async fillCache(): Promise<void> {
     this.abilitiesCache = new Map();
 
     // Fetch all pages — API returns Ability[] with WP pagination headers.
@@ -251,17 +274,21 @@ export class AbilitiesExecutor {
   }
 
   /**
-   * Build request body with execution options.
-   * The WP Abilities API expects: { input: { ...userInput, dry_run?, confirm? } }
+   * Merge execution options into user input, producing the final param set.
+   * Both the POST body and the GET/DELETE query-string path format this same
+   * output — this is the single place dry_run/confirm/user_confirmed are applied.
+   *
+   * SECURITY: strips any dry_run/confirm/user_confirmed present in user/LLM
+   * input before applying the ones from `options`. These control flags are
+   * set exclusively by execution options (CLI flags or the safety flow) —
+   * preserve this strip exactly, do not weaken it.
    */
-  private buildRequestBody(
+  private buildEffectiveParams(
     input: Record<string, unknown>,
     options?: ExecutionOptions
   ): Record<string, unknown> {
     const merged = { ...input };
 
-    // SECURITY: Strip control flags from user/LLM-provided input.
-    // These are set exclusively from execution options (CLI flags or safety flow).
     delete merged['dry_run'];
     delete merged['confirm'];
     delete merged['user_confirmed'];
@@ -275,7 +302,7 @@ export class AbilitiesExecutor {
       merged['user_confirmed'] = true;
     }
 
-    return { input: merged };
+    return merged;
   }
 
   /**
@@ -303,21 +330,16 @@ export class AbilitiesExecutor {
 
   /**
    * Build query string for GET/DELETE requests with WordPress-style nesting.
-   * User input goes under input[key]=value; control flags stay top-level.
+   * `params` is already the merged output of buildEffectiveParams(), so
+   * dry_run/confirm/user_confirmed (if present) are formatted the same as
+   * any other param — no separate control-flag handling needed here.
    */
-  private buildGetQueryString(
-    input: Record<string, unknown>,
-    options?: ExecutionOptions,
-  ): string {
+  private buildGetQueryString(params: Record<string, unknown>): string {
     const parts: string[] = [];
 
-    // SECURITY: Control flags managed exclusively by execution options
-    const controlFlags = ['dry_run', 'confirm', 'user_confirmed'];
-
     // All params go under input[key] — the API treats input as a single object.
-    for (const [key, value] of Object.entries(input)) {
+    for (const [key, value] of Object.entries(params)) {
       if (value === undefined || value === null) continue;
-      if (controlFlags.includes(key)) continue;
       const ek = encodeURIComponent(key);
 
       if (Array.isArray(value)) {
@@ -330,12 +352,6 @@ export class AbilitiesExecutor {
       } else {
         parts.push(`input[${ek}]=${encodeURIComponent(String(value))}`);
       }
-    }
-
-    if (options?.dryRun) parts.push('input[dry_run]=true');
-    if (options?.confirm) {
-      parts.push('input[confirm]=true');
-      parts.push('input[user_confirmed]=true');
     }
 
     return parts.join('&');

@@ -12,6 +12,7 @@ import { createHttpClient } from '../core/http-client.js';
 import { formatSuccess, formatWarning, formatInfo } from '../output/formatter.js';
 import { AuthError, InputError } from '../utils/errors.js';
 import { promptForInput, promptForPassword, isInteractive } from '../utils/prompt.js';
+import { stripControlChars } from '../utils/terminal-sanitizer.js';
 
 export default class Login extends BaseCommand {
   static description = 'Authenticate with a MainWP Dashboard';
@@ -181,9 +182,9 @@ export default class Login extends BaseCommand {
       },
       () => {
         const lines = [
-          formatSuccess(`Logged in as ${username}`),
-          `  Profile: ${profileName}`,
-          `  Dashboard: ${normalizedUrl}`,
+          formatSuccess(`Logged in as ${stripControlChars(username)}`),
+          `  Profile: ${stripControlChars(profileName)}`,
+          `  Dashboard: ${stripControlChars(normalizedUrl)}`,
         ];
 
         if (keychainResult.stored) {

@@ -39,6 +39,7 @@ import {
   type PreviewResult,
 } from '../core/safety-controller.js';
 import { abilityToTool } from './providers/provider.js';
+import { ContextWindow } from './context-window.js';
 import { logDestructiveActionSafe } from '../utils/audit-logger.js';
 import { getInputSanitizer } from '../validation/input-sanitizer.js';
 
@@ -76,8 +77,6 @@ export interface ChatEngineOptions {
   promptConfig?: Partial<SystemPromptConfig>;
   /** Maximum messages to keep in context (excluding system prompt). undefined = no limit */
   maxContextMessages?: number;
-  /** Maximum estimated tokens in context. Reserved for future use. */
-  maxContextTokens?: number;
   /** Whether to use streaming responses (default: false) */
   stream?: boolean;
   /** Callback for streaming content chunks (called as content arrives) */
@@ -112,7 +111,7 @@ export class ChatEngine {
   private readonly model: string | undefined;
   private readonly temperature: number | undefined;
   private readonly promptConfig: SystemPromptConfig;
-  private readonly maxContextMessages: number | undefined;
+  private readonly contextWindow: ContextWindow;
   private readonly stream: boolean;
   private readonly onStreamChunk?: (content: string) => void;
 
@@ -151,17 +150,11 @@ export class ChatEngine {
       options.promptConfig?.maxContextMessages ??
       defaultPromptConfig.maxContextMessages;
 
-    this.maxContextMessages = resolvedContextMessages;
+    this.contextWindow = new ContextWindow(resolvedContextMessages);
 
     // Sync the resolved value into promptConfig for system prompt generation
     if (resolvedContextMessages !== undefined) {
       mergedPromptConfig.maxContextMessages = resolvedContextMessages;
-    }
-
-    // Handle optional token limit (reserved for future use)
-    const contextTokens = options.maxContextTokens ?? options.promptConfig?.maxContextTokens;
-    if (contextTokens !== undefined) {
-      mergedPromptConfig.maxContextTokens = contextTokens;
     }
 
     this.promptConfig = mergedPromptConfig;
@@ -220,6 +213,19 @@ export class ChatEngine {
   }
 
   /**
+   * Build the audit-log preview payload for a pending preview
+   */
+  private static previewAuditPayload(preview: PendingPreview): {
+    summary: string;
+    affectedCount: number;
+  } {
+    return {
+      summary: preview.preview.summary,
+      affectedCount: preview.preview.affected.length,
+    };
+  }
+
+  /**
    * Handle response to a pending preview
    */
   private async handlePreviewResponse(
@@ -252,10 +258,7 @@ export class ChatEngine {
       // Log audit entry for declined action (fire-and-forget)
       await logDestructiveActionSafe({
         abilityName: preview.ability.name,
-        preview: {
-          summary: preview.preview.summary,
-          affectedCount: preview.preview.affected.length,
-        },
+        preview: ChatEngine.previewAuditPayload(preview),
         userDecision: 'declined',
         input: preview.input,
       });
@@ -292,10 +295,7 @@ export class ChatEngine {
     }
     await logDestructiveActionSafe({
       abilityName: preview.ability.name,
-      preview: {
-        summary: preview.preview.summary,
-        affectedCount: preview.preview.affected.length,
-      },
+      preview: ChatEngine.previewAuditPayload(preview),
       userDecision: 'approved',
       execution: executionAudit,
       input: preview.input,
@@ -665,151 +665,16 @@ export class ChatEngine {
   }
 
   /**
-   * Get message count (excluding system prompt)
-   */
-  private getMessageCount(): number {
-    return this.messages.length - 1;
-  }
-
-  /**
-   * Estimate tokens for a set of messages using character count as a rough proxy.
-   * Uses character_count / 4 as a heuristic (common approximation for English text).
+   * Truncate message history via the context window.
    *
-   * NOTE: This is a rough estimate. Actual token counts from LLMResponse.usage
-   * are more accurate when available.
-   *
-   * @param messages - Messages to estimate tokens for
-   * @returns Estimated token count
-   */
-  private estimateTokens(messages: Message[]): number {
-    let totalChars = 0;
-    for (const msg of messages) {
-      if (typeof msg.content === 'string') {
-        totalChars += msg.content.length;
-      }
-    }
-    // Character count / 4 is a common heuristic for English text tokenization
-    return Math.ceil(totalChars / 4);
-  }
-
-  /**
-   * Check if context truncation should occur based on message count limits.
-   * Token-based limits are reserved for future implementation.
-   *
-   * @returns true if truncation should occur, false if:
-   *   - maxContextMessages is undefined (no limit)
-   *   - maxContextMessages is 0 (explicit unlimited)
-   *   - message count is within limit
-   */
-  private shouldTruncate(): boolean {
-    if (this.maxContextMessages === undefined || this.maxContextMessages === 0) {
-      return false; // No limit configured or explicitly unlimited
-    }
-    return this.getMessageCount() > this.maxContextMessages;
-  }
-
-  /**
-   * Find the index where truncation should start, respecting message boundaries.
-   * This ensures we keep complete user-assistant exchanges and tool call-result pairs.
-   *
-   * @returns Index in the messages array where truncation should start (exclusive of system prompt)
-   */
-  private findTruncationPoint(): number {
-    if (this.maxContextMessages === undefined || this.maxContextMessages <= 0) {
-      return 1; // Keep only system prompt
-    }
-
-    // Calculate how many messages to keep (plus 1 for system prompt)
-    const targetLength = this.maxContextMessages + 1;
-
-    if (this.messages.length <= targetLength) {
-      return this.messages.length; // No truncation needed
-    }
-
-    // Start from where we'd ideally cut
-    const idealTruncationIndex = this.messages.length - this.maxContextMessages;
-
-    // Ensure we don't cut the system prompt
-    let truncationIndex = Math.max(1, idealTruncationIndex);
-
-    // Walk forward to find a safe boundary (start of a user message)
-    // This ensures we don't split:
-    // - user message + assistant response
-    // - tool call + tool result
-    // - retry prompts from their original failed attempt
-    const maxSearchIndex = this.messages.length;
-    while (truncationIndex < maxSearchIndex) {
-      const msg = this.messages[truncationIndex];
-      // Safe to cut at the start of a user message
-      if (msg && msg.role === 'user') {
-        break;
-      }
-      truncationIndex++;
-    }
-
-    // Fallback: if no user boundary found, keep at least maxContextMessages
-    // This ensures we don't drop all messages when the limit is very small
-    if (truncationIndex >= this.messages.length) {
-      truncationIndex = Math.max(1, idealTruncationIndex);
-    }
-
-    return truncationIndex;
-  }
-
-  /**
-   * Truncate message history using a sliding window approach.
-   * Preserves:
-   * - System prompt (always first message)
-   * - Messages since pending preview (if any)
-   * - Most recent N messages where N = maxContextMessages
-   * - Complete message exchanges (user-assistant, tool call-result pairs)
+   * Safety: Never truncates while a preview is pending — this preserves
+   * context for the approval decision.
    */
   private truncateHistory(): void {
-    if (!this.shouldTruncate()) {
-      return;
-    }
-
-    // Safety: Never truncate if there's a pending preview
-    // This preserves context for the approval decision
     if (this.pendingPreview !== null) {
       return;
     }
-
-    const systemPrompt = this.messages[0];
-    if (!systemPrompt) {
-      return;
-    }
-
-    const truncationIndex = this.findTruncationPoint();
-    const messagesBefore = this.messages.length;
-
-    // Keep system prompt + messages from truncation point onwards
-    this.messages = [systemPrompt, ...this.messages.slice(truncationIndex)];
-
-    // Debug logging (only if significant truncation occurred)
-    const messagesRemoved = messagesBefore - this.messages.length;
-    if (messagesRemoved > 0 && process.env['DEBUG']) {
-      console.debug(
-        `[ChatEngine] Truncated ${messagesRemoved} messages (${messagesBefore - 1} -> ${this.messages.length - 1})`
-      );
-    }
-  }
-
-  /**
-   * Get context window statistics for monitoring.
-   *
-   * @returns Object with current message count, max limit, and estimated tokens
-   */
-  getContextStats(): {
-    messageCount: number;
-    maxMessages: number | undefined;
-    estimatedTokens: number;
-  } {
-    return {
-      messageCount: this.getMessageCount(),
-      maxMessages: this.maxContextMessages,
-      estimatedTokens: this.estimateTokens(this.messages),
-    };
+    this.messages = this.contextWindow.truncate(this.messages);
   }
 
   /**

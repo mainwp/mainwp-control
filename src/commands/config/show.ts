@@ -29,6 +29,7 @@ import {
 } from '../../chat/providers/provider.js';
 import { maskPassword, maskApiKey } from '../../utils/format.js';
 import { color, colors } from '../../utils/colors.js';
+import { formatDivider, formatSection, formatStatusIcon } from '../../output/formatter.js';
 
 /**
  * Configuration display structure
@@ -41,6 +42,7 @@ interface ConfigDisplay {
     skipSSLVerification: boolean;
     skipSSLVerificationSource: 'profile' | 'settings' | 'default';
     allowInsecureHttp: boolean;
+    /** Best-effort guess: when keychain and env both hold the same password, this reports 'environment' since the two sources can't be distinguished. */
     credentialsSource: 'keychain' | 'environment' | 'none';
     credentialsMasked: string | null;
   };
@@ -265,69 +267,71 @@ export default class ConfigShowCommand extends BaseCommand {
    */
   private displayConfig(config: ConfigDisplay, verbose: boolean): void {
     this.log('\n  MainWP Control CLI - Configuration\n');
-    this.log('  ' + '─'.repeat(40));
+    this.log(formatDivider());
 
     // Profile Configuration Section
-    this.log(`\n  ${color('Profile Configuration', colors.bold)}`);
+    const profileRows: string[] = [];
     if (config.profile.active) {
-      this.log(`    Active Profile: ${color(config.profile.active, colors.green)}`);
-      this.log(`    Dashboard URL:  ${config.profile.dashboardUrl}`);
-      this.log(`    Username:       ${config.profile.username}`);
-      this.log(
+      profileRows.push(`    Active Profile: ${color(config.profile.active, colors.green)}`);
+      profileRows.push(`    Dashboard URL:  ${config.profile.dashboardUrl}`);
+      profileRows.push(`    Username:       ${config.profile.username}`);
+      profileRows.push(
         `    SSL Verify:     ${
           config.profile.skipSSLVerification ? color('Disabled', colors.yellow) : color('Enabled', colors.green)
         }${this.describeSSLSource(config.profile.skipSSLVerificationSource)}`
       );
-      this.log(
+      profileRows.push(
         `    HTTP Allowed:   ${
           config.profile.allowInsecureHttp ? color('Enabled (insecure)', colors.yellow) : color('Disabled', colors.green)
         }`
       );
 
       if (config.profile.credentialsSource === 'none') {
-        this.log(`    Credentials:    ${color('✗ Not found', colors.red)}`);
-        this.log(`                    ${color('Run `mainwpcontrol login` or set MAINWP_APP_PASSWORD', colors.gray)}`);
+        profileRows.push(`    Credentials:    ${color('✗ Not found', colors.red)}`);
+        profileRows.push(`                    ${color('Run `mainwpcontrol login` or set MAINWP_APP_PASSWORD', colors.gray)}`);
       } else {
         const sourceLabel =
           config.profile.credentialsSource === 'keychain'
             ? 'Stored in keychain'
             : 'From environment variable';
-        this.log(
-          `    Credentials:    ${color('✓', colors.green)} ${sourceLabel} (${config.profile.credentialsMasked})`
+        profileRows.push(
+          `    Credentials:    ${formatStatusIcon('pass')} ${sourceLabel} (${config.profile.credentialsMasked})`
         );
       }
     } else {
-      this.log(`    ${color('No active profile configured', colors.yellow)}`);
-      this.log(`    ${color('Run `mainwpcontrol login` or `mainwpcontrol profile use <name>`', colors.gray)}`);
+      profileRows.push(`    ${color('No active profile configured', colors.yellow)}`);
+      profileRows.push(`    ${color('Run `mainwpcontrol login` or `mainwpcontrol profile use <name>`', colors.gray)}`);
 
       // Show available profiles count
       this.showAvailableProfilesHint();
     }
+    this.log(formatSection('Profile Configuration', profileRows));
 
     // LLM Provider Section
-    this.log(`\n  ${color('LLM Provider', colors.bold)}`);
+    const llmRows: string[] = [];
     if (config.llmProvider.configured) {
-      this.log(`    Provider:       ${color(config.llmProvider.name!, colors.green)}`);
-      this.log(`    API Key:        ${config.llmProvider.apiKeyMasked}`);
-      this.log(`    Source:         ${config.llmProvider.source}`);
-      this.log(`    Status:         ${color('✓ Configured', colors.green)}`);
+      llmRows.push(`    Provider:       ${color(config.llmProvider.name!, colors.green)}`);
+      llmRows.push(`    API Key:        ${config.llmProvider.apiKeyMasked}`);
+      llmRows.push(`    Source:         ${config.llmProvider.source}`);
+      llmRows.push(`    Status:         ${color('✓ Configured', colors.green)}`);
     } else if (config.llmProvider.name) {
-      this.log(`    Provider:       ${color(config.llmProvider.name, colors.yellow)}`);
-      this.log(`    Source:         ${config.llmProvider.source}`);
-      this.log(`    Status:         ${color('⚠ API key not set', colors.yellow)}`);
+      llmRows.push(`    Provider:       ${color(config.llmProvider.name, colors.yellow)}`);
+      llmRows.push(`    Source:         ${config.llmProvider.source}`);
+      llmRows.push(`    Status:         ${color('⚠ API key not set', colors.yellow)}`);
     } else {
-      this.log(`    ${color('No LLM provider configured', colors.yellow)}`);
-      this.log(`    ${color('Chat mode requires one of these environment variables:', colors.gray)}`);
+      llmRows.push(`    ${color('No LLM provider configured', colors.yellow)}`);
+      llmRows.push(`    ${color('Chat mode requires one of these environment variables:', colors.gray)}`);
       for (const [name, envConfig] of Object.entries(PROVIDER_ENV_VARS)) {
-        this.log(`    ${color(`  ${name}: ${envConfig.key}`, colors.gray)}`);
+        llmRows.push(`    ${color(`  ${name}: ${envConfig.key}`, colors.gray)}`);
       }
     }
     for (const warning of config.llmProvider.warnings) {
-      this.log(`    ${color(warning, colors.yellow)}`);
+      llmRows.push(`    ${color(warning, colors.yellow)}`);
     }
+    this.log(formatSection('LLM Provider', llmRows));
 
     // Settings Section
-    this.log(`\n  ${color('Settings', colors.bold)}`);
+    const settingsRows: string[] = [];
     const hasSettings = Object.keys(config.settings).length > 0;
 
     if (hasSettings || verbose) {
@@ -339,24 +343,24 @@ export default class ConfigShowCommand extends BaseCommand {
       const allowInsecureHttp = config.effectiveSettings.allowInsecureHttp;
       const skipSSLVerification = config.effectiveSettings.skipSSLVerification;
 
-      this.log(
+      settingsRows.push(
         `    Timeout:        ${timeout}ms${config.settings.timeout === undefined ? color(' (default)', colors.gray) : ''}`
       );
 
-      this.log(
+      settingsRows.push(
         `    Debug Mode:     ${debug ? 'Enabled' : 'Disabled'}${
           config.settings.debug === undefined ? color(' (default)', colors.gray) : ''
         }`
       );
 
-      this.log(
+      settingsRows.push(
         `    Chat Context:   ${chatContextMessages} messages${
           config.settings.chatContextMessages === undefined ? color(' (default)', colors.gray) : ''
         }`
       );
 
       if (defaultProvider !== undefined || verbose) {
-        this.log(
+        settingsRows.push(
           `    Default LLM:    ${
             defaultProvider ?? color('Auto-detect', colors.gray)
           }`
@@ -364,11 +368,11 @@ export default class ConfigShowCommand extends BaseCommand {
       }
 
       if (chatContextTokens !== undefined && verbose) {
-        this.log(`    Token Limit:    ${chatContextTokens}`);
+        settingsRows.push(`    Token Limit:    ${chatContextTokens}`);
       }
 
       if (allowInsecureHttp || verbose) {
-        this.log(
+        settingsRows.push(
           `    Allow HTTP:     ${
             allowInsecureHttp ? color('Enabled (insecure)', colors.yellow) : color('Disabled', colors.green)
           }`
@@ -376,7 +380,7 @@ export default class ConfigShowCommand extends BaseCommand {
       }
 
       if (skipSSLVerification || verbose) {
-        this.log(
+        settingsRows.push(
           `    Global SSL Skip: ${
             skipSSLVerification ? color('Enabled (advanced)', colors.yellow) : color('Disabled', colors.green)
           }`
@@ -384,20 +388,24 @@ export default class ConfigShowCommand extends BaseCommand {
       }
 
       if (!hasSettings && verbose) {
-        this.log(`    ${color('Using all default settings', colors.gray)}`);
+        settingsRows.push(`    ${color('Using all default settings', colors.gray)}`);
       }
     } else {
-      this.log(`    ${color('Using default settings (use -v for details)', colors.gray)}`);
+      settingsRows.push(`    ${color('Using default settings (use -v for details)', colors.gray)}`);
     }
+    this.log(formatSection('Settings', settingsRows));
 
     // Configuration Files Section
-    this.log(`\n  ${color('Configuration Files', colors.bold)}`);
-    this.log(`    Config Dir:     ${config.paths.configDir}`);
-    this.log(`    Profiles:       ${config.paths.profilesFile}`);
-    this.log(`    Settings:       ${config.paths.settingsFile}`);
-    this.log(`    Audit Log:      ${config.paths.auditLog}`);
+    this.log(
+      formatSection('Configuration Files', [
+        `    Config Dir:     ${config.paths.configDir}`,
+        `    Profiles:       ${config.paths.profilesFile}`,
+        `    Settings:       ${config.paths.settingsFile}`,
+        `    Audit Log:      ${config.paths.auditLog}`,
+      ])
+    );
 
-    this.log('\n  ' + '─'.repeat(40) + '\n');
+    this.log('\n' + formatDivider() + '\n');
   }
 
   private describeSSLSource(source: ConfigDisplay['profile']['skipSSLVerificationSource']): string {

@@ -23,6 +23,8 @@ import {
   clearEnvVar,
   restoreEnvVars,
   STANDARD_ABILITIES,
+  createCommandHarness,
+  type CapturedOutput,
 } from './test-helpers.js';
 
 // ============================================================================
@@ -150,15 +152,6 @@ import ChatCommand from '../../commands/chat.js';
 // ============================================================================
 
 /**
- * Captured output from command execution
- */
-interface CapturedOutput {
-  stdout: string[];
-  stderr: string[];
-  exitCode?: number;
-}
-
-/**
  * Parse argv into flags and args
  *
  * Note: Boolean flags (those with default: false/true) don't consume the next argument.
@@ -226,52 +219,11 @@ function createCommandWithCapture<T extends Login | AbilitiesList | ChatCommand>
   argv: string[] = [],
   flagDefs: Record<string, { char?: string; default?: unknown }> = {}
 ): { command: T; output: CapturedOutput } {
-  const output: CapturedOutput = {
-    stdout: [],
-    stderr: [],
-  };
-
-  const mockConfig = {
-    root: '/mock/root',
-    bin: 'mainwpcontrol',
-    name: 'mainwpcontrol',
-    version: '1.0.0',
-    pjson: { name: 'mainwpcontrol', version: '1.0.0' },
-    dataDir: '/mock/data',
-    cacheDir: '/mock/cache',
-    configDir: '/mock/config',
-    findCommand: vi.fn(),
-    runCommand: vi.fn(),
-    runHook: vi.fn(),
-  };
-
-  const command = new CommandClass(argv, mockConfig as never);
+  const { command, output } = createCommandHarness(CommandClass, argv);
 
   // Mock parse to return our parsed argv
   const parsed = parseArgv(argv, flagDefs);
   command.parse = vi.fn().mockResolvedValue(parsed) as never;
-
-  // Capture log output
-  command.log = vi.fn((...args: unknown[]) => {
-    output.stdout.push(args.map(String).join(' '));
-  });
-
-  command.logToStderr = vi.fn((...args: unknown[]) => {
-    output.stderr.push(args.map(String).join(' '));
-  });
-
-  // Capture exit
-  command.exit = vi.fn((code?: number) => {
-    output.exitCode = code ?? 0;
-    throw new Error(`EXIT:${code ?? 0}`);
-  }) as never;
-
-  // Mock error to capture exit codes
-  command.error = vi.fn((message: string | Error, options?: { exit?: number }) => {
-    output.stderr.push(message instanceof Error ? message.message : message);
-    output.exitCode = options?.exit ?? 1;
-    throw new Error(`EXIT:${output.exitCode}`);
-  }) as never;
 
   return { command, output };
 }

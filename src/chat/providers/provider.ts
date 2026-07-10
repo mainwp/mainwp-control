@@ -365,6 +365,24 @@ export function detectConfiguredProvider(): string | undefined {
 }
 
 /**
+ * Split the system message from the chat messages.
+ *
+ * Providers that carry the system prompt out-of-band (Anthropic's `system`
+ * field, Gemini's `systemInstruction`) share this instead of re-implementing
+ * the extraction.
+ */
+export function splitSystemMessage(messages: Message[]): {
+  systemContent: string | undefined;
+  chatMessages: Message[];
+} {
+  const systemMessage = messages.find((m) => m.role === 'system');
+  return {
+    systemContent: systemMessage?.content,
+    chatMessages: messages.filter((m) => m.role !== 'system'),
+  };
+}
+
+/**
  * Convert ability schema to tool definition
  */
 export function abilityToTool(

@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Chat context truncation no longer orphans tool results mid tool-calling loop, which could cause provider API errors on the next message
+- Caller-cancelled requests now report "Request cancelled" instead of "Request timed out"
+- Keychain credential-removal failures now warn in non-interactive (CI) runs instead of only when attached to a terminal
+- Warning shown when the active profile no longer exists and the CLI falls back to another profile
+
+### Changed
+
+- Unified sensitive-key redaction into one shared utility covering compound keys (`apiToken`, `appPassword`) across error output, debug logging, and input sanitization
+- Broader destructive-ability name patterns (`reset-`, `restore-`, `rollback-`, `wipe-`, `purge-`, `uninstall-`) in the defense-in-depth safety classification
+- Exit code 130 on Ctrl-C at prompts documented as the intentional SIGINT convention
+
+### Security
+
+- Updated `undici` to 7.28.0, resolving TLS certificate validation bypass and response queue poisoning advisories
+- Updated `@oclif/core`, `@oclif/plugin-help`, and transitive dependencies — `npm audit` now reports zero vulnerabilities
+
 ## [1.1.0-beta.1] - 2026-03-26
 
 ### Added

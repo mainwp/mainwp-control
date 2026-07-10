@@ -98,6 +98,11 @@ export class SafetyController {
   /**
    * Known-destructive ability name patterns.
    * These abilities require the safety flow regardless of API-reported annotations.
+   *
+   * Defense-in-depth only: intentionally verb-conservative. Each verb here is
+   * unambiguously destructive on its own; we do not add generic verbs like
+   * `update-` that are frequently non-destructive, since that would force
+   * the preview+confirm flow on safe abilities and erode trust in the prompt.
    */
   private static readonly DESTRUCTIVE_PATTERNS = [
     /^(?:mainwp\/)?delete-/,
@@ -107,6 +112,12 @@ export class SafetyController {
     /^(?:mainwp\/)?remove-/,
     /^(?:mainwp\/)?run-updates-/,
     /^(?:mainwp\/)?update-all-/,
+    /^(?:mainwp\/)?reset-/,
+    /^(?:mainwp\/)?restore-/,
+    /^(?:mainwp\/)?rollback-/,
+    /^(?:mainwp\/)?wipe-/,
+    /^(?:mainwp\/)?purge-/,
+    /^(?:mainwp\/)?uninstall-/,
   ];
 
   private isKnownDestructivePattern(name: string): boolean {

@@ -136,6 +136,9 @@ export async function promptForPassword(question: string): Promise<string> {
           stdin.removeListener('data', onData);
           rl.close();
           process.stdout.write('\n');
+          // 130 = 128 + SIGINT(2), the standard Unix convention for Ctrl-C.
+          // Intentionally outside the documented 0-5 exit code contract —
+          // see README's Exit Codes table for the carve-out.
           process.exit(130);
           break;
 
