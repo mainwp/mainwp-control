@@ -12,7 +12,7 @@ A CLI for managing your MainWP Dashboard from the terminal. List sites, push upd
 
 > **On Windows?** Use [Git Bash](https://gitforwindows.org/) and every example below works without changes. For scheduled workflows (cron), see [WSL](https://learn.microsoft.com/en-us/windows/wsl/install).
 
-You need Node.js 20+ and a MainWP Dashboard (v6+) with an [Application Password](https://make.wordpress.org/core/2020/11/05/application-passwords-integration-guide/).
+You need Node.js 20.18.1+ and a MainWP Dashboard (v6+) with an [Application Password](https://make.wordpress.org/core/2020/11/05/application-passwords-integration-guide/).
 
 ```bash
 npm install -g @mainwp/control
@@ -136,7 +136,7 @@ A terminal is where you type commands instead of clicking buttons. You'll see it
 
 **How to open it:**
 - **macOS**: Open **Terminal** (search in Spotlight, or look in Applications > Utilities)
-- **Windows**: Open **Git Bash** (installed with [Git for Windows](https://gitforwindows.org/)). If you don't have it, PowerShell works too — see the [quoting notes](#json-quoting-on-the-command-line) below.
+- **Windows**: Open **Git Bash** (installed with [Git for Windows](https://gitforwindows.org/)). If you don't have it, PowerShell works too; see the [quoting notes](#json-quoting-on-the-command-line) below.
 - **Linux**: Open your distribution's **Terminal** app (usually in the applications menu)
 
 ### What does `npm install -g` do?
@@ -477,7 +477,7 @@ Step-by-step guides for common automation patterns:
 | 3 | Network error | Retry or check connectivity |
 | 4 | API error | Check ability parameters |
 | 5 | Internal error | Report bug |
-| 130 | Interrupted (SIGINT) | Ctrl-C during a password prompt — standard Unix 128+SIGINT convention, outside the 0-5 contract |
+| 130 | Interrupted (SIGINT) | Ctrl-C during a prompt or `jobs watch`; standard Unix 128+SIGINT convention, outside the 0-5 contract |
 
 ### Environment Variables
 
@@ -607,7 +607,7 @@ GPL-3.0-or-later
 
 ## Requirements
 
-- Node.js 20 LTS or later
+- Node.js 20.18.1 or later
 - MainWP Dashboard 6+ with Abilities API
 - WordPress Application Password
 
