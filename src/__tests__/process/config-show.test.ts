@@ -47,6 +47,31 @@ describe('config show command', () => {
     expect(result.stdout).toContain('config injected-path');
   });
 
+  it('keeps profile-derived fields on one safe line (hostile profiles.json)', async () => {
+    configDir = await ConfigDir.create({
+      profiles: [
+        {
+          name: 'evil\r\nInjected Profile: fake',
+          dashboardUrl: `${server.baseUrl}/\x1b[2Jclear`,
+          username: 'admin\r\nPassword: hunter2',
+        },
+      ],
+      activeProfile: 'evil\r\nInjected Profile: fake',
+    });
+
+    const result = await runCLI(['config', 'show'], {
+      xdgConfigHome: configDir.xdgHome,
+    });
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).not.toContain('\x1b');
+    expect(result.stdout).not.toContain('\nInjected Profile');
+    expect(result.stdout).not.toContain('\nPassword: hunter2');
+    // Values survive, flattened to one line
+    expect(result.stdout).toContain('evil Injected Profile: fake');
+    expect(result.stdout).toContain('admin Password: hunter2');
+  });
+
   it('reports effective settings and provider resolution in JSON mode', async () => {
     configDir = await ConfigDir.create({
       profiles: [

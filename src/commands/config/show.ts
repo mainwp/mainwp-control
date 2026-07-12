@@ -30,7 +30,7 @@ import {
 import { maskPassword, maskApiKey } from '../../utils/format.js';
 import { color, colors } from '../../utils/colors.js';
 import { formatDivider, formatSection, formatStatusIcon } from '../../output/formatter.js';
-import { sanitizeSingleLine, stripControlChars } from '../../utils/terminal-sanitizer.js';
+import { sanitizeSingleLine } from '../../utils/terminal-sanitizer.js';
 
 /**
  * Configuration display structure
@@ -274,9 +274,9 @@ export default class ConfigShowCommand extends BaseCommand {
     const profileRows: string[] = [];
     if (config.profile.active) {
       // Config-file values are user-editable on disk — sanitize before display.
-      profileRows.push(`    Active Profile: ${color(stripControlChars(config.profile.active), colors.green)}`);
-      profileRows.push(`    Dashboard URL:  ${stripControlChars(config.profile.dashboardUrl ?? '')}`);
-      profileRows.push(`    Username:       ${stripControlChars(config.profile.username ?? '')}`);
+      profileRows.push(`    Active Profile: ${color(sanitizeSingleLine(config.profile.active), colors.green)}`);
+      profileRows.push(`    Dashboard URL:  ${sanitizeSingleLine(config.profile.dashboardUrl ?? '')}`);
+      profileRows.push(`    Username:       ${sanitizeSingleLine(config.profile.username ?? '')}`);
       profileRows.push(
         `    SSL Verify:     ${
           config.profile.skipSSLVerification ? color('Disabled', colors.yellow) : color('Enabled', colors.green)
@@ -432,7 +432,7 @@ export default class ConfigShowCommand extends BaseCommand {
       const profileStore = getProfileStore();
       const profiles = await profileStore.list();
       if (profiles.length > 0) {
-        this.log(`    ${color(`${profiles.length} profile(s) available: ${stripControlChars(profiles.map((p) => p.name).join(', '))}`, colors.gray)}`);
+        this.log(`    ${color(`${profiles.length} profile(s) available: ${sanitizeSingleLine(profiles.map((p) => p.name).join(', '))}`, colors.gray)}`);
       }
     } catch {
       // Ignore errors
