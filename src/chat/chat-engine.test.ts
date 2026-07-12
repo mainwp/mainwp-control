@@ -76,6 +76,18 @@ const READONLY_DESTRUCTIVE_ABILITY = createTestAbility('special-v1', {
 });
 const ABILITY_WITHOUT_ANNOTATIONS = createAbilityWithoutAnnotations('legacy-ability-v1');
 const UPDATE_ABILITY = createTestAbility('update-site-v1', { destructive: false });
+const NAMESPACED_ABILITY = createTestAbility(
+  'mainwp/list-sites-v1',
+  { readonly: true },
+  {
+    type: 'object',
+    properties: {
+      page: { type: 'integer' },
+    },
+    required: ['page'],
+    additionalProperties: false,
+  }
+);
 
 // Standard LLM responses
 function createToolCallResponse(toolName: string, input: Record<string, unknown>): LLMResponse {
@@ -324,6 +336,266 @@ describe('ChatEngine', () => {
       await engine.sendMessage('Hi');
 
       expect(mockExecutor.listAbilities).toHaveBeenCalledTimes(1);
+    });
+
+    it('declares namespaced abilities with protocol-safe aliases', async () => {
+      const mockProvider = createMockProvider([createAnswerResponse('Done')]);
+      const { engine } = createTestEngine({
+        provider: mockProvider,
+        abilities: [NAMESPACED_ABILITY],
+      });
+
+      await engine.sendMessage('List sites');
+
+      const options = vi.mocked(mockProvider.chat).mock.calls[0]?.[1];
+      expect(options?.tools).toEqual([
+        expect.objectContaining({ name: 'mainwp__list-sites-v1' }),
+      ]);
+      expect(options?.tools?.[0]?.name).not.toContain('/');
+    });
+
+    it('rejects colliding protocol-safe aliases', async () => {
+      const { engine } = createTestEngine({
+        abilities: [
+          createTestAbility('mainwp/list-sites-v1', { readonly: true }),
+          createTestAbility('mainwp__list-sites-v1', { readonly: true }),
+        ],
+      });
+
+      await expect(engine.initialize()).rejects.toThrow('Tool alias collision');
+    });
+  });
+
+  describe('Protocol-strict tool calls', () => {
+    it('resolves a native wire alias before ability lookup and execution', async () => {
+      const mockProvider = createMockProvider([
+        createNativeToolCallResponse('mainwp__list-sites-v1', { page: 1 }, 'call_alias'),
+        createAnswerResponse('Done'),
+      ]);
+      const { engine, mockExecutor } = createTestEngine({
+        provider: mockProvider,
+        abilities: [NAMESPACED_ABILITY],
+      });
+
+      await engine.sendMessage('List sites');
+
+      expect(mockExecutor.getAbility).toHaveBeenCalledWith('mainwp/list-sites-v1');
+      expect(mockExecutor.execute).toHaveBeenCalledWith('mainwp/list-sites-v1', { page: 1 });
+    });
+
+    it.each([
+      {
+        name: 'invalid native argument JSON',
+        response: {
+          content: '',
+          toolCalls: [{
+            id: 'call_bad_json',
+            name: 'mainwp__list-sites-v1',
+            arguments: '{bad json' as unknown as Record<string, unknown>,
+          }],
+          finishReason: 'tool_calls' as const,
+          model: 'test-model',
+        },
+      },
+      {
+        name: 'non-object envelope input',
+        response: {
+          content: JSON.stringify({ tool: 'mainwp/list-sites-v1', input: 'not-an-object' }),
+          finishReason: 'stop' as const,
+          model: 'test-model',
+        },
+      },
+      {
+        name: 'multiple native tool calls',
+        response: {
+          content: '',
+          toolCalls: [
+            { id: 'call_1', name: 'mainwp__list-sites-v1', arguments: { page: 1 } },
+            { id: 'call_2', name: 'mainwp__list-sites-v1', arguments: { page: 2 } },
+          ],
+          finishReason: 'tool_calls' as const,
+          model: 'test-model',
+        },
+      },
+      {
+        name: 'answer and tool in one envelope',
+        response: {
+          content: JSON.stringify({
+            answer: 'Done',
+            tool: 'mainwp/list-sites-v1',
+            input: { page: 1 },
+          }),
+          finishReason: 'stop' as const,
+          model: 'test-model',
+        },
+      },
+      {
+        name: 'length finish reason with a tool call',
+        response: {
+          content: '',
+          toolCalls: [
+            { id: 'call_length', name: 'mainwp__list-sites-v1', arguments: { page: 1 } },
+          ],
+          finishReason: 'length' as const,
+          model: 'test-model',
+        },
+      },
+      {
+        name: 'content-filter finish reason with a tool call',
+        response: {
+          content: '',
+          toolCalls: [
+            { id: 'call_filter', name: 'mainwp__list-sites-v1', arguments: { page: 1 } },
+          ],
+          finishReason: 'content_filter' as const,
+          model: 'test-model',
+        },
+      },
+      {
+        name: 'length finish reason with a content tool envelope',
+        response: {
+          content: JSON.stringify({
+            tool: 'mainwp/list-sites-v1',
+            input: { page: 1 },
+          }),
+          finishReason: 'length' as const,
+          model: 'test-model',
+        },
+      },
+      {
+        name: 'content-filter finish reason with a content tool envelope',
+        response: {
+          content: JSON.stringify({
+            tool: 'mainwp/list-sites-v1',
+            input: { page: 1 },
+          }),
+          finishReason: 'content_filter' as const,
+          model: 'test-model',
+        },
+      },
+    ])('never executes $name', async ({ response }) => {
+      const { engine, mockExecutor } = createTestEngine({
+        provider: createMockProvider([response]),
+        abilities: [NAMESPACED_ABILITY],
+        maxParseRetries: 0,
+      });
+
+      const responses = await engine.sendMessage('List sites');
+
+      expect(responses[0]?.type).toBe('error');
+      expect(mockExecutor.execute).not.toHaveBeenCalled();
+    });
+
+    it('returns schema-invalid input to the model as a tool error without executing', async () => {
+      const mockProvider = createMockProvider([
+        createNativeToolCallResponse(
+          'mainwp__list-sites-v1',
+          { page: 'not-an-integer' },
+          'call_schema'
+        ),
+        createAnswerResponse('Please provide a numeric page.'),
+      ]);
+      const { engine, mockExecutor } = createTestEngine({
+        provider: mockProvider,
+        abilities: [NAMESPACED_ABILITY],
+      });
+
+      const responses = await engine.sendMessage('List page nope');
+
+      expect(mockExecutor.execute).not.toHaveBeenCalled();
+      expect(responses.at(-1)).toEqual({
+        type: 'message',
+        content: 'Please provide a numeric page.',
+      });
+      const secondMessages = vi.mocked(mockProvider.chat).mock.calls[1]?.[0];
+      const validationResult = secondMessages?.find(
+        (message) => message.role === 'tool' && message.toolCallId === 'call_schema'
+      );
+      expect(validationResult).toMatchObject({
+        role: 'tool',
+        toolCallId: 'call_schema',
+        toolName: 'mainwp__list-sites-v1',
+      });
+      expect(validationResult?.content).toContain('SCHEMA_VALIDATION_ERROR');
+    });
+
+    it('executes with the coerced AJV input', async () => {
+      const mockProvider = createMockProvider([
+        createNativeToolCallResponse(
+          'mainwp__list-sites-v1',
+          { page: '2' },
+          'call_coerced'
+        ),
+        createAnswerResponse('Done'),
+      ]);
+      const { engine, mockExecutor } = createTestEngine({
+        provider: mockProvider,
+        abilities: [NAMESPACED_ABILITY],
+      });
+
+      await engine.sendMessage('List page 2');
+
+      expect(mockExecutor.execute).toHaveBeenCalledWith(
+        'mainwp/list-sites-v1',
+        { page: 2 }
+      );
+    });
+
+    it('preserves native assistant tool calls in history', async () => {
+      const mockProvider = createMockProvider([
+        createNativeToolCallResponse('mainwp__list-sites-v1', { page: 1 }, 'call_original'),
+        createAnswerResponse('Done'),
+      ]);
+      const { engine } = createTestEngine({
+        provider: mockProvider,
+        abilities: [NAMESPACED_ABILITY],
+      });
+
+      await engine.sendMessage('List sites');
+
+      expect(engine.getHistory().find((message) => message.role === 'assistant')).toMatchObject({
+        toolCalls: [
+          {
+            id: 'call_original',
+            name: 'mainwp__list-sites-v1',
+            arguments: { page: 1 },
+          },
+        ],
+      });
+    });
+
+    it('preserves the original native call id through destructive approval', async () => {
+      const namespacedDelete = createTestAbility(
+        'mainwp/delete-site-v1',
+        { destructive: true },
+        DESTRUCTIVE_ABILITY.input_schema
+      );
+      const mockProvider = createMockProvider([
+        createNativeToolCallResponse(
+          'mainwp__delete-site-v1',
+          { site_id: 123 },
+          'call_delete_original'
+        ),
+      ]);
+      const { engine } = createTestEngine({
+        provider: mockProvider,
+        abilities: [namespacedDelete],
+        executeHandler: (_name, _input, options) =>
+          options?.dryRun
+            ? createPreviewResult([{ id: 123 }])
+            : createSuccessResult({ deleted: true }),
+      });
+
+      await engine.sendMessage('Delete site 123');
+      await engine.sendMessage('yes');
+
+      const history = engine.getHistory();
+      expect(history.find((message) => message.role === 'assistant')?.toolCalls?.[0]?.id)
+        .toBe('call_delete_original');
+      expect(history.find((message) => message.role === 'tool')).toMatchObject({
+        toolCallId: 'call_delete_original',
+        toolName: 'mainwp__delete-site-v1',
+      });
     });
   });
 

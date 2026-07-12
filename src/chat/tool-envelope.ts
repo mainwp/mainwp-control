@@ -43,6 +43,8 @@ export interface ParserOptions {
   validateToolExists?: boolean;
   /** Whether to validate input against schema */
   validateInput?: boolean;
+  /** Protocol-safe tool name to real ability name */
+  toolAliases?: ReadonlyMap<string, string>;
 }
 
 /**
@@ -64,8 +66,32 @@ export function parseResponse(
   response: LLMResponse,
   options: ParserOptions = {}
 ): ParseResult {
+  if (
+    response.finishReason === 'length' ||
+    response.finishReason === 'content_filter'
+  ) {
+    return protocolError(
+      `Cannot process a response with finish reason "${response.finishReason}"`,
+      response.content
+    );
+  }
+
   // First, check for native function calling
   if (response.toolCalls && response.toolCalls.length > 0) {
+    if (response.finishReason !== 'tool_calls') {
+      return protocolError(
+        `Tool calls require finish reason "tool_calls", received "${response.finishReason}"`,
+        JSON.stringify(response.toolCalls)
+      );
+    }
+
+    if (response.toolCalls.length !== 1) {
+      return protocolError(
+        `Expected exactly one tool call, received ${response.toolCalls.length}`,
+        JSON.stringify(response.toolCalls)
+      );
+    }
+
     const firstToolCall = response.toolCalls[0];
     if (firstToolCall) {
       return parseNativeToolCall(firstToolCall, options);
@@ -83,7 +109,15 @@ function parseNativeToolCall(
   toolCall: ToolCall,
   options: ParserOptions
 ): ParseResult {
-  const validation = validateToolCall(toolCall.name, toolCall.arguments, options);
+  if (!isObjectInput(toolCall.arguments)) {
+    return protocolError(
+      `Tool input for "${toolCall.name}" must be a JSON object`,
+      JSON.stringify(toolCall)
+    );
+  }
+
+  const toolName = resolveToolName(toolCall.name, options);
+  const validation = validateToolCall(toolName, toolCall.arguments, options);
 
   if (validation) {
     return {
@@ -97,7 +131,7 @@ function parseNativeToolCall(
   return {
     response: {
       type: 'tool',
-      tool: toolCall.name,
+      tool: toolName,
       input: toolCall.arguments,
       id: toolCall.id,
     },
@@ -168,6 +202,19 @@ function parseContentJson(
 
   const obj = parsed as Record<string, unknown>;
 
+  if ('answer' in obj && 'tool' in obj) {
+    return {
+      response: {
+        type: 'error',
+        error: 'Response cannot contain both "answer" and "tool" properties',
+        retryable: true,
+      },
+      rawContent: content,
+      nativeFunctionCall: false,
+      attempts,
+    };
+  }
+
   // Check for answer format
   if ('answer' in obj && typeof obj['answer'] === 'string') {
     return {
@@ -180,11 +227,20 @@ function parseContentJson(
 
   // Check for tool format
   if ('tool' in obj && typeof obj['tool'] === 'string') {
-    const toolName = obj['tool'];
-    const input =
-      typeof obj['input'] === 'object' && obj['input'] !== null
-        ? (obj['input'] as Record<string, unknown>)
-        : {};
+    const toolName = resolveToolName(obj['tool'], options);
+    if (!isObjectInput(obj['input'])) {
+      return {
+        response: {
+          type: 'error',
+          error: `Tool input for "${toolName}" must be a JSON object`,
+          retryable: true,
+        },
+        rawContent: content,
+        nativeFunctionCall: false,
+        attempts,
+      };
+    }
+    const input = obj['input'];
 
     const validation = validateToolCall(toolName, input, options);
 
@@ -217,6 +273,23 @@ function parseContentJson(
     nativeFunctionCall: false,
     attempts,
   };
+}
+
+function protocolError(error: string, rawContent: string): ParseResult {
+  return {
+    response: { type: 'error', error, retryable: true },
+    rawContent,
+    nativeFunctionCall: true,
+    attempts: 1,
+  };
+}
+
+function isObjectInput(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function resolveToolName(name: string, options: ParserOptions): string {
+  return options.toolAliases?.get(name) ?? name;
 }
 
 /**
@@ -351,4 +424,3 @@ Or answer:
 }
 \`\`\``;
 }
-

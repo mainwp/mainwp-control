@@ -21,13 +21,17 @@ export class ContextWindow {
    * @param maxMessages - Maximum messages to keep (excluding system prompt).
    *   undefined or 0 = unlimited.
    */
-  constructor(private readonly maxMessages: number | undefined) {}
+  constructor(private readonly maxMessages: number | undefined) {
+    if (maxMessages !== undefined && maxMessages < 0) {
+      throw new RangeError('maxMessages must be non-negative');
+    }
+  }
 
   /**
    * Check if the history exceeds the configured limit.
    */
   shouldTruncate(messages: Message[]): boolean {
-    if (this.maxMessages === undefined || this.maxMessages <= 0) {
+    if (this.maxMessages === undefined || this.maxMessages === 0) {
       return false; // No limit configured or explicitly unlimited
     }
     return messages.length - 1 > this.maxMessages;
@@ -78,10 +82,9 @@ export class ContextWindow {
    *
    * A safe boundary is the start of a genuine user turn. A `user` message
    * immediately followed by a `tool` message is NOT a genuine turn start —
-   * ChatEngine injects a synthetic `User approved: yes` message between an
-   * assistant tool-call and its confirm result, and cutting there would
-   * orphan the tool result from its assistant tool-call (the same failure a
-   * real user turn, always followed by an assistant response, cannot produce).
+   * cutting there would orphan the result from its assistant tool call (the
+   * same failure a real user turn, followed by an assistant response, cannot
+   * produce).
    *
    * @returns Index of the first genuine user-turn boundary at or after the
    *   ideal cut point (never 0, the system prompt), or null when none exists.

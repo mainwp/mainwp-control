@@ -136,7 +136,7 @@ export function createMockLLMToolCallResponse(
 ): LLMResponse {
   return {
     content: '',
-    toolCalls: [{ id, name: toolName, arguments: input }],
+    toolCalls: [{ id, name: toolName.replaceAll('/', '__'), arguments: input }],
     finishReason: 'tool_calls',
     model: 'test-model',
   };

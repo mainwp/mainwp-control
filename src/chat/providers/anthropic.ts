@@ -84,15 +84,15 @@ interface AnthropicStreamEvent {
  * Available Anthropic models
  */
 const ANTHROPIC_MODELS = [
-  'claude-sonnet-4-20250514',
-  'claude-3-5-sonnet-20241022',
-  'claude-3-5-haiku-20241022',
-  'claude-3-opus-20240229',
-  'claude-3-sonnet-20240229',
-  'claude-3-haiku-20240307',
+  'claude-sonnet-4-6',
+  'claude-sonnet-4-5-20250929',
+  'claude-opus-4-8',
+  'claude-opus-4-7',
+  'claude-opus-4-6',
+  'claude-haiku-4-5-20251001',
 ] as const;
 
-const DEFAULT_MODEL = 'claude-sonnet-4-20250514';
+const DEFAULT_MODEL = 'claude-sonnet-4-6';
 const API_VERSION = '2023-06-01';
 
 /**
@@ -305,9 +305,21 @@ export class AnthropicProvider implements LLMProvider {
           });
         }
       } else {
+        const content: AnthropicContent[] = [];
+        if (msg.content) {
+          content.push({ type: 'text', text: msg.content });
+        }
+        for (const toolCall of msg.toolCalls ?? []) {
+          content.push({
+            type: 'tool_use',
+            id: toolCall.id,
+            name: toolCall.name,
+            input: toolCall.arguments,
+          });
+        }
         result.push({
           role: msg.role as 'user' | 'assistant',
-          content: msg.content,
+          content: content.length > 0 ? content : msg.content,
         });
       }
     }

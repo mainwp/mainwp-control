@@ -295,6 +295,18 @@ export abstract class OpenAICompatibleProvider implements LLMProvider {
         base.tool_call_id = msg.toolCallId;
       }
 
+      if (msg.role === 'assistant' && msg.toolCalls) {
+        base.content = msg.content || null;
+        base.tool_calls = msg.toolCalls.map((toolCall) => ({
+          id: toolCall.id,
+          type: 'function' as const,
+          function: {
+            name: toolCall.name,
+            arguments: JSON.stringify(toolCall.arguments),
+          },
+        }));
+      }
+
       return base;
     });
   }
@@ -373,11 +385,11 @@ export abstract class OpenAICompatibleProvider implements LLMProvider {
   /**
    * Parse tool call arguments JSON
    */
-  protected parseArguments(args: string): Record<string, unknown> {
+  protected parseArguments(args: string): unknown {
     try {
-      return JSON.parse(args) as Record<string, unknown>;
+      return JSON.parse(args) as unknown;
     } catch {
-      return {};
+      return args;
     }
   }
 

@@ -16,6 +16,12 @@ export type MessageRole = 'system' | 'user' | 'assistant' | 'tool';
 export interface Message {
   role: MessageRole;
   content: string;
+  /** Native assistant tool calls that must precede matching tool results */
+  toolCalls?: Array<{
+    id: string;
+    name: string;
+    arguments: Record<string, unknown>;
+  }>;
   /** Tool call ID (for tool responses) */
   toolCallId?: string;
   /** Tool name (for tool responses) */
@@ -37,7 +43,8 @@ export interface ToolDefinition {
 export interface ToolCall {
   id: string;
   name: string;
-  arguments: Record<string, unknown>;
+  /** Kept unknown until the envelope parser proves it is an object */
+  arguments: unknown;
 }
 
 /**

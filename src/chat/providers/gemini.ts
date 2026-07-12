@@ -34,12 +34,14 @@ type GeminiPart =
   | { text: string }
   | {
       functionCall: {
+        id?: string;
         name: string;
         args: Record<string, unknown>;
       };
     }
   | {
       functionResponse: {
+        id?: string;
         name: string;
         response: Record<string, unknown>;
       };
@@ -79,13 +81,13 @@ interface GeminiResponse {
  * Available Gemini models
  */
 const GEMINI_MODELS = [
-  'gemini-2.0-flash-exp',
-  'gemini-1.5-pro',
-  'gemini-1.5-flash',
-  'gemini-1.5-flash-8b',
+  'gemini-3.5-flash',
+  'gemini-3.1-pro-preview',
+  'gemini-3-flash-preview',
+  'gemini-3.1-flash-lite',
 ] as const;
 
-const DEFAULT_MODEL = 'gemini-1.5-flash';
+const DEFAULT_MODEL = 'gemini-3.5-flash';
 
 /**
  * Gemini provider implementation
@@ -260,21 +262,42 @@ export class GeminiProvider implements LLMProvider {
 
       if (msg.role === 'tool') {
         // Function response
+        const functionResponse: {
+          id?: string;
+          name: string;
+          response: Record<string, unknown>;
+        } = {
+          name: msg.toolName ?? 'unknown',
+          response: this.parseToolResponse(msg.content),
+        };
+        if (msg.toolCallId !== undefined) {
+          functionResponse.id = msg.toolCallId;
+        }
         result.push({
           role: 'user',
           parts: [
             {
-              functionResponse: {
-                name: msg.toolName ?? 'unknown',
-                response: this.parseToolResponse(msg.content),
-              },
+              functionResponse,
             },
           ],
         });
       } else {
+        const parts: GeminiPart[] = [];
+        if (msg.content) {
+          parts.push({ text: msg.content });
+        }
+        for (const toolCall of msg.toolCalls ?? []) {
+          parts.push({
+            functionCall: {
+              id: toolCall.id,
+              name: toolCall.name,
+              args: toolCall.arguments,
+            },
+          });
+        }
         result.push({
           role: msg.role === 'assistant' ? 'model' : 'user',
-          parts: [{ text: msg.content }],
+          parts: parts.length > 0 ? parts : [{ text: msg.content }],
         });
       }
     }
@@ -329,7 +352,7 @@ export class GeminiProvider implements LLMProvider {
         content += part.text;
       } else if ('functionCall' in part) {
         toolCalls.push({
-          id: `fc_${Date.now()}_${toolCalls.length}`,
+          id: part.functionCall.id ?? `fc_${Date.now()}_${toolCalls.length}`,
           name: part.functionCall.name,
           arguments: part.functionCall.args,
         });
@@ -339,7 +362,10 @@ export class GeminiProvider implements LLMProvider {
     return {
       content,
       toolCalls: toolCalls.length > 0 ? toolCalls : undefined,
-      finishReason: this.convertFinishReason(candidate.finishReason),
+      finishReason:
+        toolCalls.length > 0 && candidate.finishReason === 'STOP'
+          ? 'tool_calls'
+          : this.convertFinishReason(candidate.finishReason),
       usage: response.usageMetadata
         ? {
             promptTokens: response.usageMetadata.promptTokenCount,

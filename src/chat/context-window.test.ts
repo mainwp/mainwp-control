@@ -32,9 +32,10 @@ describe('ContextWindow', () => {
       expect(window.shouldTruncate([system, user('a'), assistant('b')])).toBe(false);
     });
 
-    it('treats a negative limit as unlimited', () => {
-      const window = new ContextWindow(-5);
-      expect(window.shouldTruncate([system, user('a'), assistant('b')])).toBe(false);
+    it('rejects a negative limit', () => {
+      expect(() => new ContextWindow(-5)).toThrow(
+        'maxMessages must be non-negative'
+      );
     });
 
     it('returns false while within the limit', () => {

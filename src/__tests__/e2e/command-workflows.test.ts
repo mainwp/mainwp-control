@@ -554,7 +554,7 @@ describe('E2E: Command-Level Workflows', () => {
     it('handles single message mode with readonly tool call', async () => {
       // LLM returns a tool call followed by answer
       mockProviderChat
-        .mockResolvedValueOnce(createMockLLMToolCallResponse('mainwp/list-sites-v1', {}))
+        .mockResolvedValueOnce(createMockLLMToolCallResponse('mainwp__list-sites-v1', {}))
         .mockResolvedValueOnce(createMockLLMAnswerResponse('Found 3 sites'));
 
       // Mock tool execution
@@ -573,7 +573,7 @@ describe('E2E: Command-Level Workflows', () => {
     it('shows destructive preview and requires approval in non-interactive mode', async () => {
       // LLM returns a destructive tool call
       mockProviderChat.mockResolvedValueOnce(
-        createMockLLMToolCallResponse('mainwp/delete-site-v1', { site_id: 123 })
+        createMockLLMToolCallResponse('mainwp__delete-site-v1', { site_id: 123 })
       );
 
       // Mock preview execution
@@ -591,7 +591,7 @@ describe('E2E: Command-Level Workflows', () => {
 
     it('outputs JSON for tool results with --json flag', { timeout: 10000 }, async () => {
       mockProviderChat
-        .mockResolvedValueOnce(createMockLLMToolCallResponse('mainwp/list-sites-v1', {}))
+        .mockResolvedValueOnce(createMockLLMToolCallResponse('mainwp__list-sites-v1', {}))
         .mockResolvedValueOnce(createMockLLMAnswerResponse('Done'));
 
       mockExecutorExecute.mockResolvedValueOnce({

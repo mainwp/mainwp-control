@@ -42,6 +42,8 @@ import { abilityToTool } from './providers/provider.js';
 import { ContextWindow } from './context-window.js';
 import { logDestructiveActionSafe } from '../utils/audit-logger.js';
 import { getInputSanitizer } from '../validation/input-sanitizer.js';
+import { getSchemaValidator } from '../validation/schema-validator.js';
+import { SchemaValidationError } from '../utils/errors.js';
 
 /**
  * Chat response types
@@ -90,6 +92,8 @@ interface PendingPreview {
   ability: Ability;
   input: Record<string, unknown>;
   preview: PreviewResult;
+  toolCallId: string;
+  toolAlias: string;
 }
 
 /**
@@ -118,6 +122,8 @@ export class ChatEngine {
   private messages: Message[] = [];
   private abilities: Ability[] = [];
   private tools: ToolDefinition[] = [];
+  private readonly toolAliases = new Map<string, string>();
+  private readonly abilityAliases = new Map<string, string>();
   private pendingPreview: PendingPreview | null = null;
   private initialized = false;
 
@@ -169,10 +175,20 @@ export class ChatEngine {
     // Load abilities
     this.abilities = await this.executor.listAbilities();
 
-    // Convert to tool definitions
-    this.tools = this.abilities.map((a) =>
-      abilityToTool(a.name, a.description, a.input_schema)
-    );
+    // Convert to protocol-safe tool definitions and keep a collision-checked
+    // reverse map so execution always uses the real ability name.
+    this.tools = this.abilities.map((ability) => {
+      const alias = ability.name.replaceAll('/', '__');
+      const existing = this.toolAliases.get(alias);
+      if (existing && existing !== ability.name) {
+        throw new Error(
+          `Tool alias collision: "${existing}" and "${ability.name}" both map to "${alias}"`
+        );
+      }
+      this.toolAliases.set(alias, ability.name);
+      this.abilityAliases.set(ability.name, alias);
+      return abilityToTool(alias, ability.description, ability.input_schema);
+    });
 
     // Build system prompt
     const systemPrompt = buildConfiguredPrompt(this.abilities, this.promptConfig);
@@ -244,6 +260,18 @@ export class ChatEngine {
     if (!approved) {
       // User declined
       this.messages.push({
+        role: 'tool',
+        content: JSON.stringify({
+          success: false,
+          error: {
+            code: 'USER_DECLINED',
+            message: 'The user declined the destructive action.',
+          },
+        }),
+        toolCallId: preview.toolCallId,
+        toolName: preview.toolAlias,
+      });
+      this.messages.push({
         role: 'user',
         content: userMessage,
       });
@@ -275,11 +303,6 @@ export class ChatEngine {
     }
 
     // User approved - execute with confirm
-    this.messages.push({
-      role: 'user',
-      content: 'User approved: yes',
-    });
-
     const result = await this.executor.execute(
       preview.ability.name,
       preview.input,
@@ -305,10 +328,14 @@ export class ChatEngine {
     const toolResultMsg = {
       role: 'tool' as const,
       content: JSON.stringify(result),
-      toolCallId: `execute_${preview.ability.name}`,
-      toolName: preview.ability.name,
+      toolCallId: preview.toolCallId,
+      toolName: preview.toolAlias,
     };
     this.messages.push(toolResultMsg);
+    this.messages.push({
+      role: 'user',
+      content: 'User approved: yes',
+    });
 
     // Truncate after preview resolution (safe boundary)
     this.truncateHistory();
@@ -361,6 +388,7 @@ export class ChatEngine {
       const parseResult = parseResponse(llmResponse, {
         abilities: this.abilities,
         validateToolExists: true,
+        toolAliases: this.toolAliases,
       });
 
       // Handle parse errors with retry
@@ -370,7 +398,9 @@ export class ChatEngine {
           // Add retry prompt
           this.messages.push({
             role: 'assistant',
-            content: llmResponse.content,
+            content:
+              llmResponse.content ||
+              'Invalid tool call omitted due to a protocol error.',
           });
           this.messages.push({
             role: 'user',
@@ -406,16 +436,29 @@ export class ChatEngine {
       const toolResponse = parseResult.response;
       toolCallCount++;
 
+      const toolCallId = toolResponse.id ?? `call_${toolCallCount}`;
+      const toolAlias =
+        this.abilityAliases.get(toolResponse.tool) ?? toolResponse.tool;
+
       // Add assistant message with tool call
       this.messages.push({
         role: 'assistant',
         content: llmResponse.content,
+        toolCalls: [
+          {
+            id: toolCallId,
+            name: toolAlias,
+            arguments: toolResponse.input,
+          },
+        ],
       });
 
       // Execute tool
       const toolResult = await this.executeTool(
         toolResponse.tool,
-        toolResponse.input
+        toolResponse.input,
+        toolCallId,
+        toolAlias
       );
 
       if (toolResult.type === 'preview') {
@@ -436,8 +479,8 @@ export class ChatEngine {
         this.messages.push({
           role: 'tool',
           content: resultContent,
-          toolCallId: toolResponse.id ?? `call_${toolCallCount}`,
-          toolName: toolResponse.tool,
+          toolCallId,
+          toolName: toolAlias,
         });
 
         // Truncate between tool-call iterations to enforce context limit
@@ -448,8 +491,8 @@ export class ChatEngine {
         this.messages.push({
           role: 'tool',
           content: JSON.stringify({ error: toolResult.error }),
-          toolCallId: toolResponse.id ?? `call_${toolCallCount}`,
-          toolName: toolResponse.tool,
+          toolCallId,
+          toolName: toolAlias,
         });
         break; // Stop on error
       }
@@ -473,7 +516,9 @@ export class ChatEngine {
    */
   private async executeTool(
     toolName: string,
-    input: Record<string, unknown>
+    input: Record<string, unknown>,
+    toolCallId: string,
+    toolAlias: string
   ): Promise<ChatResponse> {
     // Find ability
     const ability = await this.executor.getAbility(toolName);
@@ -484,13 +529,50 @@ export class ChatEngine {
       };
     }
 
+    input = getInputSanitizer().sanitize(input);
+    if (ability.input_schema) {
+      try {
+        const validated = getSchemaValidator().validateOrThrow(
+          input,
+          ability.input_schema,
+          ability.name
+        );
+        input = validated.coerced ?? input;
+      } catch (error) {
+        if (error instanceof SchemaValidationError) {
+          const validationError: NonNullable<ExecutionResult['error']> = {
+            code: error.code,
+            message: error.message,
+            details: error.details,
+          };
+          if (error.hint) {
+            validationError.hint = error.hint;
+          }
+          return {
+            type: 'tool_result',
+            tool: ability.name,
+            result: {
+              success: false,
+              error: validationError,
+            },
+          };
+        }
+        throw error;
+      }
+    }
+
     // Check if destructive
     const classification = this.safetyController.classify(ability);
 
     if (classification.requiresSafetyFlow) {
       // SAFETY: Destructive actions always preview first
       // AI cannot skip this step
-      return this.executeWithPreview(ability, input);
+      return this.executeWithPreview(
+        ability,
+        input,
+        toolCallId,
+        toolAlias
+      );
     }
 
     // Safe to execute directly
@@ -514,7 +596,9 @@ export class ChatEngine {
    */
   private async executeWithPreview(
     ability: Ability,
-    input: Record<string, unknown>
+    input: Record<string, unknown>,
+    toolCallId: string,
+    toolAlias: string
   ): Promise<ChatResponse> {
     try {
       // Execute with dry_run
@@ -539,7 +623,7 @@ export class ChatEngine {
       );
 
       // Store pending preview for approval
-      this.pendingPreview = { ability, input, preview };
+      this.pendingPreview = { ability, input, preview, toolCallId, toolAlias };
 
       return {
         type: 'preview',
@@ -567,7 +651,7 @@ export class ChatEngine {
   ): Promise<LLMResponse> {
     let content = '';
     // Providers yield complete tool calls (not deltas), so we collect them directly
-    const toolCalls: Array<{ id: string; name: string; arguments: Record<string, unknown> }> = [];
+    const toolCalls: Array<{ id: string; name: string; arguments: unknown }> = [];
 
     try {
       for await (const chunk of stream) {
@@ -586,7 +670,7 @@ export class ChatEngine {
           toolCalls.push({
             id: chunk.toolCall.id,
             name: chunk.toolCall.name,
-            arguments: chunk.toolCall.arguments ?? {},
+            arguments: chunk.toolCall.arguments,
           });
         }
 

@@ -132,6 +132,7 @@ export default class ChatCommand extends BaseCommand {
     }),
     'max-context-messages': Flags.integer({
       description: 'Maximum messages to keep in context (default: 20, 0 = unlimited)',
+      min: 0,
     }),
     stream: Flags.boolean({
       description: 'Enable streaming responses (progressive output)',
