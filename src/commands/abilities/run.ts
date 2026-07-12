@@ -235,22 +235,57 @@ export default class AbilitiesRun extends BaseCommand {
     const executor = await this.getExecutor();
     const safetyController = getSafetyController();
 
-    // Get preview data first for audit logging (gracefully handle failures)
+    // Preview is mandatory and fail-closed (plan.md §2.1): a destructive
+    // execution must never proceed without a successful dry_run the operator
+    // has seen. --force skips the prompt below, never this preview.
     let preview: PreviewResult | undefined;
+    let previewFailure: unknown;
     try {
       const ability = await executor.getAbility(abilityName);
       const previewResult = await executor.execute(abilityName, input, { dryRun: true });
       if (previewResult.success && ability) {
         preview = safetyController.formatPreviewResult(ability, input, previewResult);
+      } else {
+        previewFailure = previewResult.error ?? new Error('dry_run returned no result');
       }
-    } catch {
-      // Preview failure is non-fatal - continue without preview data in audit
+    } catch (error) {
+      previewFailure = error;
     }
 
-    // Helper to build preview metadata for audit entries (spread-friendly)
-    const previewMeta = preview
-      ? { preview: { summary: preview.summary, affectedCount: preview.affected.length } }
-      : {};
+    if (!preview) {
+      const reason = getInputSanitizer().sanitizeErrorMessage(
+        previewFailure instanceof Error
+          ? previewFailure.message
+          : ((previewFailure as { message?: string } | undefined)?.message ?? 'unknown error')
+      );
+      await logDestructiveActionSafe({
+        abilityName,
+        userDecision: 'declined',
+        execution: { success: false, error: `Preview failed: ${reason}` },
+        input,
+      });
+      throw new APIError(
+        'PREVIEW_FAILED',
+        `Preview (dry_run) failed for "${abilityName}": ${reason}. Destructive execution refused.`,
+        undefined,
+        previewFailure
+      );
+    }
+
+    // Show the preview before any approval decision. In JSON mode it goes to
+    // stderr so stdout stays a single clean envelope (preview data is also
+    // included in the final envelope below).
+    const previewText = this.formatPreviewOutput(preview);
+    if (this.jsonOutput) {
+      this.logToStderr(previewText);
+    } else if (!this.quietMode) {
+      this.log(previewText);
+    }
+
+    // Preview metadata for audit entries (spread-friendly)
+    const previewMeta = {
+      preview: { summary: preview.summary, affectedCount: preview.affected.length },
+    };
 
     // In non-interactive mode, require --force or fail
     if (!isInteractive() && !force) {
@@ -325,6 +360,7 @@ export default class AbilitiesRun extends BaseCommand {
           ability: abilityName,
           jobId: result.jobId,
           ...result,
+          preview,
         },
         () => this.formatBatchOutput(abilityName, result.jobId!)
       );
@@ -336,6 +372,7 @@ export default class AbilitiesRun extends BaseCommand {
         mode: 'execute',
         ability: abilityName,
         ...result,
+        preview,
       },
       () => this.formatExecutionOutput(abilityName, result.data)
     );
@@ -428,7 +465,7 @@ export default class AbilitiesRun extends BaseCommand {
       );
     }
 
-    // Job completed (or failed)
+    // Job reached a terminal status
     const data = {
       mode: 'batch',
       ability: abilityName,
@@ -439,6 +476,17 @@ export default class AbilitiesRun extends BaseCommand {
     };
 
     this.output(data, () => this.formatWatchResultOutput(abilityName, jobId, watchResult));
+
+    // Non-completed terminal statuses map to exit code 4, mirroring the
+    // timeout path above: results are surfaced first, then the error exit.
+    if (watchResult.status.status === 'failed' || watchResult.status.status === 'partial') {
+      throw new APIError(
+        watchResult.status.status === 'failed' ? 'BATCH_FAILED' : 'BATCH_PARTIAL',
+        `Batch job ${jobId} finished with status "${watchResult.status.status}"`,
+        undefined,
+        { jobId, status: watchResult.status }
+      );
+    }
   }
 
   /**

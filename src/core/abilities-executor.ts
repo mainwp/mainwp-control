@@ -333,16 +333,19 @@ export class AbilitiesExecutor {
     // Strict === true matches SafetyController.validateAnnotations(): a
     // non-boolean annotation value (e.g. readonly: "true" from a buggy or
     // hostile server) must not be treated as set.
-    const destructive =
-      annotations?.destructive === true || isKnownDestructiveName(ability.name);
+    const annotatedDestructive = annotations?.destructive === true;
+    const destructive = annotatedDestructive || isKnownDestructiveName(ability.name);
 
     // Read-only (and not name-destructive) → GET
     if (annotations?.readonly === true && !destructive) {
       return 'GET';
     }
 
-    // Destructive and idempotent → DELETE
-    if (destructive && annotations?.idempotent === true) {
+    // Destructive and idempotent → DELETE. Only when the annotations
+    // themselves say destructive: if destructiveness came from the name
+    // override, the annotations are already distrusted, so `idempotent`
+    // from the same source must not pick the method — fall through to POST.
+    if (annotatedDestructive && annotations?.idempotent === true) {
       return 'DELETE';
     }
 

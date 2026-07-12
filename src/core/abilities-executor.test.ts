@@ -251,17 +251,19 @@ describe('AbilitiesExecutor', () => {
     });
 
     it('never uses GET for a destructive-named ability marked readonly (transport/policy consistency)', async () => {
-      mockDelete.mockResolvedValueOnce({ data: { success: true } });
+      mockPost.mockResolvedValueOnce({ data: { success: true } });
 
       // reset-site-v1 is annotated readonly:true but its name is known-destructive.
       // Transport must resolve destructiveness the same way SafetyController does,
-      // so this goes out as DELETE (idempotent), never GET.
+      // so this never goes out as GET. It also must not go out as DELETE: the
+      // annotations are distrusted here, so their `idempotent` flag cannot
+      // pick the method — the safe write default is POST.
       await executor.execute('reset-site-v1', { site_id: 1 }, { confirm: true });
 
-      // The run request went out as DELETE; a readonly GET run would have left
-      // mockDelete uncalled. (mockGet fires only for the abilities-list fetch.)
-      expect(mockDelete).toHaveBeenCalledOnce();
-      expect(mockPost).not.toHaveBeenCalled();
+      // The run request went out as POST; a readonly GET run would have left
+      // mockPost uncalled. (mockGet fires only for the abilities-list fetch.)
+      expect(mockPost).toHaveBeenCalledOnce();
+      expect(mockDelete).not.toHaveBeenCalled();
     });
 
     it('treats non-boolean annotation values as unset for method selection', async () => {

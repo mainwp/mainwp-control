@@ -8,6 +8,7 @@
  */
 
 import type { Ability } from '../core/abilities-executor.js';
+import { getSafetyController } from '../core/safety-controller.js';
 
 /**
  * Core system prompt content
@@ -90,12 +91,15 @@ The system handles all actual execution through the Abilities API.`;
  * Format ability for inclusion in system prompt
  */
 function formatAbility(ability: Ability): string {
-  const annotations = ability.meta?.annotations;
+  // Labels come from SafetyController.classify(), not raw annotations, so the
+  // LLM-facing text always matches the runtime safety classification
+  // (including the destructive-name override).
+  const classification = getSafetyController().classify(ability);
   const tags: string[] = [];
 
-  if (annotations?.readonly) tags.push('readonly');
-  if (annotations?.destructive) tags.push('DESTRUCTIVE');
-  if (annotations?.idempotent) tags.push('idempotent');
+  if (classification.isReadOnly) tags.push('readonly');
+  if (classification.isDestructive) tags.push('DESTRUCTIVE');
+  if (classification.isIdempotent) tags.push('idempotent');
 
   const tagStr = tags.length > 0 ? ` [${tags.join(', ')}]` : '';
 
@@ -130,8 +134,10 @@ function buildAbilitiesSection(abilities: Ability[]): string {
     sections.push('');
   }
 
-  // Add destructive actions reminder
-  const destructive = abilities.filter((a) => a.meta?.annotations?.destructive);
+  // Add destructive actions reminder (same classification source as runtime)
+  const destructive = abilities.filter(
+    (a) => getSafetyController().classify(a).isDestructive
+  );
   if (destructive.length > 0) {
     sections.push('\n## Destructive Actions Warning\n');
     sections.push(
