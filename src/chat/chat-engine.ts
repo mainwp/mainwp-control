@@ -127,6 +127,10 @@ export class ChatEngine {
   private readonly abilityAliases = new Map<string, string>();
   private pendingPreview: PendingPreview | null = null;
   private initialized = false;
+  // Engine-lifetime counter for fallback tool-call IDs. A per-turn counter
+  // would repeat call_1, call_2, ... across turns while history is retained,
+  // producing duplicate IDs in the conversation sent to providers.
+  private fallbackToolCallId = 0;
 
   constructor(options: ChatEngineOptions) {
     this.provider = options.provider;
@@ -437,7 +441,7 @@ export class ChatEngine {
       const toolResponse = parseResult.response;
       toolCallCount++;
 
-      const toolCallId = toolResponse.id ?? `call_${toolCallCount}`;
+      const toolCallId = toolResponse.id ?? `call_${++this.fallbackToolCallId}`;
       const toolAlias =
         this.abilityAliases.get(toolResponse.tool) ?? toolResponse.tool;
 
@@ -561,7 +565,13 @@ export class ChatEngine {
             },
           };
         }
-        throw error;
+        // A throw here would leave the already-pushed assistant tool call
+        // dangling in history (no matching tool message), corrupting the next
+        // provider request. Surface it like the execution catch-all below.
+        return {
+          type: 'error',
+          error: error instanceof Error ? error.message : String(error),
+        };
       }
     }
 

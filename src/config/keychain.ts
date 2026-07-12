@@ -28,6 +28,15 @@ const ENV_VAR = 'MAINWP_APP_PASSWORD';
  */
 const KEYTAR_TIMEOUT_MS = 5_000;
 
+/**
+ * Keytar is native code and can reject with non-Error values; a blind
+ * `(error as Error).message` throws on null/undefined and turns a
+ * warn-and-continue path into a crash.
+ */
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
 function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
   return new Promise((resolve, reject) => {
     const timer = setTimeout(
@@ -125,11 +134,10 @@ export class Keychain {
         await withTimeout(kt.setPassword(SERVICE_NAME, profileName, password), KEYTAR_TIMEOUT_MS);
         return { stored: true, location: 'keychain' };
       } catch (error) {
-        const errorMessage = (error as Error).message;
         return {
           stored: false,
           location: 'none',
-          error: errorMessage,
+          error: errorMessage(error),
         };
       }
     }
@@ -180,7 +188,7 @@ export class Keychain {
       } catch (error) {
         // Always warn, including non-TTY/CI runs — a silent failure here
         // leaves stale credentials in the keychain with no visible signal.
-        console.error(`Warning: Failed to remove credentials from keychain: ${sanitizeSingleLine((error as Error).message)}`);
+        console.error(`Warning: Failed to remove credentials from keychain: ${sanitizeSingleLine(errorMessage(error))}`);
       }
     }
   }

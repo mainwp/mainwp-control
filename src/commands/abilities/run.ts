@@ -264,11 +264,14 @@ export default class AbilitiesRun extends BaseCommand {
         execution: { success: false, error: `Preview failed: ${reason}` },
         input,
       });
+      // Only the sanitized reason goes into details: the raw previewFailure
+      // could carry an unsanitized upstream payload into the --json envelope
+      // (and an Error instance would serialize to {} anyway).
       throw new APIError(
         'PREVIEW_FAILED',
         `Preview (dry_run) failed for "${abilityName}": ${reason}. Destructive execution refused.`,
         undefined,
-        previewFailure
+        { reason }
       );
     }
 
