@@ -283,6 +283,38 @@ describe.each<WireProvider>(['openai', 'anthropic', 'gemini'])('%s native tool p
   });
 });
 
+describe('Gemini thought signatures', () => {
+  afterEach(() => {
+    mockFetch.mockReset();
+  });
+
+  it('replays a function-call thought signature unchanged on continuation', async () => {
+    const callId = 'call_gemini_signed';
+    const response = toolResponse('gemini', 'mainwp__list-sites-v1', callId) as {
+      candidates: Array<{ content: { parts: Array<Record<string, unknown>> } }>;
+    };
+    response.candidates[0]!.content.parts[0]!['thoughtSignature'] = 'sig-required';
+    mockFetch
+      .mockResolvedValueOnce(okJson(response))
+      .mockResolvedValueOnce(okJson(answerResponse('gemini')));
+    const engine = new ChatEngine({
+      provider: createProvider('gemini'),
+      executor: createExecutor(readonlyAbility) as never,
+    });
+
+    await engine.sendMessage('List sites');
+
+    const contents = requestBody(1)['contents'] as Array<Record<string, unknown>>;
+    const parts = contents.flatMap((content) =>
+      content['parts'] as Array<Record<string, unknown>>
+    );
+    expect(parts).toContainEqual({
+      functionCall: expect.objectContaining({ id: callId }),
+      thoughtSignature: 'sig-required',
+    });
+  });
+});
+
 describe('provider model defaults', () => {
   it('advertises the active Anthropic models and defaults to Sonnet 4.6', () => {
     const provider = new AnthropicProvider({ apiKey: 'test-key' });

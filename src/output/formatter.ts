@@ -3,7 +3,12 @@
  */
 
 import { isMainWPCTLError } from '../utils/errors.js';
-import { stripControlChars, sanitizeForTerminal, safeString } from '../utils/terminal-sanitizer.js';
+import {
+  stripControlChars,
+  sanitizeForTerminal,
+  sanitizeSingleLine,
+  safeString,
+} from '../utils/terminal-sanitizer.js';
 import { colors, color } from '../utils/colors.js';
 
 /**
@@ -38,7 +43,7 @@ export function formatError(error: Error | string): string {
  * Format a warning message
  */
 export function formatWarning(message: string): string {
-  return color('⚠ Warning: ', colors.yellow) + stripControlChars(message);
+  return color('⚠ Warning: ', colors.yellow) + sanitizeSingleLine(message);
 }
 
 /**
@@ -107,7 +112,7 @@ export function formatSection(title: string, rows: string[]): string {
  */
 export function formatKeyValue(key: string, value: unknown): string {
   // Sanitize both key and value (may contain untrusted API data)
-  const safeKey = stripControlChars(key);
+  const safeKey = sanitizeSingleLine(key);
   const valueStr = safeString(value);
   return color(safeKey + ': ', colors.dim) + valueStr;
 }
@@ -124,8 +129,8 @@ export function formatTable(
   }
 
   // Sanitize all table data (may contain untrusted API data)
-  const safeHeaders = headers.map((h) => stripControlChars(h));
-  const safeRows = rows.map((row) => row.map((cell) => stripControlChars(cell ?? '')));
+  const safeHeaders = headers.map((h) => sanitizeSingleLine(h));
+  const safeRows = rows.map((row) => row.map((cell) => sanitizeSingleLine(cell ?? '')));
 
   // Calculate column widths using sanitized data
   const widths = safeHeaders.map((h, i) => {
@@ -157,7 +162,7 @@ export function formatTable(
  */
 export function formatList(items: string[], bullet = '•'): string {
   // Sanitize list items (may contain untrusted API data)
-  return items.map((item) => `  ${bullet} ${stripControlChars(item)}`).join('\n');
+  return items.map((item) => `  ${bullet} ${sanitizeSingleLine(item)}`).join('\n');
 }
 
 /**
@@ -171,7 +176,7 @@ export function formatPreview(
   const sanitizedItems = sanitizeForTerminal(affectedItems);
 
   const lines = [
-    color('Preview: ', colors.yellow, colors.bold) + stripControlChars(action),
+    color('Preview: ', colors.yellow, colors.bold) + sanitizeSingleLine(action),
     '',
     color('Affected items:', colors.dim),
     JSON.stringify(sanitizedItems, null, 2),

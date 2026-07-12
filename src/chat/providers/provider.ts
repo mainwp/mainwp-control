@@ -21,6 +21,8 @@ export interface Message {
     id: string;
     name: string;
     arguments: Record<string, unknown>;
+    /** Opaque Gemini thought signature pass-through; other providers ignore it. */
+    thoughtSignature?: string;
   }>;
   /** Tool call ID (for tool responses) */
   toolCallId?: string;
@@ -45,6 +47,8 @@ export interface ToolCall {
   name: string;
   /** Kept unknown until the envelope parser proves it is an object */
   arguments: unknown;
+  /** Opaque Gemini thought signature pass-through; other providers ignore it. */
+  thoughtSignature?: string;
 }
 
 /**

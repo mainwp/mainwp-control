@@ -18,6 +18,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `--max-context-messages` rejects negative values; `0` remains the only way to disable truncation
 - Chat context truncation no longer orphans tool results mid tool-calling loop or at the destructive-action approval step, which could cause provider API errors on the next message
 - Caller-cancelled requests now report "Request cancelled" instead of "Request timed out"
+- Gemini 3 thought signatures on function calls are preserved through parsing, chat history, and streaming, and echoed back on the continuation request; previously they were discarded, which Gemini 3 models (including the default `gemini-3.5-flash`) reject with HTTP 400
+- Context truncation no longer treats the synthetic approval echo after a destructive action as a turn boundary, which with a small `--max-context-messages` could erase the executed action and its result from history right after approval
 - HTTP method selection now resolves destructiveness the same way the safety classifier does, so a destructive-named ability is never sent as a read-only GET even if the server mislabels it; non-boolean annotation values (e.g. `readonly: "true"` as a string) are likewise ignored. When the destructive classification comes from the name override rather than the annotations, the request uses POST instead of trusting the annotations' `idempotent` flag for DELETE
 - Keychain credential-removal failures now warn in non-interactive (CI) runs instead of only when attached to a terminal
 - Warning shown when the active profile no longer exists and the CLI falls back to another profile
@@ -38,6 +40,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `config show` sanitizes every untrusted value in human-readable output to a single safe line: environment-derived provider names and paths (`MAINWP_LLM_PROVIDER`, `XDG_CONFIG_HOME`) and profile-derived fields (profile name, dashboard URL, username), closing line-injection via a crafted `profiles.json` or hostile environment
 - `doctor` and `config show` human-readable output now strips terminal escape sequences from error- and config-derived text, matching the sanitization the `--json` path already applied
 - HTTP responses are size-checked after buffering even when the server sends a parseable `Content-Length`, so an inaccurate header can no longer bypass the response size limit
+- All remaining single-row terminal output (login summary, profile fallback and keychain warnings, ability names, table cells, list items, preview labels) collapses untrusted values to a single line instead of only stripping non-CR/LF control characters
 - Input keys containing `[` or `]` are now rejected; they could canonicalize server-side (PHP query parsing) to alias a control flag like `confirm` past the executor's flag-stripping guard
 - Mutual exclusion of `dry_run` and `confirm` is now also asserted at the executor boundary, not only at the flag layer
 - Updated `undici` to 7.28.0, resolving TLS certificate validation bypass and response queue poisoning advisories

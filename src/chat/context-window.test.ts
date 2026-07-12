@@ -145,22 +145,41 @@ describe('ContextWindow', () => {
     });
 
     // Regression: ChatEngine injects a synthetic `User approved: yes` user
-    // message between an assistant tool-call and its confirm result. Treating
-    // that as a real turn boundary would cut there and orphan the tool result.
+    // message after an assistant tool-call and its confirm result. Treating
+    // that as a real turn boundary would discard the call and result.
     it('does not cut at the synthetic approval message (defers instead)', () => {
       const window = new ContextWindow(3);
       const messages = [
         system,
         user('delete site 1'),
         assistant('tc-delete'),
-        user('User approved: yes'),
         tool('delete-site-v1'),
+        user('User approved: yes'),
       ];
 
       // Only boundary at/after the ideal cut is the synthetic approval, whose
-      // next message is a tool result — not a real turn start, so defer.
+      // preceding message is a tool result — not a real turn start, so defer.
       expect(window.truncate(messages)).toBe(messages);
     });
+
+    it.each([1, 2, 3])(
+      'never isolates an approval fragment with maxMessages %i',
+      (maxMessages) => {
+        const window = new ContextWindow(maxMessages);
+        const messages = [
+          system,
+          user('delete site 1'),
+          assistant('tc-delete'),
+          tool('delete-site-v1'),
+          user('User approved: yes'),
+        ];
+
+        const result = window.truncate(messages);
+
+        expect(result).toBe(messages);
+        expect(result).not.toEqual([system, user('User approved: yes')]);
+      }
+    );
 
     it('catches up cleanly at the next real user turn after an approval', () => {
       const window = new ContextWindow(3);
@@ -168,8 +187,8 @@ describe('ContextWindow', () => {
         system,
         user('delete site 1'),
         assistant('tc-delete'),
-        user('User approved: yes'),
         tool('delete-site-v1'),
+        user('User approved: yes'),
         assistant('done'),
         user('next question'),
       ];

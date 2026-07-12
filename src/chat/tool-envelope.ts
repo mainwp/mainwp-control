@@ -16,7 +16,13 @@ import type { Ability } from '../core/abilities-executor.js';
  * Parsed response types
  */
 export type ParsedResponse =
-  | { type: 'tool'; tool: string; input: Record<string, unknown>; id?: string }
+  | {
+      type: 'tool';
+      tool: string;
+      input: Record<string, unknown>;
+      id?: string;
+      thoughtSignature?: string;
+    }
   | { type: 'answer'; answer: string }
   | { type: 'error'; error: string; retryable: boolean };
 
@@ -134,6 +140,9 @@ function parseNativeToolCall(
       tool: toolName,
       input: toolCall.arguments,
       id: toolCall.id,
+      ...(toolCall.thoughtSignature !== undefined
+        ? { thoughtSignature: toolCall.thoughtSignature }
+        : {}),
     },
     rawContent: JSON.stringify(toolCall),
     nativeFunctionCall: true,

@@ -5,6 +5,10 @@
 import { describe, it, expect } from 'vitest';
 import {
   formatWarning,
+  formatKeyValue,
+  formatTable,
+  formatList,
+  formatPreview,
   formatDivider,
   formatSection,
   formatStatusIcon,
@@ -35,6 +39,22 @@ describe('M5: formatWarning sanitization', () => {
     const result = formatWarning(clean);
 
     expect(result).toContain(clean);
+  });
+
+  it('collapses warning messages to one terminal row', () => {
+    expect(formatWarning('first\r\nsecond\tvalue')).toContain(
+      'first second value'
+    );
+  });
+});
+
+describe('single-row formatter sanitization', () => {
+  it('collapses keys, table cells, list items, and preview actions', () => {
+    expect(formatKeyValue('multi\nline', 'value')).toContain('multi line:');
+    expect(formatTable(['head\ner'], [['cell\r\nvalue']])).toContain('head er');
+    expect(formatTable(['head\ner'], [['cell\r\nvalue']])).toContain('cell value');
+    expect(formatList(['list\nitem'])).toContain('list item');
+    expect(formatPreview('delete\nsite', [])).toContain('delete site');
   });
 });
 

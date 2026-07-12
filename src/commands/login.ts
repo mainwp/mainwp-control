@@ -12,7 +12,7 @@ import { createHttpClient } from '../core/http-client.js';
 import { formatSuccess, formatWarning, formatInfo } from '../output/formatter.js';
 import { AuthError, InputError } from '../utils/errors.js';
 import { promptForInput, promptForPassword, isInteractive } from '../utils/prompt.js';
-import { stripControlChars } from '../utils/terminal-sanitizer.js';
+import { sanitizeSingleLine } from '../utils/terminal-sanitizer.js';
 
 export default class Login extends BaseCommand {
   static description = 'Authenticate with a MainWP Dashboard';
@@ -182,9 +182,9 @@ export default class Login extends BaseCommand {
       },
       () => {
         const lines = [
-          formatSuccess(`Logged in as ${stripControlChars(username)}`),
-          `  Profile: ${stripControlChars(profileName)}`,
-          `  Dashboard: ${stripControlChars(normalizedUrl)}`,
+          formatSuccess(`Logged in as ${sanitizeSingleLine(username)}`),
+          `  Profile: ${sanitizeSingleLine(profileName)}`,
+          `  Dashboard: ${sanitizeSingleLine(normalizedUrl)}`,
         ];
 
         if (keychainResult.stored) {
@@ -193,7 +193,7 @@ export default class Login extends BaseCommand {
           lines.push('');
           lines.push(formatWarning('Credentials NOT saved to keychain.'));
           if (keychainResult.error) {
-            lines.push(`  Reason: ${stripControlChars(keychainResult.error)}`);
+            lines.push(`  Reason: ${sanitizeSingleLine(keychainResult.error)}`);
           }
           lines.push(
             '  Future commands must continue receiving MAINWP_APP_PASSWORD because plaintext credentials are not stored locally.'

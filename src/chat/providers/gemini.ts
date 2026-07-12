@@ -38,6 +38,7 @@ type GeminiPart =
         name: string;
         args: Record<string, unknown>;
       };
+      thoughtSignature?: string;
     }
   | {
       functionResponse: {
@@ -229,6 +230,9 @@ export class GeminiProvider implements LLMProvider {
                 id: `fc_${Date.now()}`,
                 name: part.functionCall.name,
                 arguments: part.functionCall.args,
+                ...(part.thoughtSignature !== undefined
+                  ? { thoughtSignature: part.thoughtSignature }
+                  : {}),
               },
               done: false,
             };
@@ -293,6 +297,9 @@ export class GeminiProvider implements LLMProvider {
               name: toolCall.name,
               args: toolCall.arguments,
             },
+            ...(toolCall.thoughtSignature !== undefined
+              ? { thoughtSignature: toolCall.thoughtSignature }
+              : {}),
           });
         }
         result.push({
@@ -355,6 +362,9 @@ export class GeminiProvider implements LLMProvider {
           id: part.functionCall.id ?? `fc_${Date.now()}_${toolCalls.length}`,
           name: part.functionCall.name,
           arguments: part.functionCall.args,
+          ...(part.thoughtSignature !== undefined
+            ? { thoughtSignature: part.thoughtSignature }
+            : {}),
         });
       }
     }

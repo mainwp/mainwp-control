@@ -18,6 +18,7 @@ import type {
   ChatOptions,
   ToolDefinition,
   StreamChunk,
+  ToolCall,
 } from './providers/provider.js';
 import {
   buildConfiguredPrompt,
@@ -449,6 +450,9 @@ export class ChatEngine {
             id: toolCallId,
             name: toolAlias,
             arguments: toolResponse.input,
+            ...(toolResponse.thoughtSignature !== undefined
+              ? { thoughtSignature: toolResponse.thoughtSignature }
+              : {}),
           },
         ],
       });
@@ -651,7 +655,7 @@ export class ChatEngine {
   ): Promise<LLMResponse> {
     let content = '';
     // Providers yield complete tool calls (not deltas), so we collect them directly
-    const toolCalls: Array<{ id: string; name: string; arguments: unknown }> = [];
+    const toolCalls: ToolCall[] = [];
 
     try {
       for await (const chunk of stream) {
@@ -671,6 +675,9 @@ export class ChatEngine {
             id: chunk.toolCall.id,
             name: chunk.toolCall.name,
             arguments: chunk.toolCall.arguments,
+            ...(chunk.toolCall.thoughtSignature !== undefined
+              ? { thoughtSignature: chunk.toolCall.thoughtSignature }
+              : {}),
           });
         }
 

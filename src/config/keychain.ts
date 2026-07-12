@@ -10,7 +10,7 @@
  */
 
 import { AuthError } from '../utils/errors.js';
-import { stripControlChars } from '../utils/terminal-sanitizer.js';
+import { sanitizeSingleLine } from '../utils/terminal-sanitizer.js';
 
 /**
  * Service name for keychain entries
@@ -180,7 +180,7 @@ export class Keychain {
       } catch (error) {
         // Always warn, including non-TTY/CI runs — a silent failure here
         // leaves stale credentials in the keychain with no visible signal.
-        console.error(`Warning: Failed to remove credentials from keychain: ${stripControlChars((error as Error).message)}`);
+        console.error(`Warning: Failed to remove credentials from keychain: ${sanitizeSingleLine((error as Error).message)}`);
       }
     }
   }
