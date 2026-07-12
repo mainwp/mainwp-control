@@ -141,26 +141,34 @@ export default class JobsWatch extends BaseCommand {
         this.exit(signalExitCode);
       }
 
+      // Non-success outcomes: human mode prints result details before the
+      // error; JSON mode must emit exactly ONE document, so only the error
+      // envelope is printed (status travels in its details).
+      const failedOutcome = result.timedOut
+        ? new APIError(
+            'BATCH_TIMEOUT',
+            `Batch job ${args.id} timed out`,
+            undefined,
+            { jobId: args.id, partialStatus: result.status }
+          )
+        : result.status.status === 'failed' || result.status.status === 'partial'
+          ? new APIError(
+              result.status.status === 'failed' ? 'BATCH_FAILED' : 'BATCH_PARTIAL',
+              `Batch job ${args.id} finished with status "${result.status.status}"`,
+              undefined,
+              { jobId: args.id, status: result.status }
+            )
+          : undefined;
+
+      if (failedOutcome) {
+        if (!this.jsonOutput) {
+          this.outputResult(args.id, result);
+        }
+        throw failedOutcome;
+      }
+
       // Output final result
       this.outputResult(args.id, result);
-
-      if (result.timedOut) {
-        throw new APIError(
-          'BATCH_TIMEOUT',
-          `Batch job ${args.id} timed out`,
-          undefined,
-          { jobId: args.id, partialStatus: result.status }
-        );
-      }
-
-      if (result.status.status === 'failed' || result.status.status === 'partial') {
-        throw new APIError(
-          result.status.status === 'failed' ? 'BATCH_FAILED' : 'BATCH_PARTIAL',
-          `Batch job ${args.id} finished with status "${result.status.status}"`,
-          undefined,
-          { jobId: args.id, status: result.status }
-        );
-      }
     } finally {
       process.off('SIGINT', handleSIGINT);
       process.off('SIGTERM', handleSIGTERM);

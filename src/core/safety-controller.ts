@@ -272,6 +272,21 @@ export class SafetyController {
     const data = apiResult.data as Record<string, unknown> | undefined;
     const affected = this.extractAffectedItems(data);
 
+    // Unrecognized response shape: never tell the operator "no items would
+    // be affected" when we simply couldn't read the preview — show the raw
+    // data and say so, since a falsely reassuring summary right before a
+    // destructive confirm is worse than an honest "unknown".
+    if (affected === null) {
+      return {
+        affected: [data],
+        summary:
+          'Preview returned data in an unrecognized format — review the raw response below before approving.',
+        requiresApproval: true,
+        abilityName: ability.name,
+        input,
+      };
+    }
+
     return {
       affected,
       summary: this.generatePreviewSummary(ability, affected),
@@ -282,9 +297,13 @@ export class SafetyController {
   }
 
   /**
-   * Extract affected items from API preview response
+   * Extract affected items from API preview response.
+   *
+   * Returns null when the response contains data in none of the recognized
+   * shapes — callers must distinguish "nothing affected" from "couldn't read
+   * the preview".
    */
-  private extractAffectedItems(data: Record<string, unknown> | undefined): unknown[] {
+  private extractAffectedItems(data: Record<string, unknown> | undefined): unknown[] | null {
     if (!data) {
       return [];
     }
@@ -306,6 +325,11 @@ export class SafetyController {
     // Single item preview
     if (data['preview']) {
       return [data['preview']];
+    }
+
+    // Data present but in no recognized shape
+    if (Object.keys(data).length > 0) {
+      return null;
     }
 
     return [];

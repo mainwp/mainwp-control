@@ -356,6 +356,17 @@ export abstract class BaseCommand extends Command {
    * Handle errors with appropriate exit codes
    */
   protected async catch(err: Error & { exitCode?: number; oclif?: { exit?: number } }): Promise<void> {
+    // oclif flag/arg parse failures (CLIParseError subclasses all carry a
+    // `parse` property, e.g. FailedFlagValidationError from `exclusive`
+    // flags) are user input errors → exit 1. Handled before the generic
+    // oclif re-throw below, whose CLIError default exit of 2 would land
+    // them in the auth/config bucket.
+    if ('parse' in err) {
+      this.logToStderr(formatError(err));
+      this.exit(ExitCode.INPUT_ERROR);
+      return;
+    }
+
     // Re-throw oclif exit errors to preserve their exit code
     if (err.oclif && typeof err.oclif.exit === 'number') {
       throw err;

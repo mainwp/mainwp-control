@@ -445,23 +445,20 @@ export default class AbilitiesRun extends BaseCommand {
     });
 
     if (watchResult.timedOut) {
-      // Output partial results and throw API error for exit code 4
-      this.output(
-        {
-          mode: 'batch',
-          ability: abilityName,
-          jobId,
-          timedOut: true,
-          ...watchResult.status,
-          elapsed_ms: watchResult.elapsed,
-        },
-        () => formatWarning(`Batch job ${jobId} timed out after ${timeoutSeconds}s (partial results returned)`)
-      );
+      // Human mode surfaces partial results before the error line. JSON mode
+      // must emit exactly ONE document, so the partial status travels in the
+      // error envelope's details instead of a preceding success envelope.
+      if (!this.jsonOutput) {
+        this.output(
+          {},
+          () => formatWarning(`Batch job ${jobId} timed out after ${timeoutSeconds}s (partial results returned)`)
+        );
+      }
       throw new APIError(
         'BATCH_TIMEOUT',
         `Batch job timed out after ${timeoutSeconds}s`,
         undefined,
-        { jobId, partialStatus: watchResult.status }
+        { jobId, partialStatus: watchResult.status, elapsed_ms: watchResult.elapsed }
       );
     }
 
@@ -475,18 +472,22 @@ export default class AbilitiesRun extends BaseCommand {
       elapsed_ms: watchResult.elapsed,
     };
 
-    this.output(data, () => this.formatWatchResultOutput(abilityName, jobId, watchResult));
-
-    // Non-completed terminal statuses map to exit code 4, mirroring the
-    // timeout path above: results are surfaced first, then the error exit.
+    // Non-completed terminal statuses map to exit code 4. Human mode prints
+    // the result details first; JSON mode emits only the error envelope
+    // (single-document contract), carrying the status in details.
     if (watchResult.status.status === 'failed' || watchResult.status.status === 'partial') {
+      if (!this.jsonOutput) {
+        this.output(data, () => this.formatWatchResultOutput(abilityName, jobId, watchResult));
+      }
       throw new APIError(
         watchResult.status.status === 'failed' ? 'BATCH_FAILED' : 'BATCH_PARTIAL',
         `Batch job ${jobId} finished with status "${watchResult.status.status}"`,
         undefined,
-        { jobId, status: watchResult.status }
+        { jobId, status: watchResult.status, elapsed_ms: watchResult.elapsed }
       );
     }
+
+    this.output(data, () => this.formatWatchResultOutput(abilityName, jobId, watchResult));
   }
 
   /**

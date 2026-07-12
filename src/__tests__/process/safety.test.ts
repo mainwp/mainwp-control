@@ -171,8 +171,7 @@ describe('safety / destructive action handling', () => {
   // -------------------------------------------------------------------------
   // 3. --dry-run --confirm together → oclif rejects at flag parsing time
   //    oclif's exclusive flag validation fires before the command runs.
-  //    The FailedFlagValidationError lacks an exitCode property, so
-  //    BaseCommand.catch defaults to ExitCode.INTERNAL_ERROR (5).
+  //    Parse failures are user input errors → exit 1 (INPUT_ERROR).
   // -------------------------------------------------------------------------
   it('--dry-run and --confirm together are rejected as mutually exclusive', async () => {
     await createConfig();
@@ -189,8 +188,8 @@ describe('safety / destructive action handling', () => {
       },
     );
 
-    // Exit code is non-zero (oclif flag validation error)
-    expect(result.exitCode).not.toBe(0);
+    // User input error (oclif flag validation) maps to exit code 1
+    expect(result.exitCode).toBe(1);
 
     // Error output should mention the mutual exclusion
     const combined = result.stdout + result.stderr;

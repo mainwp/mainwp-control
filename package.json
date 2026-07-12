@@ -20,6 +20,7 @@
     "lint": "eslint src --ext .ts",
     "postpack": "rm -f oclif.manifest.json",
     "prepack": "npm run clean && npm run build && oclif manifest",
+    "pretest": "npm run build",
     "test": "vitest run",
     "test:process": "npm run build && vitest run --config vitest.process.config.ts",
     "test:live": "npm run build && MAINWP_LIVE_TEST=1 vitest run --config vitest.live.config.ts",

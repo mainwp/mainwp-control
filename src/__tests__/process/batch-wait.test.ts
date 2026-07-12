@@ -128,9 +128,14 @@ describe('batch job waiting', () => {
     // APIError with code BATCH_TIMEOUT maps to exit code 4
     expect(result.exitCode).toBe(4);
 
-    // stdout contains partial results + error envelope (two JSON objects)
-    // Verify that BATCH_TIMEOUT appears in the output
-    expect(result.stdout).toContain('BATCH_TIMEOUT');
+    // JSON mode emits exactly ONE document: an error envelope whose details
+    // carry the partial status (no preceding success envelope).
+    const envelope = JSON.parse(result.stdout) as Record<string, unknown>;
+    expect(envelope['success']).toBe(false);
+    const error = envelope['error'] as Record<string, unknown>;
+    expect(error['code']).toBe('BATCH_TIMEOUT');
+    const details = error['details'] as Record<string, unknown>;
+    expect(details).toHaveProperty('partialStatus');
   });
 
   // ---------------------------------------------------------------------------
