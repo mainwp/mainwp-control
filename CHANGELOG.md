@@ -27,7 +27,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Input keys containing `[` or `]` are now rejected — they could canonicalize server-side (PHP query parsing) to alias a control flag like `confirm` past the executor's flag-stripping guard
 - Mutual exclusion of `dry_run` and `confirm` is now also asserted at the executor boundary, not only at the flag layer
 - Updated `undici` to 7.28.0, resolving TLS certificate validation bypass and response queue poisoning advisories
-- Updated `@oclif/core`, `@oclif/plugin-help`, `@oclif/plugin-autocomplete`, and transitive dependencies — `npm audit` now reports zero vulnerabilities
+- Updated `@oclif/core`, `@oclif/plugin-help`, `@oclif/plugin-autocomplete`, and transitive dependencies — `npm audit --omit=dev` reports zero production vulnerabilities; dev-chain advisories are tracked separately
 
 ## [1.1.0-beta.1] - 2026-03-26
 

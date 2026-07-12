@@ -28,6 +28,25 @@ describe('config show command', () => {
     }
   });
 
+  it('keeps provider warnings and configuration paths on one safe line', async () => {
+    configDir = await ConfigDir.create();
+    const unsafeConfigHome = `${configDir.xdgHome}/\x1b[31mconfig\r\ninjected-path`;
+
+    const result = await runCLI(['config', 'show'], {
+      xdgConfigHome: unsafeConfigHome,
+      env: {
+        MAINWP_LLM_PROVIDER: '\x1b[31minvalid\r\ninjected-provider',
+      },
+    });
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).not.toContain('\x1b');
+    expect(result.stdout).not.toContain('\ninjected-provider');
+    expect(result.stdout).not.toContain('\ninjected-path');
+    expect(result.stdout).toContain('invalid injected-provider');
+    expect(result.stdout).toContain('config injected-path');
+  });
+
   it('reports effective settings and provider resolution in JSON mode', async () => {
     configDir = await ConfigDir.create({
       profiles: [

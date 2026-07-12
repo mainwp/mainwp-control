@@ -88,6 +88,16 @@ export function stripControlChars(str: string): string {
 }
 
 /**
+ * Sanitize untrusted text for a single terminal output line.
+ *
+ * Removes terminal control sequences, then replaces any run of line-breaking
+ * or horizontal-tab characters with one space to prevent line injection.
+ */
+export function sanitizeSingleLine(str: string): string {
+  return stripControlChars(str).replace(/[\r\n\t]+/g, ' ');
+}
+
+/**
  * Recursively sanitize a value for safe terminal output.
  *
  * Handles:

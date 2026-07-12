@@ -39,14 +39,18 @@ export interface AuditEntry {
   timestamp: string;
   /** Name of the ability executed */
   abilityName: string;
-  /** Preview information (optional - not available in CLI executeDestructive path) */
+  /** Preview information (absent when the preview itself failed) */
   preview?: {
     summary: string;
     affectedCount: number;
   };
   /** User's decision */
   userDecision: 'approved' | 'declined';
-  /** Execution result (only present when approved) */
+  /**
+   * Execution result when approved. On a declined entry this instead records
+   * why the flow was aborted before the user could approve (e.g.
+   * "Preview failed: ..." from the fail-closed preview gate).
+   */
   execution?: {
     success: boolean;
     error?: string;

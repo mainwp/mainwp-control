@@ -17,6 +17,8 @@ import {
   formatElapsed,
 } from '../../output/formatter.js';
 import { safeString } from '../../utils/terminal-sanitizer.js';
+import { APIError } from '../../utils/errors.js';
+import { errorOutput } from '../../output/json-envelope.js';
 import {
   type BatchManager,
   type JobStatus,
@@ -100,15 +102,19 @@ export default class JobsWatch extends BaseCommand {
 
     // Set up abort controller for graceful shutdown
     const controller = new AbortController();
-    const handleSignal = () => {
+    let signalExitCode: 130 | 143 | undefined;
+    const handleSignal = (exitCode: 130 | 143) => {
+      signalExitCode = exitCode;
       controller.abort();
-      if (!flags.json && !flags['no-progress']) {
+      if (!this.jsonOutput && !flags['no-progress']) {
         this.log('\nAborted by user.');
       }
     };
+    const handleSIGINT = () => handleSignal(130);
+    const handleSIGTERM = () => handleSignal(143);
 
-    process.on('SIGINT', handleSignal);
-    process.on('SIGTERM', handleSignal);
+    process.on('SIGINT', handleSIGINT);
+    process.on('SIGTERM', handleSIGTERM);
 
     try {
       // Watch the job
@@ -116,15 +122,48 @@ export default class JobsWatch extends BaseCommand {
         maxWait: flags.timeout * 1000,
         initialDelay: flags['initial-delay'],
         maxDelay: flags['max-delay'],
-        showProgress: !flags['no-progress'] && !flags.json,
+        showProgress: !flags['no-progress'] && !this.jsonOutput,
         signal: controller.signal,
       });
 
+      if (signalExitCode !== undefined) {
+        const error = new APIError(
+          'CANCELLED',
+          'Job watch cancelled by signal',
+          undefined,
+          { jobId: args.id }
+        );
+        if (this.jsonOutput) {
+          this.log(JSON.stringify(errorOutput(error), null, 2));
+        } else {
+          this.logToStderr(formatErrorText(error.message));
+        }
+        this.exit(signalExitCode);
+      }
+
       // Output final result
       this.outputResult(args.id, result);
+
+      if (result.timedOut) {
+        throw new APIError(
+          'BATCH_TIMEOUT',
+          `Batch job ${args.id} timed out`,
+          undefined,
+          { jobId: args.id, partialStatus: result.status }
+        );
+      }
+
+      if (result.status.status === 'failed' || result.status.status === 'partial') {
+        throw new APIError(
+          result.status.status === 'failed' ? 'BATCH_FAILED' : 'BATCH_PARTIAL',
+          `Batch job ${args.id} finished with status "${result.status.status}"`,
+          undefined,
+          { jobId: args.id, status: result.status }
+        );
+      }
     } finally {
-      process.off('SIGINT', handleSignal);
-      process.off('SIGTERM', handleSignal);
+      process.off('SIGINT', handleSIGINT);
+      process.off('SIGTERM', handleSIGTERM);
     }
   }
 

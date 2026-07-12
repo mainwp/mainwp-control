@@ -177,6 +177,48 @@ describe('batch job waiting', () => {
     expect(envelope.data.results).toBeDefined();
   });
 
+  it('jobs watch honors settings-derived JSON without progress output', async () => {
+    configDir = await ConfigDir.create({
+      profiles: [{ name: 'test', dashboardUrl: server.baseUrl, username: 'admin' }],
+      activeProfile: 'test',
+      settings: { defaultJsonOutput: true },
+    });
+    server.setJobProgression('sync_123', [
+      jobStatus({ job_id: 'sync_123', status: 'running', progress: 50 }),
+      jobStatus({ job_id: 'sync_123', status: 'completed', progress: 100 }),
+    ]);
+
+    const result = await runCLI(
+      ['jobs', 'watch', 'sync_123', '--initial-delay', '100'],
+      {
+        xdgConfigHome: configDir.xdgHome,
+        env: { MAINWP_APP_PASSWORD: 'test-pass' },
+      },
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(() => JSON.parse(result.stdout)).not.toThrow();
+    expect((JSON.parse(result.stdout) as { success: boolean }).success).toBe(true);
+  });
+
+  it('jobs watch exits 4 when the job fails', async () => {
+    const cfg = await createConfig();
+    server.setJobProgression('sync_123', [
+      jobStatus({ job_id: 'sync_123', status: 'failed', errors: [{ message: 'failed' }] }),
+    ]);
+
+    const result = await runCLI(
+      ['jobs', 'watch', 'sync_123', '--json', '--initial-delay', '100'],
+      {
+        xdgConfigHome: cfg.xdgHome,
+        env: { MAINWP_APP_PASSWORD: 'test-pass' },
+      },
+    );
+
+    expect(result.exitCode).toBe(4);
+    expect(result.stdout).toContain('BATCH_FAILED');
+  });
+
   // ---------------------------------------------------------------------------
   // 4. jobs watch sync_123 --timeout 5 → exit 0 (custom timeout, job completes)
   // ---------------------------------------------------------------------------

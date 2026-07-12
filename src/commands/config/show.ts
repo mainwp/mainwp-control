@@ -30,7 +30,7 @@ import {
 import { maskPassword, maskApiKey } from '../../utils/format.js';
 import { color, colors } from '../../utils/colors.js';
 import { formatDivider, formatSection, formatStatusIcon } from '../../output/formatter.js';
-import { stripControlChars } from '../../utils/terminal-sanitizer.js';
+import { sanitizeSingleLine, stripControlChars } from '../../utils/terminal-sanitizer.js';
 
 /**
  * Configuration display structure
@@ -331,7 +331,7 @@ export default class ConfigShowCommand extends BaseCommand {
       }
     }
     for (const warning of config.llmProvider.warnings) {
-      llmRows.push(`    ${color(warning, colors.yellow)}`);
+      llmRows.push(`    ${color(sanitizeSingleLine(warning), colors.yellow)}`);
     }
     this.log(formatSection('LLM Provider', llmRows));
 
@@ -403,10 +403,10 @@ export default class ConfigShowCommand extends BaseCommand {
     // Configuration Files Section
     this.log(
       formatSection('Configuration Files', [
-        `    Config Dir:     ${config.paths.configDir}`,
-        `    Profiles:       ${config.paths.profilesFile}`,
-        `    Settings:       ${config.paths.settingsFile}`,
-        `    Audit Log:      ${config.paths.auditLog}`,
+        `    Config Dir:     ${sanitizeSingleLine(config.paths.configDir)}`,
+        `    Profiles:       ${sanitizeSingleLine(config.paths.profilesFile)}`,
+        `    Settings:       ${sanitizeSingleLine(config.paths.settingsFile)}`,
+        `    Audit Log:      ${sanitizeSingleLine(config.paths.auditLog)}`,
       ])
     );
 

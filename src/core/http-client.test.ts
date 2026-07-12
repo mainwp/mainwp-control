@@ -430,21 +430,17 @@ describe('HttpClient Response Size Checking', () => {
     expect(response.data).toEqual({ ok: true });
   });
 
-  it('skips post-read body check when Content-Length already validated', async () => {
-    // Content-Length is 50, which is under the 100 limit.
-    // Body is also under limit. No error should occur.
+  it('rejects an oversized body when Content-Length understates its size', async () => {
     mockFetch.mockResolvedValueOnce({
       status: 200,
       ok: true,
       statusText: 'OK',
       headers: new Headers({ 'content-length': '50' }),
-      text: () => Promise.resolve('x'.repeat(50)),
+      text: () => Promise.resolve('x'.repeat(200)),
     });
 
     const client = createHttpClient(baseConfig);
-    const response = await client.get('/test');
-
-    expect(response.status).toBe(200);
+    await expect(client.get('/test')).rejects.toThrow(/Response too large/);
   });
 
   it('rejects oversized Content-Length before reading body', async () => {

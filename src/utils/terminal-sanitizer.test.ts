@@ -11,10 +11,19 @@
 import { describe, it, expect } from 'vitest';
 import {
   stripControlChars,
+  sanitizeSingleLine,
   sanitizeForTerminal,
   safeString,
   containsEscapeSequences,
 } from './terminal-sanitizer.js';
+
+describe('sanitizeSingleLine', () => {
+  it('strips terminal escapes and collapses CR, LF, and tabs to one space', () => {
+    const unsafe = '\x1b[31mprovider\x1b[0m\r\n\tinjected';
+
+    expect(sanitizeSingleLine(unsafe)).toBe('provider injected');
+  });
+});
 
 describe('stripControlChars', () => {
   describe('ANSI CSI sequences', () => {

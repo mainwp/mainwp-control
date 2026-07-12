@@ -74,7 +74,8 @@ async function checkDashboard(
 // Set for the connectivity check (self-signed cert)
 process.env['NODE_TLS_REJECT_UNAUTHORIZED'] = '0';
 
-const dashboardOnline = await checkDashboard(DASH_URL, DASH_USER, DASH_PASS);
+const dashboardOnline = Boolean(process.env['MAINWP_LIVE_TEST'])
+  && await checkDashboard(DASH_URL, DASH_USER, DASH_PASS);
 
 // ---------------------------------------------------------------------------
 // Helpers — typed access to CLI JSON output

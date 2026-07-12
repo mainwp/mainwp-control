@@ -75,7 +75,8 @@ async function checkDashboard(): Promise<boolean> {
   }
 }
 
-const dashboardOnline = await checkDashboard();
+const dashboardOnline = Boolean(process.env['MAINWP_LIVE_TEST'])
+  && await checkDashboard();
 
 // ---------------------------------------------------------------------------
 // Helpers

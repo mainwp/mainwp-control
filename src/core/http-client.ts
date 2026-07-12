@@ -216,8 +216,8 @@ export class HttpClient {
       // Parse response
       const text = await response.text();
 
-      // Post-read body length check (only when Content-Length was absent or unparseable)
-      if (isNaN(parsedContentLength) && text.length > this.maxResponseSize) {
+      // Always verify the buffered body because Content-Length may be inaccurate.
+      if (text.length > this.maxResponseSize) {
         throw new NetworkError(
           `Response too large: ${text.length} bytes`,
           undefined,
