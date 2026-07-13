@@ -45,6 +45,8 @@ import { logDestructiveActionSafe } from '../utils/audit-logger.js';
 import { getInputSanitizer } from '../validation/input-sanitizer.js';
 import { getSchemaValidator } from '../validation/schema-validator.js';
 import { SchemaValidationError } from '../utils/errors.js';
+import { stripControlChars } from '../utils/terminal-sanitizer.js';
+import { executeAbilityWithPolicy } from '../core/execute-ability-with-policy.js';
 
 /**
  * Chat response types
@@ -308,8 +310,9 @@ export class ChatEngine {
     }
 
     // User approved - execute with confirm
-    const result = await this.executor.execute(
-      preview.ability.name,
+    const result = await executeAbilityWithPolicy(
+      this.executor,
+      preview.ability,
       preview.input,
       { confirm: true }
     );
@@ -591,7 +594,7 @@ export class ChatEngine {
 
     // Safe to execute directly
     try {
-      const result = await this.executor.execute(ability.name, input);
+      const result = await executeAbilityWithPolicy(this.executor, ability, input);
       return {
         type: 'tool_result',
         tool: ability.name,
@@ -616,8 +619,9 @@ export class ChatEngine {
   ): Promise<ChatResponse> {
     try {
       // Execute with dry_run
-      const previewResult = await this.executor.execute(
-        ability.name,
+      const previewResult = await executeAbilityWithPolicy(
+        this.executor,
+        ability,
         input,
         { dryRun: true }
       );
@@ -700,7 +704,9 @@ export class ChatEngine {
       // If streaming fails mid-response, return what we have so far
       if (content || toolCalls.length > 0) {
         console.error(
-          `[ChatEngine] Stream interrupted: ${error instanceof Error ? error.message : String(error)}`
+          `[ChatEngine] Stream interrupted: ${stripControlChars(
+            error instanceof Error ? error.message : String(error)
+          )}`
         );
         return {
           content,
@@ -736,13 +742,6 @@ export class ChatEngine {
    */
   getPendingPreview(): PreviewResult | null {
     return this.pendingPreview?.preview ?? null;
-  }
-
-  /**
-   * Cancel pending preview
-   */
-  cancelPendingPreview(): void {
-    this.pendingPreview = null;
   }
 
   /**

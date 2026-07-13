@@ -16,6 +16,11 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { ChatEngine, createChatEngine, type ChatResponse } from './chat-engine.js';
 import type { LLMProvider, LLMResponse, Message, ToolDefinition, ChatOptions } from './providers/provider.js';
 import type { Ability, ExecutionResult, ExecutionOptions } from '../core/abilities-executor.js';
+import { logDestructiveActionSafe } from '../utils/audit-logger.js';
+
+vi.mock('../utils/audit-logger.js', () => ({
+  logDestructiveActionSafe: vi.fn().mockResolvedValue(undefined),
+}));
 
 // ============================================================================
 // Test Fixtures
@@ -1611,21 +1616,54 @@ describe('ChatEngine', () => {
       expect(engine.hasPendingPreview()).toBe(false);
     });
 
-    it('hasPendingPreview returns false after cancelPendingPreview', async () => {
+    it.each(['no', 'cancel'])('records a complete decline for "%s"', async (reply) => {
       const mockProvider = createMockProvider([
-        createToolCallResponse('delete-site-v1', { site_id: 1 }),
+        createNativeToolCallResponse('delete-site-v1', { site_id: 1 }, 'call_decline'),
       ]);
 
-      const { engine } = createTestEngine({
+      const { engine, mockExecutor } = createTestEngine({
         provider: mockProvider,
         abilities: [DESTRUCTIVE_ABILITY],
         executeHandler: () => createPreviewResult([{ id: 1 }]),
       });
 
       await engine.sendMessage('Delete site');
-      engine.cancelPendingPreview();
+      mockExecutor.execute.mockClear();
+      await engine.sendMessage(reply);
 
       expect(engine.hasPendingPreview()).toBe(false);
+      expect(mockExecutor.execute).not.toHaveBeenCalled();
+      expect(logDestructiveActionSafe).toHaveBeenCalledWith(
+        expect.objectContaining({
+          abilityName: 'delete-site-v1',
+          userDecision: 'declined',
+        })
+      );
+
+      const history = engine.getHistory();
+      const declineResult = history.find(
+        (message) => message.role === 'tool' && message.toolCallId === 'call_decline'
+      );
+      expect(declineResult).toMatchObject({
+        role: 'tool',
+        toolCallId: 'call_decline',
+        toolName: 'delete-site-v1',
+      });
+      expect(JSON.parse(declineResult!.content)).toMatchObject({
+        success: false,
+        error: { code: 'USER_DECLINED' },
+      });
+
+      const unansweredToolCalls = history
+        .filter((message) => message.role === 'assistant')
+        .flatMap((message) => message.toolCalls ?? [])
+        .filter(
+          (toolCall) =>
+            !history.some(
+              (message) => message.role === 'tool' && message.toolCallId === toolCall.id
+            )
+        );
+      expect(unansweredToolCalls).toEqual([]);
     });
 
     it('getPendingPreview returns null initially', async () => {
@@ -1655,26 +1693,6 @@ describe('ChatEngine', () => {
       expect(preview!.affected).toHaveLength(1);
       expect(preview!.requiresApproval).toBe(true);
       expect(preview!.summary).toBeDefined();
-    });
-
-    it('cancelPendingPreview clears state', async () => {
-      const mockProvider = createMockProvider([
-        createToolCallResponse('delete-site-v1', { site_id: 1 }),
-        createAnswerResponse('OK, cancelled'),
-      ]);
-
-      const { engine } = createTestEngine({
-        provider: mockProvider,
-        abilities: [DESTRUCTIVE_ABILITY],
-        executeHandler: () => createPreviewResult([{ id: 1 }]),
-      });
-
-      await engine.sendMessage('Delete site');
-      expect(engine.hasPendingPreview()).toBe(true);
-
-      engine.cancelPendingPreview();
-      expect(engine.hasPendingPreview()).toBe(false);
-      expect(engine.getPendingPreview()).toBeNull();
     });
 
     it('clearHistory also clears pending preview', async () => {
@@ -2796,7 +2814,7 @@ describe('ChatEngine', () => {
               arguments: { truncated: true },
             },
           };
-          throw new Error('Stream interrupted');
+          throw new Error('\x1b]0;Injected\x07Stream interrupted');
         }),
         isConfigured: () => true,
         getModels: () => ['test-model'],
@@ -2814,6 +2832,7 @@ describe('ChatEngine', () => {
 
       await engine.initialize();
 
+      const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
       const responses = await engine.sendMessage('list sites');
 
       // Should return an error response, not execute the partial tool call
@@ -2825,6 +2844,7 @@ describe('ChatEngine', () => {
 
       // Executor should NOT have been called with partial tool call
       expect(mockExecutor.execute).not.toHaveBeenCalled();
+      expect(consoleError).toHaveBeenCalledWith(expect.not.stringContaining('\x1b'));
     });
   });
 });

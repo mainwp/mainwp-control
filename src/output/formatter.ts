@@ -9,6 +9,7 @@ import {
   sanitizeSingleLine,
   safeString,
 } from '../utils/terminal-sanitizer.js';
+import { sanitizeErrorMessage, sanitizeErrorValue } from '../utils/error-sanitizer.js';
 import { colors, color } from '../utils/colors.js';
 
 /**
@@ -22,17 +23,22 @@ export function formatSuccess(message: string): string {
  * Format an error message
  */
 export function formatError(error: Error | string): string {
-  const message = error instanceof Error ? stripControlChars(error.message) : stripControlChars(error);
+  const message = sanitizeErrorMessage(
+    error instanceof Error ? stripControlChars(error.message) : stripControlChars(error)
+  );
   let output = color('✗ Error: ', colors.red, colors.bold) + message;
 
   if (isMainWPCTLError(error)) {
     if (error.details) {
       // Sanitize error details before display (untrusted API data)
-      const sanitizedDetails = sanitizeForTerminal(error.details);
+      const sanitizedDetails = sanitizeErrorValue(sanitizeForTerminal(error.details));
       output += '\n' + color('  Details: ', colors.dim) + JSON.stringify(sanitizedDetails);
     }
     if (error.hint) {
-      output += '\n' + color('💡 ' + stripControlChars(error.hint), colors.dim);
+      output += '\n' + color(
+        '💡 ' + sanitizeErrorMessage(stripControlChars(error.hint)),
+        colors.dim
+      );
     }
   }
 

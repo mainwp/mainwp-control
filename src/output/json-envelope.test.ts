@@ -132,6 +132,30 @@ describe('Golden Test: JSON Output Parses Cleanly', () => {
 });
 
 describe('Golden Test: Error Code Propagation', () => {
+  it.each([
+    ['Bearer token', 'Request failed with Bearer abc123secret', 'abc123secret', 'Bearer [REDACTED]'],
+    ['credential URL', 'Request failed at https://user:pass@host/x', 'user:pass', '[URL_WITH_CREDENTIALS]'],
+  ])('redacts %s credentials from Error messages', (_label, message, secret, marker) => {
+    const output = errorOutput(new Error(message));
+
+    expect(output.error?.message).not.toContain(secret);
+    expect(output.error?.message).toContain(marker);
+  });
+
+  it('redacts credentials from error details and hints', () => {
+    const output = errorOutput(
+      new InputError(
+        'Request failed with Bearer message-secret',
+        { endpoint: 'https://detail-user:detail-pass@host/x' },
+        'Retry with Bearer hint-secret'
+      )
+    );
+
+    expect(JSON.stringify(output.error)).not.toContain('message-secret');
+    expect(JSON.stringify(output.error)).not.toContain('detail-user:detail-pass');
+    expect(JSON.stringify(output.error)).not.toContain('hint-secret');
+  });
+
   it('propagates MainWPCTLError codes correctly', () => {
     const inputError = new InputError('Bad input');
     const networkError = new NetworkError('Connection failed');

@@ -26,6 +26,8 @@ import { promptForConfirmation, isInteractive } from '../../utils/prompt.js';
 import { logDestructiveActionSafe } from '../../utils/audit-logger.js';
 import type { WatchResult } from '../../core/batch-manager.js';
 import { APIError } from '../../utils/errors.js';
+import type { Ability } from '../../core/abilities-executor.js';
+import { executeAbilityWithPolicy } from '../../core/execute-ability-with-policy.js';
 
 export default class AbilitiesRun extends BaseCommand {
   static description = 'Execute an ability';
@@ -169,11 +171,11 @@ export default class AbilitiesRun extends BaseCommand {
 
     if (dryRun || !shouldExecute) {
       // Preview mode — --dry-run always previews, regardless of ability classification
-      await this.executePreview(ability.name, input, dryRun);
+      await this.executePreview(ability, input);
     } else if (confirm && safetyController.requiresSafetyFlow(ability)) {
       // Destructive execution with confirmation
       await this.executeDestructive({
-        abilityName: ability.name,
+        ability,
         input,
         force: flags.force,
         wait: flags.wait,
@@ -182,7 +184,7 @@ export default class AbilitiesRun extends BaseCommand {
     } else {
       // Direct execution (read-only or non-destructive)
       await this.executeDirect({
-        abilityName: ability.name,
+        ability,
         input,
         wait: flags.wait,
         waitTimeout: flags['wait-timeout'],
@@ -194,21 +196,20 @@ export default class AbilitiesRun extends BaseCommand {
    * Execute preview (dry_run mode)
    */
   private async executePreview(
-    abilityName: string,
-    input: Record<string, unknown>,
-    _dryRun?: boolean
+    ability: Ability,
+    input: Record<string, unknown>
   ): Promise<void> {
     const executor = await this.getExecutor();
+    const abilityName = ability.name;
 
-    const result = await executor.execute(abilityName, input, { dryRun: true });
+    const result = await executeAbilityWithPolicy(executor, ability, input, { dryRun: true });
 
     if (!result.success) {
       throw new InputError(result.error?.message ?? 'Preview failed', result.error);
     }
 
     const safetyController = getSafetyController();
-    const ability = await executor.getAbility(abilityName);
-    const preview = safetyController.formatPreviewResult(ability!, input, result);
+    const preview = safetyController.formatPreviewResult(ability, input, result);
 
     this.output(
       {
@@ -225,13 +226,14 @@ export default class AbilitiesRun extends BaseCommand {
    * Execute destructive ability with confirmation
    */
   private async executeDestructive(opts: {
-    abilityName: string;
+    ability: Ability;
     input: Record<string, unknown>;
     force: boolean;
     wait?: boolean;
     waitTimeout?: number;
   }): Promise<void> {
-    const { abilityName, input, force, wait, waitTimeout } = opts;
+    const { ability, input, force, wait, waitTimeout } = opts;
+    const abilityName = ability.name;
     const executor = await this.getExecutor();
     const safetyController = getSafetyController();
 
@@ -241,9 +243,13 @@ export default class AbilitiesRun extends BaseCommand {
     let preview: PreviewResult | undefined;
     let previewFailure: unknown;
     try {
-      const ability = await executor.getAbility(abilityName);
-      const previewResult = await executor.execute(abilityName, input, { dryRun: true });
-      if (previewResult.success && ability) {
+      const previewResult = await executeAbilityWithPolicy(
+        executor,
+        ability,
+        input,
+        { dryRun: true }
+      );
+      if (previewResult.success) {
         preview = safetyController.formatPreviewResult(ability, input, previewResult);
       } else {
         previewFailure = previewResult.error ?? new Error('dry_run returned no result');
@@ -321,7 +327,12 @@ export default class AbilitiesRun extends BaseCommand {
     }
 
     // Execute with confirm
-    const result = await executor.execute(abilityName, input, { confirm: true });
+    const result = await executeAbilityWithPolicy(
+      executor,
+      ability,
+      input,
+      { confirm: true }
+    );
 
     // Build execution result for audit
     const executionResult: { success: boolean; error?: string } = {
@@ -385,14 +396,15 @@ export default class AbilitiesRun extends BaseCommand {
    * Execute directly (read-only or non-destructive)
    */
   private async executeDirect(opts: {
-    abilityName: string;
+    ability: Ability;
     input: Record<string, unknown>;
     wait?: boolean;
     waitTimeout?: number;
   }): Promise<void> {
-    const { abilityName, input, wait, waitTimeout } = opts;
+    const { ability, input, wait, waitTimeout } = opts;
+    const abilityName = ability.name;
     const executor = await this.getExecutor();
-    const result = await executor.execute(abilityName, input);
+    const result = await executeAbilityWithPolicy(executor, ability, input);
 
     if (!result.success) {
       throw new APIError(

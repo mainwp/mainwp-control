@@ -6,6 +6,7 @@
 
 import { isMainWPCTLError, type MainWPCTLError } from '../utils/errors.js';
 import { sanitizeForTerminal, stripControlChars } from '../utils/terminal-sanitizer.js';
+import { sanitizeErrorMessage, sanitizeErrorValue } from '../utils/error-sanitizer.js';
 
 /**
  * Stable CLI output envelope
@@ -64,21 +65,23 @@ export function errorOutput(
   if (isMainWPCTLError(error)) {
     errorBody = {
       code: error.code,
-      message: stripControlChars(error.message),
-      details: error.details ? sanitizeForTerminal(error.details) : undefined,
+      message: sanitizeErrorMessage(stripControlChars(error.message)),
+      details: error.details
+        ? sanitizeErrorValue(sanitizeForTerminal(error.details))
+        : undefined,
     };
     if (error.hint) {
-      errorBody.hint = stripControlChars(error.hint);
+      errorBody.hint = sanitizeErrorMessage(stripControlChars(error.hint));
     }
   } else if (error instanceof Error) {
     errorBody = {
       code: 'INTERNAL_ERROR',
-      message: stripControlChars(error.message),
+      message: sanitizeErrorMessage(stripControlChars(error.message)),
     };
   } else {
     errorBody = {
       code: 'INTERNAL_ERROR',
-      message: stripControlChars(String(error)),
+      message: sanitizeErrorMessage(stripControlChars(String(error))),
     };
   }
 

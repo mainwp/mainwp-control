@@ -8,6 +8,7 @@
 
 import { InputError } from '../utils/errors.js';
 import { isSensitiveKey as isSensitiveKeyShared, redactSensitiveKeys } from '../utils/redaction.js';
+import { sanitizeErrorMessage as sanitizeErrorMessageShared } from '../utils/error-sanitizer.js';
 
 /**
  * Default limits for input sanitization
@@ -35,18 +36,6 @@ export interface SanitizeOptions {
   maxObjectKeys?: number;
   maxInputSize?: number;
 }
-
-/**
- * Patterns for redacting file paths
- */
-const PATH_PATTERNS = [
-  // Absolute paths
-  /\/Users\/[^/\s]+/g,
-  /\/home\/[^/\s]+/g,
-  /C:\\Users\\[^\\]+/gi,
-  // Config directories
-  /\.config\/mainwpcontrol/g,
-];
 
 /**
  * Input Sanitizer class
@@ -177,32 +166,7 @@ export class InputSanitizer {
    * Sanitize error message to remove sensitive paths and data
    */
   sanitizeErrorMessage(message: string): string {
-    let sanitized = message;
-
-    // Redact file paths
-    for (const pattern of PATH_PATTERNS) {
-      sanitized = sanitized.replace(pattern, '[PATH]');
-    }
-
-    // Redact URLs with credentials
-    sanitized = sanitized.replace(
-      /https?:\/\/[^:]+:[^@]+@[^\s]+/g,
-      '[URL_WITH_CREDENTIALS]'
-    );
-
-    // Redact base64 that might be auth headers
-    sanitized = sanitized.replace(
-      /Basic\s+[A-Za-z0-9+/]+=*/gi,
-      'Basic [REDACTED]'
-    );
-
-    // Redact bearer tokens
-    sanitized = sanitized.replace(
-      /Bearer\s+[A-Za-z0-9._-]+/gi,
-      'Bearer [REDACTED]'
-    );
-
-    return sanitized;
+    return sanitizeErrorMessageShared(message);
   }
 
   /**
@@ -239,4 +203,3 @@ export function getInputSanitizer(): InputSanitizer {
   }
   return instance;
 }
-

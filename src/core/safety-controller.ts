@@ -89,6 +89,8 @@ const DESTRUCTIVE_NAME_PATTERNS = [
   /^(?:mainwp\/)?remove-/,
   /^(?:mainwp\/)?run-updates-/,
   /^(?:mainwp\/)?update-all-/,
+  /^(?:mainwp\/)?update-site-/,
+  /^(?:mainwp\/)?activate-/,
   /^(?:mainwp\/)?reset-/,
   /^(?:mainwp\/)?restore-/,
   /^(?:mainwp\/)?rollback-/,
@@ -371,4 +373,3 @@ export function getSafetyController(): SafetyController {
   }
   return instance;
 }
-

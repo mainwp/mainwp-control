@@ -4,6 +4,7 @@
 
 import { describe, it, expect } from 'vitest';
 import {
+  formatError,
   formatWarning,
   formatKeyValue,
   formatTable,
@@ -15,6 +16,33 @@ import {
   getStatusColor,
 } from './formatter.js';
 import { colors } from '../utils/colors.js';
+import { InputError } from '../utils/errors.js';
+
+describe('formatError credential redaction', () => {
+  it.each([
+    ['Bearer token', 'Request failed with Bearer abc123secret', 'abc123secret', 'Bearer [REDACTED]'],
+    ['credential URL', 'Request failed at https://user:pass@host/x', 'user:pass', '[URL_WITH_CREDENTIALS]'],
+  ])('redacts %s credentials from Error messages', (_label, message, secret, marker) => {
+    const output = formatError(new Error(message));
+
+    expect(output).not.toContain(secret);
+    expect(output).toContain(marker);
+  });
+
+  it('redacts credentials from error details and hints', () => {
+    const output = formatError(
+      new InputError(
+        'Request failed with Bearer message-secret',
+        { endpoint: 'https://detail-user:detail-pass@host/x' },
+        'Retry with Bearer hint-secret'
+      )
+    );
+
+    expect(output).not.toContain('message-secret');
+    expect(output).not.toContain('detail-user:detail-pass');
+    expect(output).not.toContain('hint-secret');
+  });
+});
 
 describe('M5: formatWarning sanitization', () => {
   it('strips escape sequences from warning messages', () => {

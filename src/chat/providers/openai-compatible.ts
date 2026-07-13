@@ -16,6 +16,7 @@ import {
   type ToolCall,
 } from './provider.js';
 import { readSSEStream } from './sse-reader.js';
+import { sanitizeProviderErrorBody } from './provider-fetch.js';
 
 /**
  * OpenAI-compatible API message format
@@ -426,7 +427,9 @@ export abstract class OpenAICompatibleProvider implements LLMProvider {
 
       if (!response.ok) {
         const error = await response.text();
-        throw new Error(`${this.name} API error: ${response.status} ${error}`);
+        throw new Error(
+          `${this.name} API error: ${response.status} ${sanitizeProviderErrorBody(error)}`
+        );
       }
 
       return (await response.json()) as T;

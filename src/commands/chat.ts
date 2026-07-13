@@ -381,17 +381,6 @@ export default class ChatCommand extends BaseCommand {
           return;
         }
 
-        // Cancel pending preview
-        if (
-          pendingPreview &&
-          (trimmed.toLowerCase() === 'cancel' || trimmed.toLowerCase() === 'no')
-        ) {
-          this.chatEngine!.cancelPendingPreview();
-          this.log('Operation cancelled.');
-          prompt();
-          return;
-        }
-
         try {
           const responses = await this.chatEngine!.sendMessage(trimmed);
 

@@ -407,6 +407,34 @@ describe('M6: Known-destructive pattern defense-in-depth', () => {
     expect(classification.requiresSafetyFlow).toBe(true);
   });
 
+  it.each(['update-site-plugins-v1', 'activate-site-theme-v1'])(
+    'forces destructive classification for %s when annotations under-report it',
+    (name) => {
+      const ability = createTestAbility(name, {
+        destructive: false,
+        readonly: false,
+      });
+
+      const classification = controller.classify(ability);
+      expect(classification.isDestructive).toBe(true);
+      expect(classification.requiresSafetyFlow).toBe(true);
+    }
+  );
+
+  it.each(['get-site-v1', 'sync-sites-v1'])(
+    'keeps %s non-destructive',
+    (name) => {
+      const ability = createTestAbility(name, {
+        destructive: false,
+        readonly: false,
+      });
+
+      const classification = controller.classify(ability);
+      expect(classification.isDestructive).toBe(false);
+      expect(classification.requiresSafetyFlow).toBe(false);
+    }
+  );
+
   it('does not force destructive for non-matching ability names', () => {
     const ability = createTestAbility('list-sites-v1', {
       destructive: false,
@@ -491,7 +519,7 @@ describe('M6: Known-destructive pattern defense-in-depth', () => {
   });
 
   it('does not force destructive for generic update-* patterns', () => {
-    const ability = createTestAbility('update-site-settings-v1', {
+    const ability = createTestAbility('update-dashboard-settings-v1', {
       destructive: false,
       readonly: true,
     });

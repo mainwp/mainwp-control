@@ -7,6 +7,11 @@
 
 import { stripControlChars } from '../../utils/terminal-sanitizer.js';
 
+export function sanitizeProviderErrorBody(errorText: string): string {
+  const sanitized = stripControlChars(errorText);
+  return sanitized.length > 500 ? sanitized.slice(0, 500) + '...' : sanitized;
+}
+
 export async function makeProviderRequest<T>(options: {
   url: string;
   headers: Record<string, string>;
@@ -34,9 +39,8 @@ export async function makeProviderRequest<T>(options: {
       const errorText = await response.text();
       // SECURITY: Strip control characters and truncate to prevent exfiltration
       // of large payloads from untrusted API error bodies
-      const sanitized = stripControlChars(errorText);
-      const truncated = sanitized.length > 500 ? sanitized.slice(0, 500) + '...' : sanitized;
-      throw new Error(`${options.providerName} API error: ${response.status} ${truncated}`);
+      const sanitized = sanitizeProviderErrorBody(errorText);
+      throw new Error(`${options.providerName} API error: ${response.status} ${sanitized}`);
     }
 
     return (await response.json()) as T;

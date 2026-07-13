@@ -896,7 +896,7 @@ describe('E2E: Chat → Destructive Action Flow', () => {
       expect(engine.hasPendingPreview()).toBe(false);
     });
 
-    it('handles cancelPendingPreview programmatically', async () => {
+    it('pairs the pending tool call with a USER_DECLINED result', async () => {
       const mockProvider = createMockProvider([
         createMockLLMToolCallResponse('delete-site-v1', { site_id: 123 }),
       ]);
@@ -910,10 +910,26 @@ describe('E2E: Chat → Destructive Action Flow', () => {
       await engine.sendMessage('Delete site');
       expect(engine.hasPendingPreview()).toBe(true);
 
-      engine.cancelPendingPreview();
+      const pendingToolCallId = engine
+        .getHistory()
+        .find((message) => message.role === 'assistant' && message.toolCalls?.length)
+        ?.toolCalls?.[0]?.id;
+      expect(pendingToolCallId).toBeDefined();
+
+      await engine.sendMessage('cancel');
 
       expect(engine.hasPendingPreview()).toBe(false);
       expect(engine.getPendingPreview()).toBeNull();
+      const declineResult = engine
+        .getHistory()
+        .find(
+          (message) => message.role === 'tool' && message.toolCallId === pendingToolCallId
+        );
+      expect(declineResult).toBeDefined();
+      expect(JSON.parse(declineResult!.content)).toMatchObject({
+        success: false,
+        error: { code: 'USER_DECLINED' },
+      });
     });
 
     it('mixed readonly and destructive in sequence', async () => {

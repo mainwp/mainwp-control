@@ -365,17 +365,17 @@ describe('E2E: Non-TTY Behavior', () => {
 
     it('emits final tool result (not intermediate) for multi-tool-call --json', async () => {
       const listSitesAbility = createMockAbility('list-sites-v1', { readonly: true });
-      const updatePluginsAbility = createMockAbility('update-site-plugins-v1', { readonly: false });
+      const syncSitesAbility = createMockAbility('sync-sites-v1', { readonly: false });
 
-      // LLM does two tool calls: list-sites (intermediate) then update-plugins (final), then answers
+      // LLM does two non-destructive tool calls: list-sites (intermediate) then sync-sites (final)
       mockProviderChat
         .mockResolvedValueOnce(createMockLLMToolCallResponse('list-sites-v1', {}))
-        .mockResolvedValueOnce(createMockLLMToolCallResponse('update-site-plugins-v1', { site_id: 1 }))
-        .mockResolvedValueOnce(createMockLLMAnswerResponse('Plugins updated'));
-      mockExecutorListAbilities.mockResolvedValue([listSitesAbility, updatePluginsAbility]);
+        .mockResolvedValueOnce(createMockLLMToolCallResponse('sync-sites-v1', {}))
+        .mockResolvedValueOnce(createMockLLMAnswerResponse('Sites synced'));
+      mockExecutorListAbilities.mockResolvedValue([listSitesAbility, syncSitesAbility]);
       mockExecutorGetAbility
         .mockResolvedValueOnce(listSitesAbility)
-        .mockResolvedValueOnce(updatePluginsAbility);
+        .mockResolvedValueOnce(syncSitesAbility);
       mockExecutorExecute
         .mockResolvedValueOnce({
           success: true,
@@ -383,7 +383,7 @@ describe('E2E: Non-TTY Behavior', () => {
         })
         .mockResolvedValueOnce({
           success: true,
-          data: { updated: ['akismet/akismet.php'], site_id: 1 },
+          data: { synced: [1] },
         });
 
       const { command, output } = createCommandInstance(ChatCommand);
@@ -400,7 +400,7 @@ describe('E2E: Non-TTY Behavior', () => {
           'max-context-messages': undefined,
           stream: false,
         },
-        args: { message: 'update plugins on site 1' },
+        args: { message: 'sync all sites' },
       }) as never;
 
       try { await command.run(); } catch { /* exit */ }
@@ -410,8 +410,8 @@ describe('E2E: Non-TTY Behavior', () => {
       // Contract: exactly one JSON object, selecting the final tool result
       expect(output.stdout).toHaveLength(1);
       expect(parsed.type).toBe('tool_result');
-      expect(parsed.tool).toBe('mainwp/update-site-plugins-v1');
-      expect(parsed.result.data.updated).toContain('akismet/akismet.php');
+      expect(parsed.tool).toBe('mainwp/sync-sites-v1');
+      expect(parsed.result.data.synced).toContain(1);
       expect(mockExecutorExecute).toHaveBeenCalledTimes(2);
       expect(mockCreateInterface).not.toHaveBeenCalled();
     });
