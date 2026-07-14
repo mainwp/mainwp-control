@@ -61,9 +61,53 @@ const JSON_PATTERNS = [
   /```json\s*\n?([\s\S]*?)\n?```/,
   // Code block without language
   /```\s*\n?([\s\S]*?)\n?```/,
-  // Raw JSON object
-  /(\{[\s\S]*\})/,
 ];
+
+function extractFirstJsonObject(text: string): string | null {
+  for (let start = 0; start < text.length; start++) {
+    if (text[start] !== '{') {
+      continue;
+    }
+
+    let depth = 0;
+    let inString = false;
+    let escaped = false;
+
+    for (let index = start; index < text.length; index++) {
+      const character = text[index];
+
+      if (inString) {
+        if (escaped) {
+          escaped = false;
+        } else if (character === '\\') {
+          escaped = true;
+        } else if (character === '"') {
+          inString = false;
+        }
+        continue;
+      }
+
+      if (character === '"') {
+        inString = true;
+      } else if (character === '{') {
+        depth++;
+      } else if (character === '}') {
+        depth--;
+        if (depth === 0) {
+          const candidate = text.slice(start, index + 1);
+          try {
+            JSON.parse(candidate);
+            return candidate;
+          } catch {
+            break;
+          }
+        }
+      }
+    }
+  }
+
+  return null;
+}
 
 /**
  * Parse LLM response to extract tool call or answer
@@ -172,10 +216,31 @@ function parseContentJson(
     }
   }
 
-  // If no pattern matched, try the whole content
+  // If no fence matched, find the first balanced, parseable JSON object.
   if (!jsonStr) {
-    jsonStr = trimmed;
     attempts++;
+    jsonStr = extractFirstJsonObject(trimmed);
+  }
+
+  // Preserve whole-response JSON parsing for non-object JSON values.
+  if (!jsonStr) {
+    try {
+      JSON.parse(trimmed);
+      jsonStr = trimmed;
+      attempts++;
+    } catch {
+      if (!trimmed.includes('{')) {
+        return {
+          response: { type: 'answer', answer: trimmed },
+          rawContent: content,
+          nativeFunctionCall: false,
+          attempts,
+        };
+      }
+
+      jsonStr = trimmed;
+      attempts++;
+    }
   }
 
   // Parse JSON
