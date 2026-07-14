@@ -20,7 +20,12 @@ import {
   resolveProviderSelection,
 } from '../chat/providers/provider.js';
 import { ExitCode } from '../utils/exit-codes.js';
-import { maskPassword, maskApiKey } from '../utils/format.js';
+import {
+  maskPassword,
+  maskApiKey,
+  maskUrlUserinfo,
+  maskUrlUserinfoInText,
+} from '../utils/format.js';
 import { color, colors } from '../utils/colors.js';
 import { formatDivider, formatStatusIcon, getStatusColor } from '../output/formatter.js';
 import { stripControlChars } from '../utils/terminal-sanitizer.js';
@@ -206,7 +211,8 @@ export default class DoctorCommand extends BaseCommand {
         name: 'Active Profile',
         status: 'pass',
         message: `Active: ${activeProfile.name}`,
-        details: activeProfile.dashboardUrl,
+        // Mask userinfo from profiles stored before intake rejection existed
+        details: maskUrlUserinfo(activeProfile.dashboardUrl),
       };
     } catch (error) {
       return {
@@ -297,7 +303,8 @@ export default class DoctorCommand extends BaseCommand {
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
 
-      let details = message;
+      // Fetch errors can echo the full request URL, credentials included
+      let details = maskUrlUserinfoInText(message);
       if (message.includes('ECONNREFUSED')) {
         details = 'Connection refused. Is the Dashboard running?';
       } else if (message.includes('ENOTFOUND')) {

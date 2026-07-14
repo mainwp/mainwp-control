@@ -3,7 +3,14 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { maskSecret, maskPassword, maskApiKey, type MaskOptions } from './format.js';
+import {
+  maskSecret,
+  maskPassword,
+  maskApiKey,
+  maskUrlUserinfo,
+  maskUrlUserinfoInText,
+  type MaskOptions,
+} from './format.js';
 
 describe('maskSecret', () => {
   describe('with default options', () => {
@@ -111,5 +118,46 @@ describe('maskApiKey', () => {
 
   it('masks Anthropic style API key', () => {
     expect(maskApiKey('sk-ant-api03-xxxxxxxxxxxxxx')).toBe('sk-ant...xxxx');
+  });
+});
+
+describe('maskUrlUserinfo', () => {
+  it('masks embedded username and password', () => {
+    expect(maskUrlUserinfo('https://admin:secret@dashboard.example.com/path')).toBe(
+      'https://***:***@dashboard.example.com/path'
+    );
+  });
+
+  it('masks a username when no password is present', () => {
+    expect(maskUrlUserinfo('https://admin@dashboard.example.com')).toBe(
+      'https://***:***@dashboard.example.com'
+    );
+  });
+
+  it('returns URLs without userinfo unchanged', () => {
+    const url = 'https://dashboard.example.com/path?site=1';
+    expect(maskUrlUserinfo(url)).toBe(url);
+  });
+
+  it('returns invalid URL input unchanged', () => {
+    const url = 'not a valid URL';
+    expect(maskUrlUserinfo(url)).toBe(url);
+  });
+});
+
+describe('maskUrlUserinfoInText', () => {
+  it('masks credentialed URLs embedded in error messages', () => {
+    expect(
+      maskUrlUserinfoInText(
+        'Request cannot be constructed from a URL that includes credentials: https://legacy:secret@dashboard.example.com/wp-json/route?page=1'
+      )
+    ).toBe(
+      'Request cannot be constructed from a URL that includes credentials: https://***:***@dashboard.example.com/wp-json/route?page=1'
+    );
+  });
+
+  it('leaves text without credentialed URLs unchanged', () => {
+    const text = 'Connection refused for https://dashboard.example.com (mail admin@example.com)';
+    expect(maskUrlUserinfoInText(text)).toBe(text);
   });
 });

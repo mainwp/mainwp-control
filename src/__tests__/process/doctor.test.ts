@@ -398,4 +398,39 @@ describe('doctor command', () => {
       ])
     );
   });
+
+  it('masks userinfo from a legacy profile in JSON mode', async () => {
+    configDir = await ConfigDir.create({
+      profiles: [
+        {
+          name: 'legacy',
+          dashboardUrl: 'https://legacy:secret@dashboard.example.com',
+          username: 'admin',
+        },
+      ],
+      activeProfile: 'legacy',
+    });
+
+    const result = await runCLI(['doctor', '--json'], {
+      xdgConfigHome: configDir.xdgHome,
+      env: {
+        MAINWP_APP_PASSWORD: 'test-pass',
+        ANTHROPIC_API_KEY: '',
+        OPENAI_API_KEY: '',
+        GOOGLE_API_KEY: '',
+        OPENROUTER_API_KEY: '',
+        LOCAL_LLM_URL: '',
+        MAINWP_LLM_PROVIDER: '',
+      },
+    });
+
+    const envelope = result.json as {
+      data: { checks: Array<{ name: string; details?: string }> };
+    };
+    const activeProfile = envelope.data.checks.find(
+      (check) => check.name === 'Active Profile'
+    );
+    expect(activeProfile?.details).toBe('https://***:***@dashboard.example.com');
+    expect(result.stdout).not.toContain('legacy:secret');
+  });
 });

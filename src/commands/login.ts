@@ -13,6 +13,7 @@ import { formatSuccess, formatWarning, formatInfo } from '../output/formatter.js
 import { AuthError, InputError } from '../utils/errors.js';
 import { promptForInput, promptForPassword, isInteractive } from '../utils/prompt.js';
 import { sanitizeSingleLine } from '../utils/terminal-sanitizer.js';
+import { maskUrlUserinfo } from '../utils/format.js';
 
 export default class Login extends BaseCommand {
   static description = 'Authenticate with a MainWP Dashboard';
@@ -176,7 +177,8 @@ export default class Login extends BaseCommand {
     this.output(
       {
         profile: profileName,
-        url: normalizedUrl,
+        // Defense in depth: intake rejection should make masking a no-op here
+        url: maskUrlUserinfo(normalizedUrl),
         username,
         credentialStorage: keychainResult.location,
       },
@@ -184,7 +186,7 @@ export default class Login extends BaseCommand {
         const lines = [
           formatSuccess(`Logged in as ${sanitizeSingleLine(username)}`),
           `  Profile: ${sanitizeSingleLine(profileName)}`,
-          `  Dashboard: ${sanitizeSingleLine(normalizedUrl)}`,
+          `  Dashboard: ${sanitizeSingleLine(maskUrlUserinfo(normalizedUrl))}`,
         ];
 
         if (keychainResult.stored) {

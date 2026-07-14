@@ -88,8 +88,12 @@ export class ProfileStore {
 
   /**
    * Validate a URL format and protocol
+   *
+   * `rejectUserinfo` is set only on the intake path (save): legacy profiles
+   * already on disk with embedded credentials must keep loading so their
+   * URLs can be masked at display instead of bricking the config.
    */
-  private validateUrl(url: string): void {
+  private validateUrl(url: string, options: { rejectUserinfo?: boolean } = {}): void {
     let parsed: URL;
     try {
       parsed = new URL(url);
@@ -109,13 +113,26 @@ export class ProfileStore {
       );
     }
 
+    // SECURITY: Reject rather than silently strip — the user should know
+    // their pasted URL carried credentials.
+    if (options.rejectUserinfo && (parsed.username || parsed.password)) {
+      throw new ConfigError(
+        'Embedded credentials in the dashboard URL are not supported',
+        undefined,
+        'Pass the username with --username and enter the password at the password prompt'
+      );
+    }
+
     // HTTP warning is emitted at login time via formatWarning, not here
   }
 
   /**
    * Validate a profile's required fields and URL format
    */
-  private validateProfile(profile: Profile): void {
+  private validateProfile(
+    profile: Profile,
+    options: { rejectUserinfo?: boolean } = {}
+  ): void {
     const validationHint = 'Run `mainwpcontrol login` to create a valid profile';
 
     if (!profile.name || profile.name.trim().length === 0) {
@@ -150,7 +167,7 @@ export class ProfileStore {
       );
     }
 
-    this.validateUrl(profile.dashboardUrl);
+    this.validateUrl(profile.dashboardUrl, options);
   }
 
   /**
@@ -260,8 +277,9 @@ export class ProfileStore {
    * Save a profile (create or update)
    */
   async save(profile: Profile): Promise<void> {
-    // Validate profile before saving
-    this.validateProfile(profile);
+    // Validate profile before saving; intake is the only place userinfo
+    // URLs are rejected outright (legacy stored profiles are masked instead)
+    this.validateProfile(profile, { rejectUserinfo: true });
 
     const data = await this.ensureLoaded();
 

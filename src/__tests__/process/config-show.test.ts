@@ -139,4 +139,30 @@ describe('config show command', () => {
     expect(envelope.data.effectiveSettings.skipSSLVerification).toBe(true);
     expect(envelope.data.effectiveSettings.allowInsecureHttp).toBe(true);
   });
+
+  it('masks userinfo from a legacy profile in JSON mode', async () => {
+    configDir = await ConfigDir.create({
+      profiles: [
+        {
+          name: 'legacy',
+          dashboardUrl: 'https://legacy:secret@dashboard.example.com',
+          username: 'admin',
+        },
+      ],
+      activeProfile: 'legacy',
+    });
+
+    const result = await runCLI(['config', 'show', '--json'], {
+      xdgConfigHome: configDir.xdgHome,
+    });
+
+    expect(result.exitCode).toBe(0);
+    const envelope = result.json as {
+      data: { profile: { dashboardUrl: string } };
+    };
+    expect(envelope.data.profile.dashboardUrl).toBe(
+      'https://***:***@dashboard.example.com'
+    );
+    expect(result.stdout).not.toContain('legacy:secret');
+  });
 });

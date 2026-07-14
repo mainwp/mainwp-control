@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Chat responses that wrap a JSON tool call in prose (text before or after the object, braces inside string values) now parse correctly: the greedy first-`{`-to-last-`}` fallback was replaced with a brace-depth scanner that respects string literals and escapes; fenced-block parsing and pure-JSON responses are unchanged
 - Destructive execution now fails closed: if the automatic `dry_run` preview errors or returns an unsuccessful result, the command exits 4 without sending a confirm request. The successful preview is shown before the confirmation prompt (and included in the `--json` envelope); `--force` skips only the prompt, never the preview
 - Chat tool calling now works against the real OpenAI, Anthropic, and Gemini APIs: ability names are aliased to provider-safe tool names (all three reject `/`), assistant tool-call blocks are preserved across turns so continuations pair correctly with their results, and the destructive-approval flow keeps the original tool-call id
 - Malformed chat tool calls are rejected instead of executing with empty input: unparseable argument JSON, non-object input, multiple tool calls in one response, responses containing both an answer and a tool call, and responses truncated by `length` or `content_filter` all return a protocol error to the model
@@ -37,6 +38,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- Dashboard URLs with embedded credentials (`https://user:pass@host`) are rejected at login with a hint to use `--username` and the password prompt; profiles stored before this fix have the userinfo masked as `***:***@` in `login`, `config show`, and `doctor` output (human, JSON, and echoed error messages)
+- The audit log directory and file permissions now self-heal to `0700`/`0600` on every write, and the log is opened atomically in append mode, removing a check-then-act window that could truncate the log
 - `config show` sanitizes every untrusted value in human-readable output to a single safe line: environment-derived provider names and paths (`MAINWP_LLM_PROVIDER`, `XDG_CONFIG_HOME`) and profile-derived fields (profile name, dashboard URL, username), closing line-injection via a crafted `profiles.json` or hostile environment
 - `doctor` and `config show` human-readable output now strips terminal escape sequences from error- and config-derived text, matching the sanitization the `--json` path already applied
 - HTTP responses are size-checked after buffering even when the server sends a parseable `Content-Length`, so an inaccurate header can no longer bypass the response size limit
