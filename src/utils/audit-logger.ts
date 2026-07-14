@@ -102,6 +102,7 @@ export class AuditLogger {
     // Create directory with restricted permissions (owner only)
     const dir = getConfigDir();
     await fs.mkdir(dir, { recursive: true, mode: 0o700 });
+    await fs.chmod(dir, 0o700).catch(() => {});
 
     // Check if rotation is needed
     if (await this.shouldRotate(logPath)) {
@@ -130,25 +131,13 @@ export class AuditLogger {
     // Format as NDJSON line
     const line = JSON.stringify(entry) + '\n';
 
-    // Ensure file exists with proper permissions before appending
-    await this.ensureLogFile(logPath);
-
-    // Append to log file
-    await fs.appendFile(logPath, line, 'utf-8');
-  }
-
-  /**
-   * Ensure log file exists with proper permissions
-   *
-   * SECURITY: Creates file with 0o600 (owner read/write only) if it doesn't exist.
-   */
-  private async ensureLogFile(logPath: string): Promise<void> {
+    // Open atomically in append mode and self-heal existing file permissions.
+    const handle = await fs.open(logPath, 'a', 0o600);
     try {
-      await fs.access(logPath);
-    } catch {
-      // File doesn't exist, create with restricted permissions
-      const fd = await fs.open(logPath, 'w', 0o600);
-      await fd.close();
+      await handle.chmod(0o600).catch(() => {});
+      await handle.writeFile(line, 'utf-8');
+    } finally {
+      await handle.close();
     }
   }
 

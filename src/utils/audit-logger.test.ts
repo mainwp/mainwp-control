@@ -10,18 +10,19 @@ const MOCK_LOG = join('/mock/config', 'audit.log');
 
 // Mock dependencies before importing the module under test
 const mockMkdir = vi.fn();
-const mockAppendFile = vi.fn();
-const mockAccess = vi.fn();
+const mockChmod = vi.fn();
 const mockStat = vi.fn();
 const mockUnlink = vi.fn();
 const mockRename = vi.fn();
 const mockOpen = vi.fn();
+const mockHandleChmod = vi.fn();
+const mockHandleWriteFile = vi.fn();
+const mockHandleClose = vi.fn();
 
 vi.mock('node:fs', () => ({
   promises: {
     mkdir: (...args: unknown[]) => mockMkdir(...args),
-    appendFile: (...args: unknown[]) => mockAppendFile(...args),
-    access: (...args: unknown[]) => mockAccess(...args),
+    chmod: (...args: unknown[]) => mockChmod(...args),
     stat: (...args: unknown[]) => mockStat(...args),
     unlink: (...args: unknown[]) => mockUnlink(...args),
     rename: (...args: unknown[]) => mockRename(...args),
@@ -57,9 +58,16 @@ describe('AuditLogger', () => {
 
     // Default: file exists, not needing rotation
     mockMkdir.mockResolvedValue(undefined);
+    mockChmod.mockResolvedValue(undefined);
     mockStat.mockResolvedValue({ size: 100 });
-    mockAccess.mockResolvedValue(undefined);
-    mockAppendFile.mockResolvedValue(undefined);
+    mockHandleChmod.mockResolvedValue(undefined);
+    mockHandleWriteFile.mockResolvedValue(undefined);
+    mockHandleClose.mockResolvedValue(undefined);
+    mockOpen.mockResolvedValue({
+      chmod: mockHandleChmod,
+      writeFile: mockHandleWriteFile,
+      close: mockHandleClose,
+    });
 
     logger = new AuditLogger();
   });
@@ -93,9 +101,9 @@ describe('AuditLogger', () => {
     it('writes NDJSON line with correct structure', async () => {
       await logger.logDestructiveAction(baseInput);
 
-      expect(mockAppendFile).toHaveBeenCalledTimes(1);
-      const [path, content] = mockAppendFile.mock.calls[0]!;
-      expect(path).toBe(MOCK_LOG);
+      expect(mockHandleWriteFile).toHaveBeenCalledTimes(1);
+      const [content] = mockHandleWriteFile.mock.calls[0]!;
+      expect(mockOpen).toHaveBeenCalledWith(MOCK_LOG, 'a', 0o600);
 
       const entry = JSON.parse(content.trim());
       expect(entry.timestamp).toBe('2026-03-18T12:00:00.000Z');
@@ -112,7 +120,7 @@ describe('AuditLogger', () => {
         preview: { summary: 'Delete 1 site', affectedCount: 1 },
       });
 
-      const entry = JSON.parse(mockAppendFile.mock.calls[0]![1].trim());
+      const entry = JSON.parse(mockHandleWriteFile.mock.calls[0]![0].trim());
       expect(entry.preview).toEqual({ summary: 'Delete 1 site', affectedCount: 1 });
     });
 
@@ -122,7 +130,7 @@ describe('AuditLogger', () => {
         execution: { success: true },
       });
 
-      const entry = JSON.parse(mockAppendFile.mock.calls[0]![1].trim());
+      const entry = JSON.parse(mockHandleWriteFile.mock.calls[0]![0].trim());
       expect(entry.execution).toEqual({ success: true });
     });
 
@@ -132,14 +140,14 @@ describe('AuditLogger', () => {
         execution: { success: false, error: 'Site not found' },
       });
 
-      const entry = JSON.parse(mockAppendFile.mock.calls[0]![1].trim());
+      const entry = JSON.parse(mockHandleWriteFile.mock.calls[0]![0].trim());
       expect(entry.execution).toEqual({ success: false, error: 'Site not found' });
     });
 
     it('omits preview and execution when not provided', async () => {
       await logger.logDestructiveAction(baseInput);
 
-      const entry = JSON.parse(mockAppendFile.mock.calls[0]![1].trim());
+      const entry = JSON.parse(mockHandleWriteFile.mock.calls[0]![0].trim());
       expect(entry).not.toHaveProperty('preview');
       expect(entry).not.toHaveProperty('execution');
     });
@@ -150,7 +158,7 @@ describe('AuditLogger', () => {
         userDecision: 'declined',
       });
 
-      const entry = JSON.parse(mockAppendFile.mock.calls[0]![1].trim());
+      const entry = JSON.parse(mockHandleWriteFile.mock.calls[0]![0].trim());
       expect(entry.userDecision).toBe('declined');
     });
 
@@ -163,7 +171,7 @@ describe('AuditLogger', () => {
       });
 
       expect(mockRedactSensitive).toHaveBeenCalledWith({ site_id: 123, password: 'secret' });
-      const entry = JSON.parse(mockAppendFile.mock.calls[0]![1].trim());
+      const entry = JSON.parse(mockHandleWriteFile.mock.calls[0]![0].trim());
       expect(entry.input.password).toBe('[REDACTED]');
     });
 
@@ -174,17 +182,32 @@ describe('AuditLogger', () => {
         recursive: true,
         mode: 0o700,
       });
+      expect(mockChmod).toHaveBeenCalledWith('/mock/config', 0o700);
     });
 
-    it('creates log file with 0o600 permissions when it does not exist', async () => {
-      mockAccess.mockRejectedValueOnce(new Error('ENOENT'));
-      const mockFd = { close: vi.fn().mockResolvedValue(undefined) };
-      mockOpen.mockResolvedValueOnce(mockFd);
-
+    it('opens the log atomically in append mode and restricts permissions', async () => {
       await logger.logDestructiveAction(baseInput);
 
-      expect(mockOpen).toHaveBeenCalledWith(MOCK_LOG, 'w', 0o600);
-      expect(mockFd.close).toHaveBeenCalled();
+      expect(mockOpen).toHaveBeenCalledWith(MOCK_LOG, 'a', 0o600);
+      expect(mockHandleChmod).toHaveBeenCalledWith(0o600);
+      expect(mockHandleClose).toHaveBeenCalled();
+    });
+
+    it('continues logging when directory permission self-healing fails', async () => {
+      mockChmod.mockRejectedValueOnce(new Error('EPERM'));
+
+      await expect(logger.logDestructiveAction(baseInput)).resolves.not.toThrow();
+
+      expect(mockHandleWriteFile).toHaveBeenCalledTimes(1);
+    });
+
+    it('continues logging when file permission self-healing fails', async () => {
+      mockHandleChmod.mockRejectedValueOnce(new Error('EPERM'));
+
+      await expect(logger.logDestructiveAction(baseInput)).resolves.not.toThrow();
+
+      expect(mockHandleWriteFile).toHaveBeenCalledTimes(1);
+      expect(mockHandleClose).toHaveBeenCalled();
     });
   });
 
