@@ -2847,4 +2847,102 @@ describe('ChatEngine', () => {
       expect(consoleError).toHaveBeenCalledWith(expect.not.stringContaining('\x1b'));
     });
   });
+
+  // ==========================================================================
+  // sendMessage Re-entrancy
+  // ==========================================================================
+
+  describe('sendMessage Re-entrancy', () => {
+    it('serializes concurrent sendMessage calls in call order', async () => {
+      let releaseFirst!: () => void;
+      const firstGate = new Promise<void>((resolve) => (releaseFirst = resolve));
+
+      const responses = [createAnswerResponse('first answer'), createAnswerResponse('second answer')];
+      let callIndex = 0;
+      const gatedProvider: LLMProvider = {
+        name: 'mock-provider',
+        capabilities: {
+          functionCalling: true,
+          streaming: false,
+          systemMessages: true,
+          vision: false,
+          maxContextLength: 4096,
+        },
+        chat: vi.fn(async (): Promise<LLMResponse> => {
+          const index = callIndex++;
+          if (index === 0) {
+            await firstGate;
+          }
+          return responses[index]!;
+        }),
+        isConfigured: () => true,
+        getModels: () => ['test-model'],
+        getDefaultModel: () => 'test-model',
+      };
+
+      const { engine } = createTestEngine({ provider: gatedProvider });
+      await engine.initialize();
+
+      // Fire both without awaiting the first
+      const first = engine.sendMessage('first question');
+      const second = engine.sendMessage('second question');
+
+      // While the first call is blocked in the provider, the second must be
+      // queued: no second provider call, no second user message in history
+      await new Promise((resolve) => setImmediate(resolve));
+      expect(gatedProvider.chat).toHaveBeenCalledTimes(1);
+      expect(
+        engine.getHistory().filter((m) => m.role === 'user')
+      ).toHaveLength(1);
+
+      releaseFirst();
+      const [firstResponses, secondResponses] = await Promise.all([first, second]);
+
+      expect(firstResponses[0]).toEqual({ type: 'message', content: 'first answer' });
+      expect(secondResponses[0]).toEqual({ type: 'message', content: 'second answer' });
+
+      // History interleaves strictly: user1, assistant1, user2, assistant2
+      const conversation = engine
+        .getHistory()
+        .filter((m) => m.role === 'user' || m.role === 'assistant')
+        .map((m) => m.role);
+      expect(conversation).toEqual(['user', 'assistant', 'user', 'assistant']);
+    });
+
+    it('runs a queued call even when the previous call rejects', async () => {
+      let callIndex = 0;
+      const flakyProvider: LLMProvider = {
+        name: 'mock-provider',
+        capabilities: {
+          functionCalling: true,
+          streaming: false,
+          systemMessages: true,
+          vision: false,
+          maxContextLength: 4096,
+        },
+        chat: vi.fn(async (): Promise<LLMResponse> => {
+          if (callIndex++ === 0) {
+            throw new Error('provider exploded');
+          }
+          return createAnswerResponse('recovered');
+        }),
+        isConfigured: () => true,
+        getModels: () => ['test-model'],
+        getDefaultModel: () => 'test-model',
+      };
+
+      const { engine } = createTestEngine({ provider: flakyProvider });
+      await engine.initialize();
+
+      const first = engine.sendMessage('first question');
+      const second = engine.sendMessage('second question');
+
+      // The first call rejects (provider errors propagate to the caller);
+      // the rejection must not poison the queue for the second call
+      await expect(first).rejects.toThrow('provider exploded');
+      const secondResponses = await second;
+
+      expect(secondResponses[0]).toEqual({ type: 'message', content: 'recovered' });
+    });
+  });
 });

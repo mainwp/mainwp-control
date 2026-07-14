@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Concurrent `ChatEngine.sendMessage` calls now queue and run in call order instead of interleaving shared history and preview state; the interactive REPL already serialized calls, so this protects programmatic callers
 - Chat responses that wrap a JSON tool call in prose (text before or after the object, braces inside string values) now parse correctly: the greedy first-`{`-to-last-`}` fallback was replaced with a brace-depth scanner that respects string literals and escapes; fenced-block parsing and pure-JSON responses are unchanged
 - Destructive execution now fails closed: if the automatic `dry_run` preview errors or returns an unsuccessful result, the command exits 4 without sending a confirm request. The successful preview is shown before the confirmation prompt (and included in the `--json` envelope); `--force` skips only the prompt, never the preview
 - Chat tool calling now works against the real OpenAI, Anthropic, and Gemini APIs: ability names are aliased to provider-safe tool names (all three reject `/`), assistant tool-call blocks are preserved across turns so continuations pair correctly with their results, and the destructive-approval flow keeps the original tool-call id

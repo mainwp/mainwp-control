@@ -206,10 +206,31 @@ export class ChatEngine {
     this.initialized = true;
   }
 
+  // Serializes sendMessage calls. History and pendingPreview are shared
+  // mutable state with no other concurrency protection; the readline REPL
+  // happens to serialize calls today, but programmatic callers may not.
+  private inFlight: Promise<void> = Promise.resolve();
+
   /**
    * Send a user message and process the response
+   *
+   * Concurrent calls are queued and run in call order; a rejected call does
+   * not block the calls queued behind it.
    */
   async sendMessage(userMessage: string): Promise<ChatResponse[]> {
+    const previous = this.inFlight;
+    let release!: () => void;
+    this.inFlight = new Promise((resolve) => (release = resolve));
+
+    await previous;
+    try {
+      return await this.sendMessageSerialized(userMessage);
+    } finally {
+      release();
+    }
+  }
+
+  private async sendMessageSerialized(userMessage: string): Promise<ChatResponse[]> {
     if (!this.initialized) {
       await this.initialize();
     }
