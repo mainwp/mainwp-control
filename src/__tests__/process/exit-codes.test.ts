@@ -14,6 +14,8 @@
  */
 
 import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach } from 'vitest';
+import { mkdir } from 'node:fs/promises';
+import { join } from 'node:path';
 import { MockServer } from './fixtures/mock-server.js';
 import { runCLI, type CLIResult } from './fixtures/cli-runner.js';
 import { ConfigDir } from './fixtures/config-dir.js';
@@ -239,5 +241,65 @@ describe('exit code contract', () => {
       expect(envelope.success).toBe(false);
       expect(envelope.error).toBeDefined();
     });
+  });
+});
+
+// -----------------------------------------------------------------------------
+// Exit 5 — Internal error: untyped settings I/O failure
+// -----------------------------------------------------------------------------
+
+describe('exit 5: unexpected settings read failure', () => {
+  let config: ConfigDir;
+
+  afterEach(async () => {
+    if (config) await config.cleanup();
+  });
+
+  it('abilities list exits 5 when settings.json cannot be read as a file', async () => {
+    config = await ConfigDir.create({ profiles: [] });
+    await mkdir(join(config.configPath, 'settings.json'));
+
+    const result = await runCLI(['abilities', 'list', '--json'], {
+      xdgConfigHome: config.xdgHome,
+      env: { MAINWP_APP_PASSWORD: 'test-pass' },
+    });
+
+    expect(result.exitCode).toBe(5);
+  });
+});
+
+// -----------------------------------------------------------------------------
+// Exit 130 — Ctrl-C at an interactive password prompt
+// -----------------------------------------------------------------------------
+
+describe('exit 130: password prompt interrupted', () => {
+  let config: ConfigDir;
+
+  afterEach(async () => {
+    if (config) await config.cleanup();
+  });
+
+  it('login exits 130 when Ctrl-C interrupts the password prompt', async () => {
+    config = await ConfigDir.create({ profiles: [] });
+
+    const result = await runCLI(
+      [
+        'login',
+        '--url', 'https://dashboard.example.com',
+        '--username', 'admin',
+      ],
+      {
+        xdgConfigHome: config.xdgHome,
+        env: {},
+        // Keep stdin pipe-based for deterministic CI input while emulating the
+        // TTY flags checked by login. In raw mode, Ctrl-C arrives as ETX.
+        emulateTTY: true,
+        stdin: '\u0003',
+        stdinWaitFor: 'Application password',
+      },
+    );
+
+    expect(result.stdout).toContain('Application password');
+    expect(result.exitCode).toBe(130);
   });
 });

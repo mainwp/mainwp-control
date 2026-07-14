@@ -7,6 +7,7 @@
 
 import { execFile, spawn } from 'node:child_process';
 import { resolve } from 'node:path';
+import { pathToFileURL } from 'node:url';
 
 const PROJECT_ROOT = resolve(import.meta.dirname, '..', '..', '..', '..');
 const BIN_PATH = resolve(PROJECT_ROOT, 'bin', 'run.js');
@@ -20,6 +21,10 @@ export interface CLIRunnerOptions {
   timeout?: number;
   /** Data to pipe to stdin */
   stdin?: string;
+  /** Wait for this stdout text before piping stdin */
+  stdinWaitFor?: string;
+  /** Emulate TTY flags while retaining pipe-based stdin/stdout */
+  emulateTTY?: boolean;
 }
 
 export interface CLIResult {
@@ -65,7 +70,15 @@ export async function runCLI(
 
   // If stdin is provided, we need to use spawn to pipe data
   if (options.stdin !== undefined) {
-    return runWithStdin(args, env, timeout, options.stdin, start);
+    return runWithStdin(
+      args,
+      env,
+      timeout,
+      options.stdin,
+      start,
+      options.stdinWaitFor,
+      options.emulateTTY ?? false,
+    );
   }
 
   return new Promise<CLIResult>((resolve) => {
@@ -98,9 +111,26 @@ function runWithStdin(
   timeout: number,
   stdinData: string,
   start: number,
+  stdinWaitFor: string | undefined,
+  emulateTTY: boolean,
 ): Promise<CLIResult> {
   return new Promise<CLIResult>((resolve) => {
-    const child = spawn(process.execPath, [BIN_PATH, ...args], {
+    const childArgs = emulateTTY
+      ? [
+          '--input-type=module',
+          '--eval',
+          [
+            "Object.defineProperty(process.stdin, 'isTTY', { value: true });",
+            "Object.defineProperty(process.stdout, 'isTTY', { value: true });",
+            "Object.defineProperty(process.stdout, 'getWindowSize', { value: () => [80, 24] });",
+            `process.argv = [process.execPath, ${JSON.stringify(BIN_PATH)}, ...process.argv.slice(1)];`,
+            `await import(${JSON.stringify(pathToFileURL(BIN_PATH).href)});`,
+          ].join('\n'),
+          ...args,
+        ]
+      : [BIN_PATH, ...args];
+
+    const child = spawn(process.execPath, childArgs, {
       env,
       stdio: ['pipe', 'pipe', 'pipe'],
       timeout,
@@ -108,8 +138,23 @@ function runWithStdin(
 
     const stdoutChunks: Buffer[] = [];
     const stderrChunks: Buffer[] = [];
+    let stdinSent = false;
 
-    child.stdout.on('data', (chunk: Buffer) => stdoutChunks.push(chunk));
+    const sendStdin = (): void => {
+      if (stdinSent) return;
+      stdinSent = true;
+      child.stdin.end(stdinData);
+    };
+
+    child.stdout.on('data', (chunk: Buffer) => {
+      stdoutChunks.push(chunk);
+      if (
+        stdinWaitFor !== undefined &&
+        Buffer.concat(stdoutChunks).toString('utf-8').includes(stdinWaitFor)
+      ) {
+        sendStdin();
+      }
+    });
     child.stderr.on('data', (chunk: Buffer) => stderrChunks.push(chunk));
 
     child.on('close', (code) => {
@@ -138,8 +183,8 @@ function runWithStdin(
       });
     });
 
-    // Write stdin and close
-    child.stdin.write(stdinData);
-    child.stdin.end();
+    if (stdinWaitFor === undefined) {
+      sendStdin();
+    }
   });
 }

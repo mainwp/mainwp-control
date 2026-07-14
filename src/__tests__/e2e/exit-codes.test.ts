@@ -268,11 +268,7 @@ describe('E2E: Exit Code Contract', () => {
       { name: 'list-sites-v1' }
     );
 
-    // ConfigError maps to exit code 2 (AUTH_ERROR)
-    expect(output.exitCode).toBeDefined();
-    // The exit code comes from the catch handler; in test setup it may be 1
-    // because command.catch is not fully wired. The important thing is it fails.
-    expect(output.exitCode).toBeGreaterThanOrEqual(1);
+    expect(output.exitCode).toBe(2);
   });
 
   // API error (exit code 4): API returns error response
