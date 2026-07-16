@@ -6,7 +6,7 @@
 
 import { Flags } from '@oclif/core';
 import { BaseCommand, commonFlags } from '../lib/base-command.js';
-import { getProfileStore, type Profile } from '../config/profile-store.js';
+import { getProfileStore, validateDashboardUrl, type Profile } from '../config/profile-store.js';
 import { getKeychain } from '../config/keychain.js';
 import { createHttpClient } from '../core/http-client.js';
 import { formatSuccess, formatWarning, formatInfo } from '../output/formatter.js';
@@ -102,6 +102,11 @@ export default class Login extends BaseCommand {
       normalizedUrl = `https://${normalizedUrl}`;
     }
     normalizedUrl = normalizedUrl.replace(/\/+$/, '');
+
+    // Reject malformed URLs (embedded credentials included) before the
+    // connection test — undici otherwise fails first with an opaque
+    // NetworkError and the user never sees the real reason.
+    validateDashboardUrl(normalizedUrl, { rejectUserinfo: true });
 
     // Generate profile name from URL if not provided
     const profileName = flags.name ?? new URL(normalizedUrl).hostname;

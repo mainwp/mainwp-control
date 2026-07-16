@@ -39,7 +39,11 @@ const mockProfileStoreList = vi.fn();
 const mockProfileStoreDelete = vi.fn();
 const mockProfileStoreSetActive = vi.fn();
 
-vi.mock('../../config/profile-store.js', () => ({
+vi.mock('../../config/profile-store.js', async (importOriginal) => ({
+  // Keep the real validateDashboardUrl: login calls it at intake, and these
+  // workflows should exercise the genuine validation behavior.
+  validateDashboardUrl: (await importOriginal<typeof import('../../config/profile-store.js')>())
+    .validateDashboardUrl,
   getProfileStore: vi.fn(() => ({
     get: mockProfileStoreGet,
     getActive: mockProfileStoreGetActive,

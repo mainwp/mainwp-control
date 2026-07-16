@@ -81,49 +81,56 @@ async function saveProfilesFile(data: ProfilesFile): Promise<void> {
 }
 
 /**
+ * Validate a Dashboard URL's format and protocol
+ *
+ * `rejectUserinfo` is set only on intake paths (login, save): legacy profiles
+ * already on disk with embedded credentials must keep loading so their
+ * URLs can be masked at display instead of bricking the config.
+ */
+export function validateDashboardUrl(
+  url: string,
+  options: { rejectUserinfo?: boolean } = {}
+): void {
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    throw new ConfigError(
+      `Invalid Dashboard URL format: ${url}`,
+      undefined,
+      'URL must include protocol (http:// or https://) and hostname'
+    );
+  }
+
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+    throw new ConfigError(
+      `Invalid URL protocol: ${parsed.protocol}. Must be http or https`,
+      undefined,
+      'Only HTTP and HTTPS protocols are supported'
+    );
+  }
+
+  // SECURITY: Reject rather than silently strip — the user should know
+  // their pasted URL carried credentials.
+  if (options.rejectUserinfo && (parsed.username || parsed.password)) {
+    throw new ConfigError(
+      'Embedded credentials in the dashboard URL are not supported',
+      undefined,
+      'Pass the username with --username and enter the password at the password prompt'
+    );
+  }
+
+  // HTTP warning is emitted at login time via formatWarning, not here
+}
+
+/**
  * Profile store class
  */
 export class ProfileStore {
   private data: ProfilesFile | null = null;
 
-  /**
-   * Validate a URL format and protocol
-   *
-   * `rejectUserinfo` is set only on the intake path (save): legacy profiles
-   * already on disk with embedded credentials must keep loading so their
-   * URLs can be masked at display instead of bricking the config.
-   */
   private validateUrl(url: string, options: { rejectUserinfo?: boolean } = {}): void {
-    let parsed: URL;
-    try {
-      parsed = new URL(url);
-    } catch {
-      throw new ConfigError(
-        `Invalid Dashboard URL format: ${url}`,
-        undefined,
-        'URL must include protocol (http:// or https://) and hostname'
-      );
-    }
-
-    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
-      throw new ConfigError(
-        `Invalid URL protocol: ${parsed.protocol}. Must be http or https`,
-        undefined,
-        'Only HTTP and HTTPS protocols are supported'
-      );
-    }
-
-    // SECURITY: Reject rather than silently strip — the user should know
-    // their pasted URL carried credentials.
-    if (options.rejectUserinfo && (parsed.username || parsed.password)) {
-      throw new ConfigError(
-        'Embedded credentials in the dashboard URL are not supported',
-        undefined,
-        'Pass the username with --username and enter the password at the password prompt'
-      );
-    }
-
-    // HTTP warning is emitted at login time via formatWarning, not here
+    validateDashboardUrl(url, options);
   }
 
   /**
