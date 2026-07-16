@@ -60,7 +60,12 @@ export type ChatResponse =
       preview?: PreviewResult;
     }
   | { type: 'preview'; preview: PreviewResult; requiresApproval: boolean }
-  | { type: 'error'; error: string };
+  | {
+      type: 'error';
+      error: string;
+      /** Ability name, when the error occurred while handling a specific tool */
+      tool?: string;
+    };
 
 /**
  * Chat engine options
@@ -595,6 +600,7 @@ export class ChatEngine {
         return {
           type: 'error',
           error: error instanceof Error ? error.message : String(error),
+          tool: ability.name,
         };
       }
     }
@@ -625,6 +631,7 @@ export class ChatEngine {
       return {
         type: 'error',
         error: error instanceof Error ? error.message : String(error),
+        tool: ability.name,
       };
     }
   }
@@ -651,6 +658,7 @@ export class ChatEngine {
         return {
           type: 'error',
           error: previewResult.error?.message ?? 'Preview failed',
+          tool: ability.name,
         };
       }
 
@@ -673,6 +681,7 @@ export class ChatEngine {
       return {
         type: 'error',
         error: error instanceof Error ? error.message : String(error),
+        tool: ability.name,
       };
     }
   }

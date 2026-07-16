@@ -58,9 +58,9 @@ function formatPreview(preview: PreviewResult): string {
 }
 
 /**
- * Format chat response for display
+ * Format chat response for display (exported for tests)
  */
-function formatResponse(response: ChatResponse): string {
+export function formatResponse(response: ChatResponse): string {
   switch (response.type) {
     case 'message':
       return stripControlChars(response.content);
@@ -77,8 +77,10 @@ function formatResponse(response: ChatResponse): string {
     case 'preview':
       return formatPreview(response.preview);
 
-    case 'error':
-      return `Error: ${stripControlChars(response.error)}`;
+    case 'error': {
+      const message = `Error: ${stripControlChars(response.error)}`;
+      return response.tool ? `[${stripControlChars(response.tool)}] ${message}` : message;
+    }
   }
 }
 

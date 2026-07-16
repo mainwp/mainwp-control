@@ -761,6 +761,33 @@ describe('ChatEngine', () => {
       );
     });
 
+    it('names the ability when the mandatory preview fails', async () => {
+      const mockProvider = createMockProvider([
+        createToolCallResponse('delete-site-v1', { site_id: 123 }),
+        createAnswerResponse('Could not preview'),
+      ]);
+
+      const { engine } = createTestEngine({
+        provider: mockProvider,
+        abilities: [DESTRUCTIVE_ABILITY],
+        executeHandler: (_name, _input, options) => {
+          if (options?.dryRun) {
+            return createErrorResult('NOT_FOUND', 'Resource not found');
+          }
+          return createSuccessResult({ deleted: true });
+        },
+      });
+
+      const responses = await engine.sendMessage('Delete site 123');
+
+      const errorResponse = responses.find((response) => response.type === 'error');
+      expect(errorResponse).toMatchObject({
+        type: 'error',
+        tool: 'delete-site-v1',
+        error: 'Resource not found',
+      });
+    });
+
     it('returns preview response type for destructive action', async () => {
       const mockProvider = createMockProvider([
         createToolCallResponse('delete-site-v1', { site_id: 123 }),
