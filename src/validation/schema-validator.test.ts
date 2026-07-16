@@ -3,6 +3,8 @@
  */
 
 import { describe, it, expect, beforeEach } from 'vitest';
+import { APIError } from '../utils/errors.js';
+import { ExitCode } from '../utils/exit-codes.js';
 import { SchemaValidator } from './schema-validator.js';
 
 describe('SchemaValidator', () => {
@@ -96,5 +98,56 @@ describe('SchemaValidator', () => {
 
     expect(valid).toBe(true);
     expect(input).toEqual(original);
+  });
+
+  it('accepts a whole schema serialized as a PHP empty array', () => {
+    const schema = [] as unknown as Record<string, unknown>;
+
+    const result = validator.validate({}, schema, 'mainwp/no-input-v1');
+
+    expect(result.valid).toBe(true);
+    expect(result.coerced).toEqual({});
+  });
+
+  it('accepts properties serialized as a PHP empty array', () => {
+    const schema = {
+      type: 'object',
+      properties: [] as unknown as Record<string, unknown>,
+    };
+
+    const result = validator.validate({}, schema, 'mainwp/empty-properties-v1');
+
+    expect(result.valid).toBe(true);
+    expect(result.coerced).toEqual({});
+  });
+
+  it('accepts a nullable top-level object type array', () => {
+    const schema = {
+      type: ['object', 'null'],
+      properties: {},
+    };
+
+    const result = validator.validate({}, schema, 'mainwp/nullable-input-v1');
+
+    expect(result.valid).toBe(true);
+    expect(result.coerced).toEqual({});
+  });
+
+  it('maps an irreparably invalid ability schema to a typed API error', () => {
+    const schema = { type: 42 };
+    let thrown: unknown;
+
+    try {
+      validator.validate({}, schema, 'mainwp/broken-schema-v1');
+    } catch (error) {
+      thrown = error;
+    }
+
+    expect(thrown).toBeInstanceOf(APIError);
+    expect(thrown).toMatchObject({
+      code: 'ABILITY_SCHEMA_INVALID',
+      exitCode: ExitCode.API_ERROR,
+    });
+    expect((thrown as Error).message).toContain('mainwp/broken-schema-v1');
   });
 });
