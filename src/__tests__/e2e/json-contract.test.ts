@@ -77,6 +77,7 @@ vi.mock('../../utils/audit-logger.js', () => ({
   getAuditLogger: vi.fn(() => ({
     logDestructiveAction: vi.fn().mockResolvedValue(undefined),
   })),
+  logDestructiveActionSafe: vi.fn().mockResolvedValue(undefined),
 }));
 
 vi.mock('node:readline', () => ({
@@ -292,6 +293,123 @@ describe('E2E: JSON Output Contract', () => {
       expect(json).toBeDefined();
       expect(json.success).toBe(true);
       expect((json.data as Record<string, unknown>).jobId).toBe('batch_abc123');
+    });
+  });
+
+  describe('abilities run --json envelope shapes (contract pins)', () => {
+    const runFlags = {
+      json: true,
+      quiet: false,
+      debug: false,
+      input: '{}',
+      'dry-run': false,
+      confirm: false,
+      force: false,
+      wait: false,
+      'wait-timeout': 300,
+    };
+
+    const expectedPreview = {
+      affected: [{ id: 5, name: 'Site Five' }],
+      summary: expect.any(String),
+      requiresApproval: true,
+      abilityName: 'mainwp/delete-site-v1',
+      input: {},
+    };
+
+    it('pins the --dry-run preview envelope: mode, preview block, data.data nesting', async () => {
+      mockExecutorGetAbility.mockResolvedValue(
+        createMockAbility('delete-site-v1', { destructive: true })
+      );
+      mockExecutorExecute.mockResolvedValue({
+        success: true,
+        data: { affected: [{ id: 5, name: 'Site Five' }] },
+      });
+
+      const { command, output } = createCommand(AbilitiesRun);
+      command.parse = vi.fn().mockResolvedValue({
+        flags: { ...runFlags, 'dry-run': true },
+        args: { name: 'delete-site-v1' },
+      }) as never;
+
+      try { await command.run(); } catch { /* exit */ }
+
+      const json = findJsonOutput(output.stdout);
+      expect(json).toEqual({
+        success: true,
+        data: {
+          mode: 'preview',
+          ability: 'mainwp/delete-site-v1',
+          success: true,
+          data: { affected: [{ id: 5, name: 'Site Five' }] },
+          preview: expectedPreview,
+        },
+      });
+    });
+
+    it('pins the destructive execute envelope: preview from the approved dry_run is present', async () => {
+      mockExecutorGetAbility.mockResolvedValue(
+        createMockAbility('delete-site-v1', { destructive: true })
+      );
+      mockExecutorExecute.mockImplementation(
+        (_name: string, _input: Record<string, unknown>, options?: { dryRun?: boolean }) =>
+          Promise.resolve(
+            options?.dryRun
+              ? { success: true, data: { affected: [{ id: 5, name: 'Site Five' }] } }
+              : { success: true, data: { deleted: true } }
+          )
+      );
+
+      const { command, output } = createCommand(AbilitiesRun);
+      command.parse = vi.fn().mockResolvedValue({
+        flags: { ...runFlags, confirm: true, force: true },
+        args: { name: 'delete-site-v1' },
+      }) as never;
+
+      try { await command.run(); } catch { /* exit */ }
+
+      const json = findJsonOutput(output.stdout);
+      expect(json).toEqual({
+        success: true,
+        data: {
+          mode: 'execute',
+          ability: 'mainwp/delete-site-v1',
+          success: true,
+          data: { deleted: true },
+          preview: expectedPreview,
+        },
+      });
+    });
+
+    it('pins the direct execute envelope: no preview key (no preview ran)', async () => {
+      mockExecutorGetAbility.mockResolvedValue(
+        createMockAbility('list-sites-v1', { readonly: true })
+      );
+      mockExecutorExecute.mockResolvedValue({
+        success: true,
+        data: { sites: [{ id: 1 }] },
+      });
+
+      const { command, output } = createCommand(AbilitiesRun);
+      command.parse = vi.fn().mockResolvedValue({
+        flags: { ...runFlags },
+        args: { name: 'list-sites-v1' },
+      }) as never;
+
+      try { await command.run(); } catch { /* exit */ }
+
+      const json = findJsonOutput(output.stdout);
+      expect(json).toEqual({
+        success: true,
+        data: {
+          mode: 'execute',
+          ability: 'mainwp/list-sites-v1',
+          success: true,
+          data: { sites: [{ id: 1 }] },
+        },
+      });
+      expect(json as Record<string, unknown>).toBeDefined();
+      expect((json as { data: Record<string, unknown> }).data).not.toHaveProperty('preview');
     });
   });
 

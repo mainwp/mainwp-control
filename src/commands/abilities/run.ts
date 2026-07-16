@@ -372,7 +372,6 @@ export default class AbilitiesRun extends BaseCommand {
         {
           mode: 'batch',
           ability: abilityName,
-          jobId: result.jobId,
           ...result,
           preview,
         },
@@ -427,7 +426,6 @@ export default class AbilitiesRun extends BaseCommand {
         {
           mode: 'batch',
           ability: abilityName,
-          jobId: result.jobId,
           ...result,
         },
         () => this.formatBatchOutput(abilityName, result.jobId!)
