@@ -621,15 +621,26 @@ function cliResultsMatchTruth(
     return truth.updateSiteUrls.every(url => text.includes(url));
   }
   if (truth.pluginActive !== undefined && truth.pluginSlug) {
-    const slug = truth.pluginSlug.replace(/[.*+?^${}()|[\]\\/]/g, '\\$&');
-    const structured = (
-      new RegExp(
-        `"slug"\\s*:\\s*"${slug}"[^}]*"active"\\s*:\\s*${truth.pluginActive}`,
-      ).test(text)
-      || new RegExp(
-        `"active"\\s*:\\s*${truth.pluginActive}[^}]*"slug"\\s*:\\s*"${slug}"`,
-      ).test(text)
-    );
+    // The agent may filter CLI output through shell pipes, so the captured
+    // result can carry the plugin's name without its slug; either field tied
+    // to the expected active value counts as grounded evidence.
+    const escapeRegExp = (value: string): string =>
+      value.replace(/[.*+?^${}()|[\]\\/]/g, '\\$&');
+    const fields = [
+      { key: 'slug', value: truth.pluginSlug },
+      ...(truth.pluginName ? [{ key: 'name', value: truth.pluginName }] : []),
+    ];
+    const structured = fields.some(({ key, value }) => {
+      const escaped = escapeRegExp(value);
+      return (
+        new RegExp(
+          `"${key}"\\s*:\\s*"${escaped}"[^}]*"active"\\s*:\\s*${truth.pluginActive}`,
+        ).test(text)
+        || new RegExp(
+          `"active"\\s*:\\s*${truth.pluginActive}[^}]*"${key}"\\s*:\\s*"${escaped}"`,
+        ).test(text)
+      );
+    });
     const status = truth.pluginActive ? /\bactive\b/i : /\binactive\b/i;
     return structured || (text.includes(truth.pluginSlug) && status.test(text));
   }
