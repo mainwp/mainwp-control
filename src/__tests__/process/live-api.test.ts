@@ -35,7 +35,8 @@ function loadTestbedEnv(path: string): Record<string, string> {
 }
 
 const testbedEnv = loadTestbedEnv(
-  '/Users/denni1/github/dev-tools/network-testbed/.env',
+  process.env['MAINWP_TESTBED_ENV'] ??
+    '/Users/denni1/github/dev-tools/network-testbed/.env',
 );
 
 const DASH_URL =
@@ -71,10 +72,13 @@ async function checkDashboard(
   }
 }
 
-// Set for the connectivity check (self-signed cert)
-process.env['NODE_TLS_REJECT_UNAUTHORIZED'] = '0';
+const liveTestsEnabled = Boolean(process.env['MAINWP_LIVE_TEST']);
+if (liveTestsEnabled) {
+  // Set only for explicitly enabled live tests using the self-signed testbed.
+  process.env['NODE_TLS_REJECT_UNAUTHORIZED'] = '0';
+}
 
-const dashboardOnline = Boolean(process.env['MAINWP_LIVE_TEST'])
+const dashboardOnline = liveTestsEnabled
   && await checkDashboard(DASH_URL, DASH_USER, DASH_PASS);
 
 // ---------------------------------------------------------------------------
@@ -145,7 +149,6 @@ describe.skipIf(!dashboardOnline)('live integration tests', () => {
       'login',
       '--url', DASH_URL,
       '--username', DASH_USER,
-      '--password', DASH_PASS,
       '--skip-ssl-verify',
       '--json',
     ]);

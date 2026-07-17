@@ -443,7 +443,7 @@ describe('E2E: Login → Abilities Flow', () => {
       expect(result).toBe('env-password');
     });
 
-    it('delete() completes silently when keytar hangs', async () => {
+    it('delete() reports failure when keytar hangs', async () => {
       mockKeytarDeletePassword.mockReturnValue(new Promise(() => {}));
 
       const testKeychain = new Keychain();
@@ -451,7 +451,10 @@ describe('E2E: Login → Abilities Flow', () => {
 
       await vi.advanceTimersByTimeAsync(5_000);
 
-      await expect(resultPromise).resolves.toBeUndefined();
+      await expect(resultPromise).resolves.toMatchObject({
+        deleted: false,
+        error: expect.stringContaining('timed out'),
+      });
     });
   });
 

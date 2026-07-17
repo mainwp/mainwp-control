@@ -121,7 +121,7 @@ describe('HttpClient Redirect Security', () => {
       status: 200,
       ok: true,
       statusText: 'OK',
-      headers: new Headers(),
+      headers: new Headers({ 'content-type': 'application/json' }),
       text: () => Promise.resolve('{"success":true}'),
     });
 
@@ -148,7 +148,7 @@ describe('HttpClient Redirect Security', () => {
       status: 200,
       ok: true,
       statusText: 'OK',
-      headers: new Headers(),
+      headers: new Headers({ 'content-type': 'application/json' }),
       text: () => Promise.resolve('{}'),
     });
 
@@ -361,7 +361,7 @@ describe('HttpClient SSL Configuration', () => {
       status: 200,
       ok: true,
       statusText: 'OK',
-      headers: new Headers(),
+      headers: new Headers({ 'content-type': 'application/json' }),
       text: () => Promise.resolve('{}'),
     });
 
@@ -384,7 +384,7 @@ describe('HttpClient SSL Configuration', () => {
       status: 200,
       ok: true,
       statusText: 'OK',
-      headers: new Headers(),
+      headers: new Headers({ 'content-type': 'application/json' }),
       text: () => Promise.resolve('{}'),
     });
 
@@ -420,7 +420,10 @@ describe('HttpClient Response Size Checking', () => {
       status: 200,
       ok: true,
       statusText: 'OK',
-      headers: new Headers({ 'content-length': 'abc' }),
+      headers: new Headers({
+        'content-length': 'abc',
+        'content-type': 'application/json',
+      }),
       text: () => Promise.resolve('{"ok":true}'),
     });
 
@@ -467,6 +470,86 @@ describe('HttpClient Response Size Checking', () => {
 
     const client = createHttpClient(baseConfig);
     await expect(client.get('/test')).rejects.toThrow(/Response too large/);
+  });
+
+  it('stops reading a streamed body as soon as the byte limit is exceeded', async () => {
+    let cancelled = false;
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new Uint8Array(60));
+        controller.enqueue(new Uint8Array(60));
+        controller.enqueue(new Uint8Array(60));
+        controller.close();
+      },
+      cancel() {
+        cancelled = true;
+      },
+    });
+    mockFetch.mockResolvedValueOnce(new Response(body, {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    }));
+
+    const client = createHttpClient(baseConfig);
+    await expect(client.get('/test')).rejects.toThrow(/Response too large/);
+    expect(cancelled).toBe(true);
+  });
+});
+
+describe('HttpClient Success Response Validation', () => {
+  const baseConfig: HttpClientConfig = {
+    baseUrl: 'https://dashboard.example.com',
+    username: 'admin',
+    appPassword: 'test-password',
+  };
+
+  beforeEach(() => {
+    mockFetch.mockReset();
+  });
+
+  it('rejects an empty successful response', async () => {
+    mockFetch.mockResolvedValueOnce(new Response('', {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    }));
+
+    const client = createHttpClient(baseConfig);
+    await expect(client.get('/test')).rejects.toMatchObject({ code: 'INVALID_RESPONSE' });
+  });
+
+  it('rejects a non-JSON successful response', async () => {
+    mockFetch.mockResolvedValueOnce(new Response('<html>login</html>', {
+      status: 200,
+      headers: { 'content-type': 'text/html' },
+    }));
+
+    const client = createHttpClient(baseConfig);
+    await expect(client.get('/test')).rejects.toMatchObject({ code: 'INVALID_RESPONSE' });
+  });
+
+  it('rejects malformed JSON in a successful response', async () => {
+    mockFetch.mockResolvedValueOnce(new Response('{bad json', {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    }));
+
+    const client = createHttpClient(baseConfig);
+    await expect(client.get('/test')).rejects.toMatchObject({ code: 'INVALID_RESPONSE' });
+  });
+
+  it('keeps the request timeout active while consuming the response body', async () => {
+    const body = new ReadableStream<Uint8Array>({
+      start() {
+        // Intentionally never enqueue or close.
+      },
+    });
+    mockFetch.mockResolvedValueOnce(new Response(body, {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    }));
+
+    const client = createHttpClient({ ...baseConfig, timeout: 10 });
+    await expect(client.get('/test')).rejects.toThrow(/Request timed out/);
   });
 });
 
@@ -594,7 +677,7 @@ describe('HttpClient buildUrl Origin Validation', () => {
       status: 200,
       ok: true,
       statusText: 'OK',
-      headers: new Headers(),
+      headers: new Headers({ 'content-type': 'application/json' }),
       text: () => Promise.resolve('{}'),
     });
 
@@ -629,7 +712,7 @@ describe('HttpClient buildUrl Origin Validation', () => {
       status: 200,
       ok: true,
       statusText: 'OK',
-      headers: new Headers(),
+      headers: new Headers({ 'content-type': 'application/json' }),
       text: () => Promise.resolve('{"ok":true}'),
     });
 
@@ -645,7 +728,7 @@ describe('HttpClient buildUrl Origin Validation', () => {
       status: 200,
       ok: true,
       statusText: 'OK',
-      headers: new Headers(),
+      headers: new Headers({ 'content-type': 'application/json' }),
       text: () => Promise.resolve('{}'),
     });
 
@@ -781,7 +864,7 @@ describe('HttpClient Manual Redirect Mode', () => {
       status: 200,
       ok: true,
       statusText: 'OK',
-      headers: new Headers(),
+      headers: new Headers({ 'content-type': 'application/json' }),
       text: () => Promise.resolve('{}'),
     });
 

@@ -37,6 +37,19 @@ export interface CLIResult {
   duration: number;
 }
 
+function buildEnv(options: CLIRunnerOptions): Record<string, string> {
+  return {
+    PATH: process.env['PATH'] ?? '',
+    XDG_CONFIG_HOME: options.xdgConfigHome,
+    HOME: options.xdgConfigHome,
+    NODE_NO_WARNINGS: '1',
+    NODE_ENV: 'test',
+    MAINWP_ALLOW_HTTP: '1',
+    MAINWPCONTROL_NO_KEYTAR: '1',
+    ...options.env,
+  };
+}
+
 /**
  * Run the CLI with the given arguments and return the result.
  */
@@ -47,26 +60,7 @@ export async function runCLI(
   const timeout = options.timeout ?? 15_000;
   const start = Date.now();
 
-  const env: Record<string, string> = {
-    // Minimal PATH for node
-    PATH: process.env['PATH'] ?? '',
-    // Isolated config
-    XDG_CONFIG_HOME: options.xdgConfigHome,
-    // Prevent reads from real home
-    HOME: options.xdgConfigHome,
-    // Suppress Node.js warnings in output
-    NODE_NO_WARNINGS: '1',
-    // Test environment
-    NODE_ENV: 'test',
-    // Process tests use a local mock HTTP server; opt in explicitly so
-    // runtime defaults can remain HTTPS-first.
-    MAINWP_ALLOW_HTTP: '1',
-    // Skip native keytar — process tests run with isolated HOME where
-    // macOS Keychain access is slow/unavailable.
-    MAINWPCONTROL_NO_KEYTAR: '1',
-    // Spread any extra env
-    ...options.env,
-  };
+  const env = buildEnv(options);
 
   // If stdin is provided, we need to use spawn to pipe data
   if (options.stdin !== undefined) {
@@ -102,6 +96,43 @@ export async function runCLI(
         resolve({ stdout, stderr, exitCode, json, duration });
       },
     );
+  });
+}
+
+/** Run the CLI, deliver a real process signal, and collect its final output. */
+export function runCLIWithSignal(
+  args: string[],
+  options: CLIRunnerOptions,
+  signal: NodeJS.Signals = 'SIGINT',
+  signalDelay = 750,
+): Promise<CLIResult> {
+  const start = Date.now();
+  return new Promise((resolve) => {
+    const child = spawn(process.execPath, [BIN_PATH, ...args], {
+      env: buildEnv(options),
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    const stdoutChunks: Buffer[] = [];
+    const stderrChunks: Buffer[] = [];
+    const signalTimer = setTimeout(() => child.kill(signal), signalDelay);
+    const timeoutTimer = setTimeout(() => child.kill('SIGKILL'), options.timeout ?? 15_000);
+
+    child.stdout.on('data', (chunk: Buffer) => stdoutChunks.push(chunk));
+    child.stderr.on('data', (chunk: Buffer) => stderrChunks.push(chunk));
+    child.on('close', (code, closeSignal) => {
+      clearTimeout(signalTimer);
+      clearTimeout(timeoutTimer);
+      const stdout = Buffer.concat(stdoutChunks).toString('utf8');
+      const stderr = Buffer.concat(stderrChunks).toString('utf8');
+      const exitCode = code ?? (closeSignal === 'SIGINT' ? 130 : closeSignal === 'SIGTERM' ? 143 : 1);
+      let json: unknown;
+      try {
+        json = JSON.parse(stdout);
+      } catch {
+        // not JSON
+      }
+      resolve({ stdout, stderr, exitCode, json, duration: Date.now() - start });
+    });
   });
 }
 

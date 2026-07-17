@@ -10,6 +10,7 @@
  */
 
 import { AuthError } from '../utils/errors.js';
+import { sanitizeErrorMessage } from '../utils/error-sanitizer.js';
 import { sanitizeSingleLine } from '../utils/terminal-sanitizer.js';
 
 /**
@@ -27,6 +28,7 @@ const ENV_VAR = 'MAINWP_APP_PASSWORD';
  * dialog, this prevents the CLI from hanging indefinitely.
  */
 const KEYTAR_TIMEOUT_MS = 5_000;
+const MAX_KEYCHAIN_ERROR_LENGTH = 500;
 
 /**
  * Keytar is native code and can reject with non-Error values; a blind
@@ -35,6 +37,11 @@ const KEYTAR_TIMEOUT_MS = 5_000;
  */
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+function sanitizeKeychainError(error: unknown): string {
+  return sanitizeErrorMessage(sanitizeSingleLine(errorMessage(error)))
+    .slice(0, MAX_KEYCHAIN_ERROR_LENGTH);
 }
 
 function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
@@ -109,6 +116,11 @@ export interface KeychainSetResult {
   error?: string;
 }
 
+export interface KeychainDeleteResult {
+  deleted: boolean;
+  error?: string;
+}
+
 /**
  * Keychain class
  */
@@ -179,18 +191,30 @@ export class Keychain {
   /**
    * Delete a credential
    */
-  async delete(profileName: string): Promise<void> {
+  async delete(profileName: string): Promise<KeychainDeleteResult> {
     const kt = await loadKeytar();
 
     if (kt) {
       try {
-        await withTimeout(kt.deletePassword(SERVICE_NAME, profileName), KEYTAR_TIMEOUT_MS);
+        const deleted = await withTimeout(
+          kt.deletePassword(SERVICE_NAME, profileName),
+          KEYTAR_TIMEOUT_MS,
+        );
+        return deleted
+          ? { deleted: true }
+          : { deleted: false, error: 'No matching keychain credential was found' };
       } catch (error) {
-        // Always warn, including non-TTY/CI runs — a silent failure here
-        // leaves stale credentials in the keychain with no visible signal.
-        console.error(`Warning: Failed to remove credentials from keychain: ${sanitizeSingleLine(errorMessage(error))}`);
+        return {
+          deleted: false,
+          error: sanitizeKeychainError(error),
+        };
       }
     }
+
+    return {
+      deleted: false,
+      error: 'Keychain (keytar) is not available',
+    };
   }
 
   /**

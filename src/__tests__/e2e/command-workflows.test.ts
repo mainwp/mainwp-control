@@ -307,7 +307,7 @@ describe('E2E: Command-Level Workflows', () => {
     mockKeychainGet.mockReset();
     mockKeychainGetOrThrow.mockReset();
     mockKeychainSet.mockReset().mockResolvedValue({ stored: true, location: 'keychain' });
-    mockKeychainDelete.mockReset().mockResolvedValue(undefined);
+    mockKeychainDelete.mockReset().mockResolvedValue({ deleted: true });
 
     mockHttpGet.mockReset();
     mockHttpPost.mockReset();
@@ -411,6 +411,26 @@ describe('E2E: Command-Level Workflows', () => {
       ], LOGIN_FLAGS);
 
       expect(mockKeychainSet).toHaveBeenCalledWith('keychain-test', 'mypassword');
+    });
+
+    it('restores an existing credential when profile persistence fails', async () => {
+      mockHttpGet.mockResolvedValueOnce(
+        createMockHttpResponse(200, { abilities: [] })
+      );
+      mockProfileStoreGet.mockResolvedValueOnce(createMockProfile({ name: 'existing' }));
+      mockKeychainGet.mockResolvedValueOnce('old-password');
+      mockProfileStoreSave.mockRejectedValueOnce(new Error('disk full'));
+
+      await runCommand(Login, [
+        '--url', 'https://dashboard.test',
+        '--username', 'admin',
+        '--password', 'new-password',
+        '--name', 'existing',
+      ], LOGIN_FLAGS);
+
+      expect(mockKeychainSet).toHaveBeenNthCalledWith(1, 'existing', 'new-password');
+      expect(mockKeychainSet).toHaveBeenNthCalledWith(2, 'existing', 'old-password');
+      expect(mockProfileStoreSetActive).not.toHaveBeenCalled();
     });
 
     it('handles authentication failure with error exit', async () => {

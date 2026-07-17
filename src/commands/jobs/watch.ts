@@ -38,7 +38,8 @@ export const RESULTS_PREVIEW_LIMIT = 5;
  * Check if a job status is terminal (job finished, no further polling)
  */
 export function isTerminalStatus(status: string): boolean {
-  return status === 'completed' || status === 'failed' || status === 'partial';
+  return status === 'completed' || status === 'failed' ||
+    status === 'partial' || status === 'cancelled';
 }
 
 export default class JobsWatch extends BaseCommand {
@@ -151,9 +152,15 @@ export default class JobsWatch extends BaseCommand {
             undefined,
             { jobId: args.id, partialStatus: result.status }
           )
-        : result.status.status === 'failed' || result.status.status === 'partial'
+        : result.status.status === 'failed' ||
+            result.status.status === 'partial' ||
+            result.status.status === 'cancelled'
           ? new APIError(
-              result.status.status === 'failed' ? 'BATCH_FAILED' : 'BATCH_PARTIAL',
+              result.status.status === 'failed'
+                ? 'BATCH_FAILED'
+                : result.status.status === 'cancelled'
+                  ? 'BATCH_CANCELLED'
+                  : 'BATCH_PARTIAL',
               `Batch job ${args.id} finished with status "${result.status.status}"`,
               undefined,
               { jobId: args.id, status: result.status }

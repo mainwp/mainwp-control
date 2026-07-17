@@ -61,7 +61,7 @@ export default class ProfileDelete extends BaseCommand {
 
     // Delete credentials from keychain
     const keychain = getKeychain();
-    await keychain.delete(args.name);
+    const credentialDeletion = await keychain.delete(args.name);
 
     // Remove profile from profile store (handles active profile switching automatically)
     await profileStore.remove(args.name);
@@ -69,9 +69,20 @@ export default class ProfileDelete extends BaseCommand {
     this.output(
       {
         deleted: args.name,
-        message: 'Profile and credentials deleted successfully',
+        credentialsDeleted: credentialDeletion.deleted,
+        message: credentialDeletion.deleted
+          ? 'Profile and credentials deleted successfully'
+          : 'Profile deleted, but keychain credential removal failed',
+        ...(credentialDeletion.error ? { credentialWarning: credentialDeletion.error } : {}),
       },
-      () => formatSuccess(`Deleted profile: ${args.name}`)
+      () => credentialDeletion.deleted
+        ? formatSuccess(`Deleted profile: ${args.name}`)
+        : [
+            formatSuccess(`Deleted profile: ${args.name}`),
+            formatWarning(
+              `Keychain credential removal failed${credentialDeletion.error ? `: ${credentialDeletion.error}` : '.'}`
+            ),
+          ].join('\n')
     );
   }
 }

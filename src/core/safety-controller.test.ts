@@ -217,7 +217,7 @@ describe('Golden Test: Safety Classification', () => {
     expect(classification.requiresSafetyFlow).toBe(true);
   });
 
-  it('handles abilities without annotations (defaults to safe)', () => {
+  it('handles abilities without annotations as destructive', () => {
     const ability: Ability = {
       name: 'legacy-ability-v1',
       label: 'Legacy Ability',
@@ -227,9 +227,9 @@ describe('Golden Test: Safety Classification', () => {
     };
     const classification = controller.classify(ability);
 
-    expect(classification.isDestructive).toBe(false);
+    expect(classification.isDestructive).toBe(true);
     expect(classification.isReadOnly).toBe(false);
-    expect(classification.requiresSafetyFlow).toBe(false);
+    expect(classification.requiresSafetyFlow).toBe(true);
   });
 });
 
@@ -296,7 +296,7 @@ describe('Annotation Validation (F2)', () => {
     controller = new SafetyController();
   });
 
-  it('falls back to safe defaults for non-boolean annotation values', () => {
+  it('treats non-boolean annotation values as destructive', () => {
     const ability: Ability = {
       name: 'bad-annotations-v1',
       label: 'Bad',
@@ -313,11 +313,10 @@ describe('Annotation Validation (F2)', () => {
 
     const classification = controller.classify(ability);
 
-    // All non-boolean → fall back to defaults (false)
-    expect(classification.isDestructive).toBe(false);
+    expect(classification.isDestructive).toBe(true);
     expect(classification.isReadOnly).toBe(false);
     expect(classification.isIdempotent).toBe(false);
-    expect(classification.requiresSafetyFlow).toBe(false);
+    expect(classification.requiresSafetyFlow).toBe(true);
   });
 
   it('warns on contradictory annotations and requires safety flow', () => {
@@ -340,7 +339,7 @@ describe('Annotation Validation (F2)', () => {
     errorSpy.mockRestore();
   });
 
-  it('missing/undefined annotation fields produce safe defaults', () => {
+  it('missing/undefined annotation fields require the safety flow', () => {
     const ability: Ability = {
       name: 'no-annotations-v1',
       label: 'None',
@@ -351,10 +350,10 @@ describe('Annotation Validation (F2)', () => {
 
     const classification = controller.classify(ability);
 
-    expect(classification.isDestructive).toBe(false);
+    expect(classification.isDestructive).toBe(true);
     expect(classification.isReadOnly).toBe(false);
     expect(classification.isIdempotent).toBe(false);
-    expect(classification.requiresSafetyFlow).toBe(false);
+    expect(classification.requiresSafetyFlow).toBe(true);
   });
 });
 

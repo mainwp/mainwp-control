@@ -191,10 +191,9 @@ export class HttpClient {
 
       const response = await fetch(url, fetchOptions);
 
-      clearTimeout(timeoutId);
-
       // SECURITY: Handle redirects manually - only follow same-origin
       if (this.isRedirect(response.status)) {
+        clearTimeout(timeoutId);
         return this.handleRedirect<T>(response, method, body, options, redirectCount);
       }
 
@@ -206,6 +205,8 @@ export class HttpClient {
       const contentLength = response.headers.get('content-length');
       const parsedContentLength = contentLength ? parseInt(contentLength, 10) : NaN;
       if (!isNaN(parsedContentLength) && parsedContentLength > this.maxResponseSize) {
+        controller.abort();
+        void response.body?.cancel().catch(() => {});
         throw new NetworkError(
           `Response too large: ${parsedContentLength} bytes`,
           undefined,
@@ -213,31 +214,44 @@ export class HttpClient {
         );
       }
 
-      // Parse response
-      const text = await response.text();
-
-      // Always verify the buffered body because Content-Length may be inaccurate.
-      if (text.length > this.maxResponseSize) {
-        throw new NetworkError(
-          `Response too large: ${text.length} bytes`,
-          undefined,
-          'Response is too large. Check the Dashboard logs or try a simpler query'
-        );
-      }
+      const text = await this.readResponseBody(response, controller, effectiveSignal);
 
       let data: T;
-      try {
-        // SECURITY: Strip __proto__ and constructor keys to prevent prototype
-        // pollution from untrusted API responses
-        data = text ? (JSON.parse(text, (key, value) => {
-          if (key === '__proto__' || key === 'constructor') {
-            return undefined;
-          }
-          return value;
-        }) as T) : ({} as T);
-      } catch {
-        // If not JSON, wrap as string
-        data = text as unknown as T;
+      if (response.ok) {
+        const contentType = response.headers.get('content-type')?.toLowerCase() ?? '';
+        const mediaType = contentType.split(';', 1)[0]?.trim() ?? '';
+        if (mediaType !== 'application/json' && !mediaType.endsWith('+json')) {
+          throw new APIError(
+            'INVALID_RESPONSE',
+            'Dashboard returned a successful response without a JSON content type',
+            response.status
+          );
+        }
+        if (text.trim().length === 0) {
+          throw new APIError(
+            'INVALID_RESPONSE',
+            'Dashboard returned an empty successful response',
+            response.status
+          );
+        }
+
+        try {
+          data = this.parseJson<T>(text);
+        } catch {
+          throw new APIError(
+            'INVALID_RESPONSE',
+            'Dashboard returned malformed JSON in a successful response',
+            response.status
+          );
+        }
+      } else {
+        try {
+          data = text ? this.parseJson<T>(text) : ({} as T);
+        } catch {
+          // Preserve existing non-2xx behavior: raw bodies are sanitized by
+          // handleHttpError before they are exposed through a typed error.
+          data = text as unknown as T;
+        }
       }
 
       // Handle HTTP errors
@@ -252,11 +266,100 @@ export class HttpClient {
         data,
       };
     } catch (error) {
-      clearTimeout(timeoutId);
       // Distinguish caller cancellation from our own timeout: AbortSignal.any()
       // erases which signal fired, so check the caller's signal directly.
       throw this.normalizeError(error, options?.signal?.aborted === true);
+    } finally {
+      clearTimeout(timeoutId);
     }
+  }
+
+  private async readResponseBody(
+    response: Response,
+    controller: AbortController,
+    signal: AbortSignal
+  ): Promise<string> {
+    if (!response.body) {
+      const text = await response.text();
+      const byteLength = Buffer.byteLength(text, 'utf8');
+      if (byteLength > this.maxResponseSize) {
+        controller.abort();
+        throw this.responseTooLarge(byteLength);
+      }
+      return text;
+    }
+
+    const reader = response.body.getReader();
+    const chunks: Uint8Array[] = [];
+    let totalBytes = 0;
+
+    try {
+      while (true) {
+        const { done, value } = await this.readChunk(reader, signal);
+        if (done) break;
+        if (!value) continue;
+
+        totalBytes += value.byteLength;
+        if (totalBytes > this.maxResponseSize) {
+          controller.abort();
+          await reader.cancel().catch(() => {});
+          throw this.responseTooLarge(totalBytes);
+        }
+        chunks.push(value);
+      }
+    } catch (error) {
+      void reader.cancel().catch(() => {});
+      throw error;
+    } finally {
+      reader.releaseLock();
+    }
+
+    return Buffer.concat(chunks.map((chunk) => Buffer.from(chunk)), totalBytes).toString('utf8');
+  }
+
+  private readChunk(
+    reader: ReadableStreamDefaultReader<Uint8Array>,
+    signal: AbortSignal
+  ): Promise<{ done: boolean; value?: Uint8Array }> {
+    if (signal.aborted) {
+      return Promise.reject(new DOMException('The operation was aborted', 'AbortError'));
+    }
+
+    return new Promise((resolve, reject) => {
+      const onAbort = (): void => {
+        reject(new DOMException('The operation was aborted', 'AbortError'));
+      };
+      signal.addEventListener('abort', onAbort, { once: true });
+      reader.read().then(
+        (result) => {
+          signal.removeEventListener('abort', onAbort);
+          resolve(result);
+        },
+        (error: unknown) => {
+          signal.removeEventListener('abort', onAbort);
+          reject(error);
+        }
+      );
+    });
+  }
+
+  private responseTooLarge(byteLength: number): NetworkError {
+    return new NetworkError(
+      `Response too large: ${byteLength} bytes`,
+      undefined,
+      'Response is too large. Check the Dashboard logs or try a simpler query'
+    );
+  }
+
+  private parseJson<T>(text: string): T {
+    // SECURITY: Strip __proto__ and constructor keys to prevent prototype
+    // pollution from untrusted API responses.
+    return JSON.parse(text, (key, value) => {
+      if (key === '__proto__' || key === 'constructor') {
+        return undefined;
+      }
+      return value;
+    }) as T;
   }
 
   /**

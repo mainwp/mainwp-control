@@ -11,7 +11,7 @@
  * Sensitive data (passwords, tokens, API keys) is automatically redacted.
  */
 
-import { promises as fs } from 'node:fs';
+import { constants as fsConstants, promises as fs } from 'node:fs';
 import { join } from 'node:path';
 import { getConfigDir } from '../config/settings.js';
 import { getInputSanitizer } from '../validation/input-sanitizer.js';
@@ -25,6 +25,8 @@ const MAX_LOG_SIZE = 10 * 1024 * 1024;
  * Maximum number of rotated log files to keep
  */
 const MAX_ROTATIONS = 5;
+
+const MAX_SERIALIZED_INPUT_BYTES = 8 * 1024;
 
 /**
  * Audit log filename
@@ -57,6 +59,12 @@ export interface AuditEntry {
   };
   /** Input parameters (redacted of sensitive data) */
   input: Record<string, unknown>;
+  /** Present when input was bounded before writing the entry. */
+  inputTruncated?: {
+    marker: 'TRUNCATED';
+    originalBytes: number;
+    limitBytes: number;
+  };
 }
 
 /**
@@ -111,14 +119,18 @@ export class AuditLogger {
 
     // Redact sensitive data from input
     const redactedInput = this.inputSanitizer.redactSensitive(params.input);
+    const boundedInput = this.boundInput(redactedInput);
 
     // Build audit entry
     const entry: AuditEntry = {
       timestamp: new Date().toISOString(),
       abilityName: params.abilityName,
       userDecision: params.userDecision,
-      input: redactedInput,
+      input: boundedInput.input,
     };
+    if (boundedInput.truncated) {
+      entry.inputTruncated = boundedInput.truncated;
+    }
 
     // Add optional fields
     if (params.preview) {
@@ -132,13 +144,49 @@ export class AuditLogger {
     const line = JSON.stringify(entry) + '\n';
 
     // Open atomically in append mode and self-heal existing file permissions.
-    const handle = await fs.open(logPath, 'a', 0o600);
+    const noFollow = process.platform === 'win32' ? 0 : (fsConstants.O_NOFOLLOW ?? 0);
+    const appendFlags = fsConstants.O_APPEND | fsConstants.O_CREAT |
+      fsConstants.O_WRONLY | noFollow;
+    const handle = await fs.open(logPath, appendFlags, 0o600);
     try {
       await handle.chmod(0o600).catch(() => {});
       await handle.writeFile(line, 'utf-8');
     } finally {
       await handle.close();
     }
+  }
+
+  private boundInput(input: Record<string, unknown>): {
+    input: Record<string, unknown>;
+    truncated?: AuditEntry['inputTruncated'];
+  } {
+    const serialized = JSON.stringify(input);
+    const originalBytes = Buffer.byteLength(serialized, 'utf8');
+    if (originalBytes <= MAX_SERIALIZED_INPUT_BYTES) {
+      return { input };
+    }
+
+    const serializedBytes = Buffer.from(serialized, 'utf8');
+    let prefixBytes = MAX_SERIALIZED_INPUT_BYTES;
+    let bounded: Record<string, unknown>;
+    do {
+      bounded = {
+        serializedPrefix: serializedBytes.subarray(0, prefixBytes).toString('utf8'),
+      };
+      if (Buffer.byteLength(JSON.stringify(bounded), 'utf8') <= MAX_SERIALIZED_INPUT_BYTES) {
+        break;
+      }
+      prefixBytes = Math.floor(prefixBytes * 0.75);
+    } while (prefixBytes > 0);
+
+    return {
+      input: bounded!,
+      truncated: {
+        marker: 'TRUNCATED',
+        originalBytes,
+        limitBytes: MAX_SERIALIZED_INPUT_BYTES,
+      },
+    };
   }
 
   /**

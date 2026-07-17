@@ -61,13 +61,6 @@ export type ExecutionIntent =
  * 2. dry_run and confirm are MUTUALLY EXCLUSIVE
  * 3. Safety check happens BEFORE any network call
  */
-/** Default annotations for abilities without explicit metadata */
-const DEFAULT_ANNOTATIONS: AbilityAnnotations = {
-  readonly: false,
-  destructive: false,
-  idempotent: false,
-};
-
 /**
  * Known-destructive ability name patterns.
  *
@@ -119,9 +112,7 @@ export class SafetyController {
    * under-reports destructiveness; it never downgrades, only upgrades.
    */
   classify(ability: Ability): SafetyClassification {
-    const annotations = this.validateAnnotations(
-      ability.meta?.annotations ?? DEFAULT_ANNOTATIONS
-    );
+    const annotations = this.validateAnnotations(ability.meta?.annotations);
 
     // SECURITY: Defense-in-depth — force destructive classification for
     // abilities whose names match known-destructive patterns, regardless
@@ -145,18 +136,26 @@ export class SafetyController {
   /**
    * Validate annotation fields and resolve contradictions.
    *
-   * - Non-boolean values fall back to safe defaults.
+   * - Missing or non-boolean values fail closed as destructive.
    * - Contradictory annotations (destructive + readonly) → warn and treat as destructive.
    */
-  private validateAnnotations(annotations: AbilityAnnotations): AbilityAnnotations {
-    const defaults = DEFAULT_ANNOTATIONS;
+  private validateAnnotations(annotations: unknown): AbilityAnnotations {
+    if (typeof annotations !== 'object' || annotations === null || Array.isArray(annotations)) {
+      return { destructive: true, readonly: false, idempotent: false };
+    }
 
-    const destructive = typeof annotations.destructive === 'boolean'
-      ? annotations.destructive : defaults.destructive;
-    let readonly_ = typeof annotations.readonly === 'boolean'
-      ? annotations.readonly : defaults.readonly;
-    const idempotent = typeof annotations.idempotent === 'boolean'
-      ? annotations.idempotent : defaults.idempotent;
+    const record = annotations as Record<string, unknown>;
+    if (
+      typeof record['destructive'] !== 'boolean' ||
+      typeof record['readonly'] !== 'boolean' ||
+      typeof record['idempotent'] !== 'boolean'
+    ) {
+      return { destructive: true, readonly: false, idempotent: false };
+    }
+
+    const destructive = record['destructive'];
+    let readonly_ = record['readonly'];
+    const idempotent = record['idempotent'];
 
     // Contradictory: both destructive and readonly — treat as destructive (safe default)
     if (destructive && readonly_) {

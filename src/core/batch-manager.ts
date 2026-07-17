@@ -8,11 +8,12 @@
 import { HttpClient, type HttpClientConfig, createHttpClient } from './http-client.js';
 import { APIError, NetworkError } from '../utils/errors.js';
 import { ExponentialBackoff } from '../utils/retry.js';
+import { validateJobId } from './job-id.js';
 
 /**
  * Job status types
  */
-export type JobStatusType = 'pending' | 'running' | 'completed' | 'failed' | 'partial';
+export type JobStatusType = 'pending' | 'running' | 'completed' | 'failed' | 'partial' | 'cancelled';
 
 /**
  * Job status response from API
@@ -82,12 +83,15 @@ const DEFAULTS = {
   multiplier: 2,
 };
 
+const MAX_STATUS_ARRAY_LENGTH = 10_000;
+
 /**
  * Batch Manager class
  */
 export class BatchManager {
   private readonly httpClient: HttpClient;
   private readonly baseEndpoint = '/wp-json/wp-abilities/v1';
+  private readonly terminalJobs = new Set<string>();
 
   constructor(config: HttpClientConfig) {
     this.httpClient = createHttpClient(config);
@@ -225,28 +229,44 @@ export class BatchManager {
    * Get the current status of a batch job
    */
   async getJobStatus(jobId: string, signal?: AbortSignal): Promise<JobStatus> {
+    const validatedJobId = validateJobId(jobId);
     const endpoint = `${this.baseEndpoint}/abilities/mainwp/get-batch-job-status-v1/run`;
 
-    const qs = `input[job_id]=${encodeURIComponent(jobId)}`;
+    const qs = `input[job_id]=${encodeURIComponent(validatedJobId)}`;
     const response = await this.httpClient.get<JobStatusResponse>(
       `${endpoint}?${qs}`,
       signal ? { signal } : undefined
     );
 
-    return this.normalizeJobStatus(response.data);
+    const status = this.normalizeJobStatus(response.data, validatedJobId);
+    if (this.terminalJobs.has(validatedJobId) && !this.isServerTerminalStatus(status.status)) {
+      throw new APIError(
+        'INVALID_RESPONSE',
+        'Job status regressed from a terminal state'
+      );
+    }
+    if (this.isServerTerminalStatus(status.status)) {
+      this.terminalJobs.add(validatedJobId);
+    }
+    return status;
   }
 
   /**
    * Check if a status is terminal (job finished)
    */
   private isTerminalStatus(status: JobStatusType): boolean {
-    return status === 'completed' || status === 'failed' || status === 'partial';
+    return status === 'completed' || status === 'failed' ||
+      status === 'partial' || status === 'cancelled';
+  }
+
+  private isServerTerminalStatus(status: JobStatusType): boolean {
+    return status === 'completed' || status === 'failed' || status === 'cancelled';
   }
 
   /**
    * Normalize API response to JobStatus, unwrapping success envelope if present
    */
-  private normalizeJobStatus(data: unknown): JobStatus {
+  private normalizeJobStatus(data: unknown, requestedJobId: string): JobStatus {
     if (typeof data !== 'object' || data === null) {
       throw new APIError('INVALID_RESPONSE', 'Invalid job status response');
     }
@@ -263,19 +283,36 @@ export class BatchManager {
       fields = inner as Record<string, unknown>;
     }
 
-    const id = String(fields['job_id'] ?? fields['id'] ?? '');
-    if (!id) {
+    const rawId = fields['job_id'] ?? fields['id'];
+    if (rawId === undefined) {
       throw new APIError('INVALID_RESPONSE', 'Job status response missing job ID');
     }
+    const responseJobId = validateJobId(rawId);
+    if (responseJobId !== requestedJobId) {
+      throw new APIError(
+        'INVALID_RESPONSE',
+        `Job status response ID mismatch for requested job ${requestedJobId}`
+      );
+    }
+
+    const progress = this.parseStatusNumber(fields, 'progress', 100);
+    const total = this.parseStatusNumber(fields, 'total');
+    const processed = this.parseStatusNumber(fields, 'processed');
+    if (processed !== undefined && total !== undefined && processed > total) {
+      throw new APIError('INVALID_RESPONSE', 'Job status processed count exceeds total');
+    }
+
+    const results = this.parseStatusArray(fields, 'results');
+    const rawErrors = this.parseStatusArray(fields, 'errors');
 
     return {
-      id,
+      id: responseJobId,
       status: this.parseJobStatus(fields['status']),
-      progress: typeof fields['progress'] === 'number' ? fields['progress'] : undefined,
-      total: typeof fields['total'] === 'number' ? fields['total'] : undefined,
-      processed: typeof fields['processed'] === 'number' ? fields['processed'] : undefined,
-      results: Array.isArray(fields['results']) ? fields['results'] : undefined,
-      errors: this.parseJobErrors(fields['errors']),
+      progress,
+      total,
+      processed,
+      results,
+      errors: this.parseJobErrors(rawErrors),
       created_at: typeof fields['created_at'] === 'string' ? fields['created_at'] : undefined,
       completed_at: typeof fields['completed_at'] === 'string' ? fields['completed_at'] : undefined,
     };
@@ -286,7 +323,7 @@ export class BatchManager {
    */
   private parseJobStatus(value: unknown): JobStatusType {
     if (typeof value !== 'string') {
-      return 'pending';
+      throw new APIError('INVALID_RESPONSE', 'Job status response has an invalid status');
     }
 
     const status = value.toLowerCase();
@@ -297,6 +334,7 @@ export class BatchManager {
       case 'completed':
       case 'failed':
       case 'partial':
+      case 'cancelled':
         return status;
       case 'processing':
       case 'in_progress':
@@ -307,8 +345,44 @@ export class BatchManager {
       case 'error':
         return 'failed';
       default:
-        return 'pending';
+        throw new APIError('INVALID_RESPONSE', 'Job status response has an unknown status');
     }
+  }
+
+  private parseStatusNumber(
+    fields: Record<string, unknown>,
+    key: 'progress' | 'total' | 'processed',
+    maximum?: number
+  ): number | undefined {
+    const value = fields[key];
+    if (value === undefined) return undefined;
+    if (
+      typeof value !== 'number' ||
+      !Number.isFinite(value) ||
+      value < 0 ||
+      (maximum !== undefined && value > maximum)
+    ) {
+      throw new APIError('INVALID_RESPONSE', `Job status ${key} is invalid`);
+    }
+    return value;
+  }
+
+  private parseStatusArray(
+    fields: Record<string, unknown>,
+    key: 'results' | 'errors'
+  ): unknown[] | undefined {
+    const value = fields[key];
+    if (value === undefined) return undefined;
+    if (!Array.isArray(value)) {
+      throw new APIError('INVALID_RESPONSE', `Job status ${key} is not an array`);
+    }
+    if (value.length > MAX_STATUS_ARRAY_LENGTH) {
+      throw new APIError(
+        'INVALID_RESPONSE',
+        `Job status ${key} exceeds the ${MAX_STATUS_ARRAY_LENGTH}-item limit`
+      );
+    }
+    return value;
   }
 
   /**

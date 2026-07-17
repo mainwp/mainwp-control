@@ -20,6 +20,12 @@ const mockHandleWriteFile = vi.fn();
 const mockHandleClose = vi.fn();
 
 vi.mock('node:fs', () => ({
+  constants: {
+    O_APPEND: 1,
+    O_CREAT: 2,
+    O_WRONLY: 4,
+    O_NOFOLLOW: 8,
+  },
   promises: {
     mkdir: (...args: unknown[]) => mockMkdir(...args),
     chmod: (...args: unknown[]) => mockChmod(...args),
@@ -103,7 +109,11 @@ describe('AuditLogger', () => {
 
       expect(mockHandleWriteFile).toHaveBeenCalledTimes(1);
       const [content] = mockHandleWriteFile.mock.calls[0]!;
-      expect(mockOpen).toHaveBeenCalledWith(MOCK_LOG, 'a', 0o600);
+      expect(mockOpen).toHaveBeenCalledWith(
+        MOCK_LOG,
+        process.platform === 'win32' ? 7 : 15,
+        0o600,
+      );
 
       const entry = JSON.parse(content.trim());
       expect(entry.timestamp).toBe('2026-03-18T12:00:00.000Z');
@@ -175,6 +185,23 @@ describe('AuditLogger', () => {
       expect(entry.input.password).toBe('[REDACTED]');
     });
 
+    it('bounds oversized redacted input and records an explicit truncation marker', async () => {
+      mockRedactSensitive.mockReturnValueOnce({ payload: 'x'.repeat(20_000) });
+
+      await logger.logDestructiveAction({
+        ...baseInput,
+        input: { payload: 'x'.repeat(20_000) },
+      });
+
+      const entry = JSON.parse(mockHandleWriteFile.mock.calls[0]![0].trim());
+      expect(Buffer.byteLength(JSON.stringify(entry.input), 'utf8')).toBeLessThanOrEqual(8 * 1024);
+      expect(entry.inputTruncated).toEqual({
+        marker: 'TRUNCATED',
+        originalBytes: 20_014,
+        limitBytes: 8 * 1024,
+      });
+    });
+
     it('creates config directory with restricted permissions', async () => {
       await logger.logDestructiveAction(baseInput);
 
@@ -188,7 +215,7 @@ describe('AuditLogger', () => {
     it('opens the log atomically in append mode and restricts permissions', async () => {
       await logger.logDestructiveAction(baseInput);
 
-      expect(mockOpen).toHaveBeenCalledWith(MOCK_LOG, 'a', 0o600);
+      expect(mockOpen).toHaveBeenCalledWith(MOCK_LOG, 15, 0o600);
       expect(mockHandleChmod).toHaveBeenCalledWith(0o600);
       expect(mockHandleClose).toHaveBeenCalled();
     });

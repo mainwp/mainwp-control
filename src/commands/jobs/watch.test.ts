@@ -88,6 +88,7 @@ describe('jobs watch command', () => {
       expect(isTerminalStatus('completed')).toBe(true);
       expect(isTerminalStatus('failed')).toBe(true);
       expect(isTerminalStatus('partial')).toBe(true);
+      expect(isTerminalStatus('cancelled')).toBe(true);
       expect(isTerminalStatus('pending')).toBe(false);
       expect(isTerminalStatus('running')).toBe(false);
     });

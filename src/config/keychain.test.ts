@@ -34,24 +34,56 @@ describe('Keychain error normalization', () => {
     ['null', null, 'null'],
     ['undefined', undefined, 'undefined'],
     ['a string', 'keychain locked', 'keychain locked'],
-  ])('delete() warns instead of crashing when keytar rejects with %s', async (_label, rejection, expected) => {
+  ])('delete() reports failure without crashing when keytar rejects with %s', async (_label, rejection, expected) => {
     vi.mocked(keytar.deletePassword).mockRejectedValue(rejection);
 
-    await expect(new Keychain().delete('default')).resolves.toBeUndefined();
-
-    expect(errorSpy).toHaveBeenCalledWith(
-      expect.stringContaining(`Failed to remove credentials from keychain: ${expected}`)
-    );
+    await expect(new Keychain().delete('default')).resolves.toEqual({
+      deleted: false,
+      error: expected,
+    });
+    expect(errorSpy).not.toHaveBeenCalled();
   });
 
-  it('delete() warns with the message when keytar rejects with an Error', async () => {
+  it('delete() reports the message when keytar rejects with an Error', async () => {
     vi.mocked(keytar.deletePassword).mockRejectedValue(new Error('access denied'));
 
-    await new Keychain().delete('default');
+    await expect(new Keychain().delete('default')).resolves.toEqual({
+      deleted: false,
+      error: 'access denied',
+    });
+  });
 
-    expect(errorSpy).toHaveBeenCalledWith(
-      expect.stringContaining('Failed to remove credentials from keychain: access denied')
+  it('delete() reports when keytar did not remove a credential', async () => {
+    vi.mocked(keytar.deletePassword).mockResolvedValue(false);
+
+    await expect(new Keychain().delete('default')).resolves.toEqual({
+      deleted: false,
+      error: 'No matching keychain credential was found',
+    });
+  });
+
+  it('delete() redacts paths and bounds keytar errors', async () => {
+    vi.mocked(keytar.deletePassword).mockRejectedValue(
+      new Error(`/Users/tester/.config/mainwpcontrol ${'x'.repeat(1000)}`),
     );
+
+    const result = await new Keychain().delete('default');
+
+    expect(result.deleted).toBe(false);
+    expect(result.error).not.toContain('/Users/tester');
+    expect(result.error?.length).toBeLessThanOrEqual(500);
+  });
+
+  it('delete() reports failure when keytar is unavailable', async () => {
+    vi.resetModules();
+    process.env['MAINWPCONTROL_NO_KEYTAR'] = '1';
+
+    const { Keychain: FreshKeychain } = await import('./keychain.js');
+
+    await expect(new FreshKeychain().delete('default')).resolves.toEqual({
+      deleted: false,
+      error: 'Keychain (keytar) is not available',
+    });
   });
 
   it('set() returns a failure result when keytar rejects with a non-Error', async () => {

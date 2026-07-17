@@ -89,7 +89,7 @@ describe('exit code contract', () => {
   // ---------------------------------------------------------------------------
 
   describe('exit 1: mutually exclusive flags', () => {
-    it('abilities run delete-site-v1 --dry-run --confirm exits non-zero with exclusive flag error', async () => {
+    it('abilities run delete-site-v1 --dry-run --confirm exits 1 with prose on stderr', async () => {
       config = await ConfigDir.create({
         profiles: [
           { name: 'test', dashboardUrl: server.baseUrl, username: 'admin' },
@@ -102,22 +102,40 @@ describe('exit code contract', () => {
       const result = await run([
         'abilities', 'run', 'delete-site-v1',
         '--dry-run', '--confirm',
-        '--json',
       ]);
 
-      // oclif throws a CLIError for exclusive flag violations.
-      // The exact exit code depends on oclif's internal handling
-      // (typically 2 for arg validation), so we assert non-zero and
-      // verify the error message references the flag conflict.
-      expect(result.exitCode).not.toBe(0);
+      expect(result.exitCode).toBe(1);
+      expect(result.stdout).toBe('');
 
-      const combined = result.stdout + result.stderr;
       const mentionsExclusion =
-        /exclusive/i.test(combined) ||
-        /cannot also be provided/i.test(combined) ||
-        /mutually exclusive/i.test(combined) ||
-        /dry-run.*confirm/i.test(combined);
+        /exclusive/i.test(result.stderr) ||
+        /cannot also be provided/i.test(result.stderr) ||
+        /mutually exclusive/i.test(result.stderr) ||
+        /dry-run.*confirm/i.test(result.stderr);
       expect(mentionsExclusion).toBe(true);
+    });
+
+    it('emits exactly one JSON error envelope on stdout for a parse-time error', async () => {
+      config = await ConfigDir.create({
+        profiles: [
+          { name: 'test', dashboardUrl: server.baseUrl, username: 'admin' },
+        ],
+        activeProfile: 'test',
+      });
+
+      const result = await run([
+        'abilities', 'run', 'delete-site-v1',
+        '--dry-run', '--confirm', '--json',
+      ]);
+
+      expect(result.exitCode).toBe(1);
+      expect(result.stderr).toBe('');
+      const envelope = JSON.parse(result.stdout) as {
+        success: boolean;
+        error?: { message?: string };
+      };
+      expect(envelope.success).toBe(false);
+      expect(envelope.error?.message).toMatch(/confirm|exclusive|provided/i);
     });
   });
 

@@ -8,9 +8,9 @@
 
 import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach } from 'vitest';
 import { MockServer } from './fixtures/mock-server.js';
-import { runCLI } from './fixtures/cli-runner.js';
+import { runCLI, runCLIWithSignal } from './fixtures/cli-runner.js';
 import { ConfigDir } from './fixtures/config-dir.js';
-import { abilityRunBatch, jobStatus } from './fixtures/api-responses.js';
+import { dashboardQueuedResponse, jobStatus } from './fixtures/api-responses.js';
 
 describe('batch job waiting', () => {
   const server = new MockServer();
@@ -60,7 +60,7 @@ describe('batch job waiting', () => {
     const cfg = await createConfig();
 
     // Register the ability run endpoint to return a batch job
-    server.setRunResponse('sync-sites-v1', abilityRunBatch('sync_123'));
+    server.setRunResponse('sync-sites-v1', dashboardQueuedResponse('sync_123'));
 
     // Register the batch status progression: running → completed
     server.setJobProgression('sync_123', [
@@ -109,7 +109,7 @@ describe('batch job waiting', () => {
   it('abilities run --wait with timeout exits 4 (BATCH_TIMEOUT)', async () => {
     const cfg = await createConfig();
 
-    server.setRunResponse('sync-sites-v1', abilityRunBatch('sync_123'));
+    server.setRunResponse('sync-sites-v1', dashboardQueuedResponse('sync_123'));
 
     // Job never completes: stays running forever (last status repeated)
     server.setJobProgression('sync_123', [
@@ -136,6 +136,32 @@ describe('batch job waiting', () => {
     expect(error['code']).toBe('BATCH_TIMEOUT');
     const details = error['details'] as Record<string, unknown>;
     expect(details).toHaveProperty('partialStatus');
+  });
+
+  it('abilities run --wait exits 4 when the batch is cancelled', async () => {
+    const cfg = await createConfig();
+
+    server.setRunResponse('sync-sites-v1', dashboardQueuedResponse('sync_123'));
+    server.setJobProgression('sync_123', [
+      jobStatus({ job_id: 'sync_123', status: 'cancelled', progress: 25, processed: 2, total: 10 }),
+    ]);
+
+    const result = await runCLI(
+      ['abilities', 'run', 'sync-sites-v1', '--wait', '--json'],
+      {
+        xdgConfigHome: cfg.xdgHome,
+        env: { MAINWP_APP_PASSWORD: 'test-pass' },
+        timeout: 15_000,
+      },
+    );
+
+    expect(result.exitCode).toBe(4);
+    const envelope = JSON.parse(result.stdout) as {
+      success: boolean;
+      error?: { code?: string };
+    };
+    expect(envelope.success).toBe(false);
+    expect(envelope.error?.code).toBe('BATCH_CANCELLED');
   });
 
   // ---------------------------------------------------------------------------
@@ -222,6 +248,47 @@ describe('batch job waiting', () => {
 
     expect(result.exitCode).toBe(4);
     expect(result.stdout).toContain('BATCH_FAILED');
+  });
+
+  it('jobs watch --json emits one envelope and exits 130 on SIGINT', async () => {
+    const cfg = await createConfig();
+    server.setJobProgression('sync_123', [
+      jobStatus({ job_id: 'sync_123', status: 'running', progress: 10 }),
+    ]);
+
+    const result = await runCLIWithSignal(
+      ['jobs', 'watch', 'sync_123', '--json', '--initial-delay', '100'],
+      {
+        xdgConfigHome: cfg.xdgHome,
+        env: { MAINWP_APP_PASSWORD: 'test-pass' },
+      },
+    );
+
+    expect(result.exitCode).toBe(130);
+    const envelope = JSON.parse(result.stdout) as {
+      success: boolean;
+      error?: { code?: string };
+    };
+    expect(envelope.success).toBe(false);
+    expect(envelope.error?.code).toBe('CANCELLED');
+  });
+
+  it('jobs watch reports SIGINT cancellation on stderr in human mode', async () => {
+    const cfg = await createConfig();
+    server.setJobProgression('sync_123', [
+      jobStatus({ job_id: 'sync_123', status: 'running', progress: 10 }),
+    ]);
+
+    const result = await runCLIWithSignal(
+      ['jobs', 'watch', 'sync_123', '--no-progress', '--initial-delay', '100'],
+      {
+        xdgConfigHome: cfg.xdgHome,
+        env: { MAINWP_APP_PASSWORD: 'test-pass' },
+      },
+    );
+
+    expect(result.exitCode).toBe(130);
+    expect(result.stderr).toMatch(/cancelled by signal/i);
   });
 
   // ---------------------------------------------------------------------------

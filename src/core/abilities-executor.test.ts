@@ -94,6 +94,21 @@ describe('AbilitiesExecutor', () => {
       },
     } as unknown as Ability,
     {
+      // One malformed boolean invalidates the annotation set. A hostile
+      // readonly:true value must not select GET when policy fails closed.
+      name: 'mainwp/get-malformed-v1',
+      label: 'Get Malformed',
+      description: 'Malformed annotation fixture',
+      category: 'sites',
+      meta: {
+        annotations: {
+          readonly: true,
+          destructive: false,
+          idempotent: 'false',
+        },
+      },
+    } as unknown as Ability,
+    {
       // Contradictory/skewed annotations: destructive NAME but readonly:true.
       // Used to verify transport (HTTP method) resolves destructiveness the
       // same way policy does, and never routes this out as GET.
@@ -168,6 +183,66 @@ describe('AbilitiesExecutor', () => {
       expect(byFull).toBeDefined();
       expect(byShort).toBeDefined();
       expect(byFull?.name).toBe(byShort?.name);
+    });
+
+    it('skips malformed discovery entries and invalid ability names with warnings', async () => {
+      const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+      mockGet.mockResolvedValueOnce({
+        data: [
+          null,
+          [],
+          { name: '' },
+          { name: 'missing-namespace-v1' },
+          mockAbilities[0],
+        ],
+      });
+
+      const abilities = await executor.listAbilities();
+
+      expect(abilities).toEqual([mockAbilities[0]]);
+      expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining('invalid ability'));
+    });
+
+    it('keeps the first duplicate full name and warns', async () => {
+      const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+      mockGet.mockResolvedValueOnce({
+        data: [
+          mockAbilities[0],
+          { ...mockAbilities[0], label: 'Duplicate' },
+        ],
+      });
+
+      await executor.listAbilities();
+
+      expect((await executor.getAbility('mainwp/list-sites-v1'))?.label).toBe('List Sites');
+      expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining('duplicate ability'));
+    });
+
+    it('removes colliding short aliases while preserving both full names', async () => {
+      const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+      const first = { ...mockAbilities[0], name: 'alpha/shared-v1' };
+      const second = { ...mockAbilities[0], name: 'beta/shared-v1' };
+      mockGet.mockResolvedValueOnce({ data: [first, second] });
+
+      await executor.listAbilities();
+
+      expect(await executor.getAbility('alpha/shared-v1')).toEqual(first);
+      expect(await executor.getAbility('beta/shared-v1')).toEqual(second);
+      expect(await executor.getAbility('shared-v1')).toBeUndefined();
+      expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining('ambiguous short alias'));
+    });
+
+    it('rejects discovery that exceeds the configured page cap', async () => {
+      mockGet.mockResolvedValue({
+        data: [],
+        headers: new Headers({ 'x-wp-totalpages': '999' }),
+      });
+
+      await expect(executor.listAbilities()).rejects.toMatchObject({
+        code: 'INVALID_RESPONSE',
+      });
+
+      expect(mockGet).toHaveBeenCalledTimes(1);
     });
   });
 
@@ -279,6 +354,15 @@ describe('AbilitiesExecutor', () => {
       expect(mockGet).toHaveBeenCalledOnce();
     });
 
+    it('uses POST when any annotation field is malformed despite readonly true', async () => {
+      mockPost.mockResolvedValueOnce({ data: { success: true } });
+
+      await executor.execute('get-malformed-v1', {});
+
+      expect(mockPost).toHaveBeenCalledOnce();
+      expect(mockGet).toHaveBeenCalledOnce();
+    });
+
     it('rejects a request with both dryRun and confirm set', async () => {
       await expect(
         executor.execute('delete-site-v1', { site_id: 1 }, { dryRun: true, confirm: true })
@@ -367,6 +451,50 @@ describe('AbilitiesExecutor', () => {
         { id: 2, name: 'Site 2' },
       ]);
     });
+
+    it('normalizes the Dashboard queued envelope and exposes its job id', async () => {
+      mockGet.mockResolvedValueOnce({
+        data: {
+          queued: true,
+          job_id: 'sync_123',
+          status_url: 'https://dashboard.local/wp-json/mainwp/v2/jobs/sync_123',
+          sites_queued: 10,
+        },
+      });
+
+      const result = await executor.execute('list-sites-v1', {});
+
+      expect(result.success).toBe(true);
+      expect(result.jobId).toBe('sync_123');
+    });
+
+    it('extracts a queued job id from a wrapped data envelope', async () => {
+      mockGet.mockResolvedValueOnce({
+        data: {
+          success: true,
+          data: { queued: true, job_id: 'sync_456' },
+        },
+      });
+
+      const result = await executor.execute('list-sites-v1', {});
+
+      expect(result.success).toBe(true);
+      expect(result.jobId).toBe('sync_456');
+    });
+
+    it.each(['bad\njob', 'x'.repeat(513)])(
+      'rejects an unsafe queued job id',
+      async (jobId) => {
+        mockGet.mockResolvedValueOnce({
+          data: { queued: true, job_id: jobId },
+        });
+
+        await expect(executor.execute('list-sites-v1', {})).resolves.toMatchObject({
+          success: false,
+          error: { code: 'INVALID_RESPONSE' },
+        });
+      },
+    );
   });
 
   describe('getCategories', () => {

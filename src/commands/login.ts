@@ -169,11 +169,34 @@ export default class Login extends BaseCommand {
     };
 
     const profileStore = getProfileStore();
-    await profileStore.save(profile);
-
-    // Store password in keychain
     const keychain = getKeychain();
+    const previousProfile = await profileStore.get(profileName);
+    const previousCredential = previousProfile
+      ? await keychain.get(profileName)
+      : undefined;
+    // Attempt credential storage before publishing the profile. A thrown
+    // keychain failure cannot leave a profile that was only half-created.
+    // Supported keychain-unavailable environments still receive the existing
+    // explicit warning and MAINWP_APP_PASSWORD fallback behavior below.
     const keychainResult = await keychain.set(profileName, password);
+    try {
+      await profileStore.save(profile);
+    } catch (error) {
+      if (keychainResult.stored) {
+        const rollbackResult = previousCredential
+          ? await keychain.set(profileName, previousCredential)
+          : await keychain.delete(profileName);
+        const rollbackSucceeded = 'stored' in rollbackResult
+          ? rollbackResult.stored
+          : rollbackResult.deleted;
+        if (!rollbackSucceeded) {
+          this.logToStderr(formatWarning(
+            'Profile save failed and the keychain credential rollback also failed.'
+          ));
+        }
+      }
+      throw error;
+    }
 
     // Set as active
     await profileStore.setActive(profileName);

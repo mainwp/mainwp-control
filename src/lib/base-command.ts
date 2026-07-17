@@ -362,7 +362,14 @@ export abstract class BaseCommand extends Command {
     // oclif re-throw below, whose CLIError default exit of 2 would land
     // them in the auth/config bucket.
     if ('parse' in err) {
-      this.logToStderr(formatError(err));
+      const rawJsonRequested = process.argv.some(
+        (argument) => argument === '--json' || argument.startsWith('--json=')
+      );
+      if (rawJsonRequested) {
+        this.log(JSON.stringify(errorOutput(err), null, 2));
+      } else {
+        this.logToStderr(formatError(err));
+      }
       this.exit(ExitCode.INPUT_ERROR);
       return;
     }

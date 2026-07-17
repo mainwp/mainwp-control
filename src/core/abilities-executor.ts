@@ -9,6 +9,7 @@ import { HttpClient, type HttpClientConfig, createHttpClient } from './http-clie
 import { APIError, InputError } from '../utils/errors.js';
 import { getInputSanitizer } from '../validation/input-sanitizer.js';
 import { isKnownDestructiveName } from './safety-controller.js';
+import { validateJobId } from './job-id.js';
 
 /**
  * Ability annotation metadata
@@ -64,6 +65,9 @@ export interface ExecutionResult<T = unknown> {
  * with pagination via X-WP-Total / X-WP-TotalPages headers.
  */
 type AbilitiesListResponse = Ability[];
+
+const MAX_DISCOVERY_PAGES = 20;
+const ABILITY_NAME_PATTERN = /^[a-z0-9][a-z0-9._-]*\/[a-z0-9][a-z0-9._-]*-v[1-9]\d*$/i;
 
 /**
  * Abilities Executor class
@@ -222,7 +226,8 @@ export class AbilitiesExecutor {
    * Fetch all ability pages and populate the cache.
    */
   private async fillCache(): Promise<void> {
-    this.abilitiesCache = new Map();
+    const cache = new Map<string, Ability>();
+    const aliasOwners = new Map<string, string | null>();
 
     // Fetch all pages — API returns Ability[] with WP pagination headers.
     let page = 1;
@@ -233,28 +238,64 @@ export class AbilitiesExecutor {
         `${this.baseEndpoint}/abilities?per_page=100&page=${page}`
       );
 
-      const abilities = Array.isArray(response.data)
+      const abilities: unknown[] = Array.isArray(response.data)
         ? response.data
-        : (response.data as Record<string, unknown>)['abilities'] as Ability[] ?? [];
+        : this.asRecord(response.data)?.['abilities'] instanceof Array
+          ? this.asRecord(response.data)?.['abilities'] as unknown[]
+          : [];
 
-      for (const ability of abilities) {
-        this.abilitiesCache.set(ability.name, ability);
+      for (const entry of abilities) {
+        if (!this.isPlainObject(entry) ||
+          typeof entry['name'] !== 'string' ||
+          !ABILITY_NAME_PATTERN.test(entry['name'])) {
+          console.error('Warning: Discovery skipped an invalid ability entry.');
+          continue;
+        }
+
+        const ability = entry as unknown as Ability;
+        if (cache.has(ability.name)) {
+          console.error(`Warning: Discovery ignored duplicate ability "${ability.name}".`);
+          continue;
+        }
+        cache.set(ability.name, ability);
 
         const shortName = this.getShortName(ability.name);
         if (shortName !== ability.name) {
-          this.abilitiesCache.set(shortName, ability);
+          const existingOwner = aliasOwners.get(shortName);
+          if (existingOwner === undefined) {
+            aliasOwners.set(shortName, ability.name);
+            cache.set(shortName, ability);
+          } else if (existingOwner !== null) {
+            aliasOwners.set(shortName, null);
+            cache.delete(shortName);
+            console.error(
+              `Warning: Discovery removed ambiguous short alias "${shortName}". Use full ability names.`
+            );
+          }
         }
       }
 
       // Read WP pagination header for total pages
       const wpTotalPages = response.headers?.get?.('x-wp-totalpages');
-      if (wpTotalPages) {
-        totalPages = parseInt(wpTotalPages, 10) || 1;
+      if (page === 1 && wpTotalPages) {
+        const declaredPages = Number.parseInt(wpTotalPages, 10);
+        if (Number.isInteger(declaredPages) && declaredPages > 0) {
+          if (declaredPages > MAX_DISCOVERY_PAGES) {
+            throw new APIError(
+              'INVALID_RESPONSE',
+              `Discovery declared ${declaredPages} pages, exceeding the ${MAX_DISCOVERY_PAGES}-page limit.`
+            );
+          }
+          totalPages = declaredPages;
+        } else {
+          console.error('Warning: Discovery returned an invalid pagination header.');
+        }
       }
 
       page++;
     } while (page <= totalPages);
 
+    this.abilitiesCache = cache;
     this.cacheExpiry = Date.now() + this.cacheTTL;
   }
 
@@ -325,6 +366,10 @@ export class AbilitiesExecutor {
     _options?: ExecutionOptions
   ): 'GET' | 'POST' | 'DELETE' {
     const annotations = ability.meta?.annotations;
+    const annotationsAreValid =
+      typeof annotations?.readonly === 'boolean' &&
+      typeof annotations.destructive === 'boolean' &&
+      typeof annotations.idempotent === 'boolean';
 
     // Resolve destructiveness the same way SafetyController does — annotations
     // OR a known-destructive name — so transport never disagrees with policy.
@@ -333,11 +378,11 @@ export class AbilitiesExecutor {
     // Strict === true matches SafetyController.validateAnnotations(): a
     // non-boolean annotation value (e.g. readonly: "true" from a buggy or
     // hostile server) must not be treated as set.
-    const annotatedDestructive = annotations?.destructive === true;
+    const annotatedDestructive = annotationsAreValid && annotations.destructive;
     const destructive = annotatedDestructive || isKnownDestructiveName(ability.name);
 
     // Read-only (and not name-destructive) → GET
-    if (annotations?.readonly === true && !destructive) {
+    if (annotationsAreValid && annotations.readonly && !destructive) {
       return 'GET';
     }
 
@@ -345,7 +390,7 @@ export class AbilitiesExecutor {
     // themselves say destructive: if destructiveness came from the name
     // override, the annotations are already distrusted, so `idempotent`
     // from the same source must not pick the method — fall through to POST.
-    if (annotatedDestructive && annotations?.idempotent === true) {
+    if (annotatedDestructive && annotations.idempotent) {
       return 'DELETE';
     }
 
@@ -387,21 +432,47 @@ export class AbilitiesExecutor {
    * Normalize API response to ExecutionResult
    */
   private normalizeResponse<T>(data: unknown): ExecutionResult<T> {
+    const record = this.asRecord(data);
+    const wrappedData = this.asRecord(record?.['data']);
+    const queuedEnvelope = record?.['queued'] === true ? record : wrappedData;
+    const queuedJobId = queuedEnvelope?.['queued'] === true
+      ? validateJobId(queuedEnvelope['job_id'])
+      : undefined;
+
     // If already in expected format, return as-is
     if (
-      typeof data === 'object' &&
-      data !== null &&
-      'success' in data &&
-      typeof (data as Record<string, unknown>)['success'] === 'boolean'
+      record &&
+      typeof record['success'] === 'boolean'
     ) {
-      return data as ExecutionResult<T>;
+      return {
+        ...(data as ExecutionResult<T>),
+        ...(queuedJobId ? { jobId: queuedJobId } : {}),
+      };
     }
 
     // Wrap raw data in success response
     return {
       success: true,
       data: data as T,
+      ...(queuedJobId ? { jobId: queuedJobId } : {}),
     };
+  }
+
+  private asRecord(value: unknown): Record<string, unknown> | undefined {
+    if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+      return undefined;
+    }
+
+    return value as Record<string, unknown>;
+  }
+
+  private isPlainObject(value: unknown): value is Record<string, unknown> {
+    if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+      return false;
+    }
+
+    const prototype = Object.getPrototypeOf(value);
+    return prototype === Object.prototype || prototype === null;
   }
 
   /**

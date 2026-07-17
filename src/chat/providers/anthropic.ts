@@ -234,19 +234,23 @@ export class AnthropicProvider implements LLMProvider {
 
         if (event.type === 'content_block_stop') {
           if (toolId && toolName) {
+            const accumulatedArgs = toolArgs || '{}';
+            let args: unknown = accumulatedArgs;
             try {
-              const args = JSON.parse(toolArgs || '{}') as Record<string, unknown>;
-              yield {
-                toolCall: {
-                  id: toolId,
-                  name: toolName,
-                  arguments: args,
-                },
-                done: false,
-              };
+              args = JSON.parse(accumulatedArgs) as unknown;
             } catch {
-              // Invalid JSON, skip
+              // Preserve the raw accumulated string. The shared tool envelope
+              // rejects non-object arguments as a protocol error without
+              // executing the proposed call.
             }
+            yield {
+              toolCall: {
+                id: toolId,
+                name: toolName,
+                arguments: args,
+              },
+              done: false,
+            };
             toolId = '';
             toolName = '';
             toolArgs = '';

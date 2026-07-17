@@ -2125,7 +2125,7 @@ describe('ChatEngine', () => {
   // ==========================================================================
 
   describe('Edge Cases and Boundary Conditions', () => {
-    it('handles ability without annotations (defaults to safe)', async () => {
+    it('handles ability without annotations as destructive', async () => {
       const mockProvider = createMockProvider([
         createToolCallResponse('legacy-ability-v1', {}),
         createAnswerResponse('Done'),
@@ -2139,9 +2139,12 @@ describe('ChatEngine', () => {
 
       await engine.sendMessage('Run legacy');
 
-      // Should execute directly (no preview)
-      expect(mockExecutor.execute).toHaveBeenCalledWith('legacy-ability-v1', {});
-      expect(engine.hasPendingPreview()).toBe(false);
+      expect(mockExecutor.execute).toHaveBeenCalledWith(
+        'legacy-ability-v1',
+        {},
+        { dryRun: true },
+      );
+      expect(engine.hasPendingPreview()).toBe(true);
     });
 
     it('handles LLM returning answer immediately', async () => {

@@ -6,6 +6,7 @@
  */
 
 import { sanitizeInputSchema } from '../../validation/sanitize-schema.js';
+import { ConfigError } from '../../utils/errors.js';
 
 export { sanitizeInputSchema } from '../../validation/sanitize-schema.js';
 
@@ -346,7 +347,7 @@ export function resolveProviderSelection(options: {
 
   const envConfig = getProviderConfigFromEnv(selectedName) ?? {};
   const apiKey = options.apiKey ?? envConfig.apiKey ?? '';
-  const baseUrl = options.baseUrl ?? envConfig.baseUrl;
+  const baseUrl = validateProviderBaseUrl(options.baseUrl ?? envConfig.baseUrl);
 
   return {
     name: selectedName,
@@ -360,6 +361,24 @@ export function resolveProviderSelection(options: {
     },
     warnings,
   };
+}
+
+export function validateProviderBaseUrl(baseUrl: string | undefined): string | undefined {
+  if (baseUrl === undefined) return undefined;
+
+  const normalized = baseUrl.trim();
+  let parsed: URL;
+  try {
+    parsed = new URL(normalized);
+  } catch {
+    throw new ConfigError('Invalid provider base URL. Use an absolute HTTP(S) URL.');
+  }
+
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+    throw new ConfigError('Invalid provider base URL scheme. Only HTTP and HTTPS are supported.');
+  }
+
+  return normalized;
 }
 
 /**

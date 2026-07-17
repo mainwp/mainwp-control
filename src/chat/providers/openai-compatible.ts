@@ -16,7 +16,7 @@ import {
   type ToolCall,
 } from './provider.js';
 import { readSSEStream } from './sse-reader.js';
-import { sanitizeProviderErrorBody } from './provider-fetch.js';
+import { readBoundedResponseText, sanitizeProviderErrorBody } from './provider-fetch.js';
 
 /**
  * OpenAI-compatible API message format
@@ -253,19 +253,22 @@ export abstract class OpenAICompatibleProvider implements LLMProvider {
         // Final chunk
         if (choice.finish_reason === 'tool_calls') {
           for (const [, tc] of toolCalls) {
+            let args: unknown = tc.arguments;
             try {
-              const args = JSON.parse(tc.arguments) as Record<string, unknown>;
-              yield {
-                toolCall: {
-                  id: tc.id,
-                  name: tc.name,
-                  arguments: args,
-                },
-                done: false,
-              };
+              args = JSON.parse(tc.arguments) as unknown;
             } catch {
-              // Invalid JSON, skip
+              // Preserve the raw accumulated string. The shared tool envelope
+              // rejects non-object arguments as a protocol error without
+              // executing the proposed call.
             }
+            yield {
+              toolCall: {
+                id: tc.id,
+                name: tc.name,
+                arguments: args,
+              },
+              done: false,
+            };
           }
           yield { done: true };
           return;
@@ -426,7 +429,7 @@ export abstract class OpenAICompatibleProvider implements LLMProvider {
       });
 
       if (!response.ok) {
-        const error = await response.text();
+        const error = await readBoundedResponseText(response);
         throw new Error(
           `${this.name} API error: ${response.status} ${sanitizeProviderErrorBody(error)}`
         );

@@ -488,12 +488,20 @@ export default class AbilitiesRun extends BaseCommand {
     // Non-completed terminal statuses map to exit code 4. Human mode prints
     // the result details first; JSON mode emits only the error envelope
     // (single-document contract), carrying the status in details.
-    if (watchResult.status.status === 'failed' || watchResult.status.status === 'partial') {
+    if (
+      watchResult.status.status === 'failed' ||
+      watchResult.status.status === 'partial' ||
+      watchResult.status.status === 'cancelled'
+    ) {
       if (!this.jsonOutput) {
         this.output(data, () => this.formatWatchResultOutput(abilityName, jobId, watchResult));
       }
       throw new APIError(
-        watchResult.status.status === 'failed' ? 'BATCH_FAILED' : 'BATCH_PARTIAL',
+        watchResult.status.status === 'failed'
+          ? 'BATCH_FAILED'
+          : watchResult.status.status === 'partial'
+            ? 'BATCH_PARTIAL'
+            : 'BATCH_CANCELLED',
         `Batch job ${jobId} finished with status "${watchResult.status.status}"`,
         undefined,
         { jobId, status: watchResult.status, elapsed_ms: watchResult.elapsed }

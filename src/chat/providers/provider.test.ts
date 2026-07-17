@@ -50,6 +50,29 @@ describe('resolveProviderSelection', () => {
     expect(result.source).toBe('auto');
     expect(result.warnings[0]).toMatch(/Ignoring unsupported LLM provider/);
   });
+
+  it.each(['file:///tmp/provider', 'ftp://provider.example.com', 'not-a-url'])(
+    'rejects an unsafe custom base URL before provider creation: %s',
+    (baseUrl) => {
+      expect(() => resolveProviderSelection({
+        flagProvider: 'local',
+        apiKey: 'test-key',
+        baseUrl,
+      })).toThrow(/base URL/i);
+    },
+  );
+
+  it.each(['http://127.0.0.1:11434/v1', 'https://provider.example.com/v1'])(
+    'accepts an HTTP(S) custom base URL: %s',
+    (baseUrl) => {
+      const result = resolveProviderSelection({
+        flagProvider: 'local',
+        apiKey: 'test-key',
+        baseUrl,
+      });
+      expect(result.config.baseUrl).toBe(baseUrl);
+    },
+  );
 });
 
 describe('abilityToTool', () => {
