@@ -22,6 +22,11 @@
     "prepack": "npm run clean && npm run build && oclif manifest",
     "pretest": "npm run build",
     "test": "vitest run",
+    "test:acceptance": "tsx tests/acceptance/run.ts",
+    "test:acceptance:fast": "npm run build && tsx tests/acceptance/run.ts --mode source",
+    "test:acceptance:fixture": "tsx tests/acceptance/run.ts --target fixture",
+    "test:acceptance:writes": "tsx tests/acceptance/run.ts --writes",
+    "test:acceptance:human": "npm run test:acceptance:fixture && npm run test:acceptance:writes",
     "test:process": "npm run build && vitest run --config vitest.process.config.ts",
     "test:live": "npm run build && MAINWP_LIVE_TEST=1 vitest run --config vitest.live.config.ts",
     "test:all": "npm run test && npm run test:process",
@@ -96,6 +101,7 @@
     "@typescript-eslint/parser": "^7.0.0",
     "eslint": "^8.57.0",
     "oclif": "^4.0.0",
+    "tsx": "^4.21.0",
     "typescript": "^5.4.0",
     "vitest": "^1.6.0"
   }
