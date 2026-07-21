@@ -94,6 +94,79 @@ describe('sanitizeInputSchema', () => {
     expect('patternProperties' in result).toBe(false);
   });
 
+  it('scrubs patterns reached through draft-07 dependencies (bypass regression)', () => {
+    const input = {
+      type: 'object',
+      dependencies: {
+        x: {
+          properties: {
+            y: { type: 'string', pattern: '^(a+)+$' },
+          },
+        },
+      },
+    };
+
+    const result = sanitizeInputSchema(input);
+    const dep = (result['dependencies'] as Record<string, Record<string, unknown>>)['x']!;
+    const y = (dep['properties'] as Record<string, Record<string, unknown>>)['y']!;
+
+    expect('pattern' in y).toBe(false);
+  });
+
+  it('scrubs patterns nested under unknown or future keywords', () => {
+    const input = {
+      type: 'object',
+      someFutureKeyword: {
+        deeper: [{ pattern: '^(a+)+$', patternProperties: { x: {} } }],
+      },
+    };
+
+    const result = sanitizeInputSchema(input);
+    const future = result['someFutureKeyword'] as Record<string, unknown>;
+    const inner = (future['deeper'] as Record<string, unknown>[])[0]!;
+
+    expect('pattern' in inner).toBe(false);
+    expect('patternProperties' in inner).toBe(false);
+  });
+
+  it('preserves properties literally named pattern and data-carrying keys', () => {
+    const input = {
+      type: 'object',
+      properties: {
+        pattern: { type: 'string' },
+      },
+      required: [],
+      default: { pattern: '^kept$' },
+      examples: [{ pattern: '^also-kept$' }],
+    };
+
+    const result = sanitizeInputSchema(input);
+    const props = result['properties'] as Record<string, unknown>;
+
+    expect(props['pattern']).toEqual({ type: 'string' });
+    expect(result['required']).toEqual([]);
+    expect(result['default']).toEqual({ pattern: '^kept$' });
+    expect(result['examples']).toEqual([{ pattern: '^also-kept$' }]);
+  });
+
+  it('applies the depth cap to nesting through unknown keywords', () => {
+    let schema: Record<string, unknown> = { pattern: '^(a+)+$' };
+    for (let i = 0; i < 60; i++) {
+      schema = { someUnknownKeyword: schema };
+    }
+
+    const result = sanitizeInputSchema({ type: 'object', extension: schema });
+
+    let node = result['extension'] as Record<string, unknown>;
+    let depth = 0;
+    while (node && typeof node === 'object' && 'someUnknownKeyword' in node) {
+      node = node['someUnknownKeyword'] as Record<string, unknown>;
+      depth++;
+    }
+    expect(depth).toBeLessThanOrEqual(33);
+    expect(node).toEqual({});
+  });
+
   it('drops patterns and patternProperties in nested subschemas too', () => {
     const input = {
       type: 'object',
