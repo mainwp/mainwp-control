@@ -167,6 +167,39 @@ describe('sanitizeInputSchema', () => {
     expect(node).toEqual({});
   });
 
+  it('applies the depth cap to nested arrays under unknown keywords', () => {
+    let value: unknown = 'leaf';
+    for (let i = 0; i < 60; i++) {
+      value = [value];
+    }
+
+    const result = sanitizeInputSchema({ type: 'object', extension: { deepArrays: value } });
+
+    // The array chain is cut off at the cap ({}), never passed through whole.
+    let node = (result['extension'] as Record<string, unknown>)['deepArrays'];
+    let depth = 0;
+    while (Array.isArray(node)) {
+      node = node[0];
+      depth++;
+    }
+    expect(depth).toBeLessThanOrEqual(33);
+    expect(node).toEqual({});
+  });
+
+  it.each(['const', 'enum', 'default', 'examples'])(
+    'drops %s wholesale when its literal value nests past the depth cap',
+    (dataKey) => {
+      let value: unknown = { pattern: 'kept-if-shallow' };
+      for (let i = 0; i < 60; i++) {
+        value = i % 2 === 0 ? [value] : { wrap: value };
+      }
+
+      const result = sanitizeInputSchema({ type: 'object', [dataKey]: value });
+
+      expect(dataKey in result).toBe(false);
+    }
+  );
+
   it('drops patterns and patternProperties in nested subschemas too', () => {
     const input = {
       type: 'object',
