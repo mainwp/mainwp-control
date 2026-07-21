@@ -25,9 +25,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - HTTP method selection now resolves destructiveness the same way the safety classifier does, so a destructive-named ability is never sent as a read-only GET even if the server mislabels it; non-boolean annotation values (e.g. `readonly: "true"` as a string) are likewise ignored. When the destructive classification comes from the name override rather than the annotations, the request uses POST instead of trusting the annotations' `idempotent` flag for DELETE
 - Keychain credential-removal failures now warn in non-interactive (CI) runs instead of only when attached to a terminal
 - Warning shown when the active profile no longer exists and the CLI falls back to another profile
+- Chat error responses name the failing ability (`[mainwp/update-site-v1] Error: ...`) so a failed preview or tool call is attributable; engine-level errors stay bare
+- `login --url` with embedded credentials fails at intake with the friendly configuration error (exit 2) instead of an opaque network error from the connection test
+- Malformed Dashboard ability schemas (PHP artifacts such as `properties: []` or `"inputSchema": []`) are repaired centrally for both `abilities run` and chat tool execution; schemas that remain invalid exit 4 (Dashboard error), not 5
+- The Dashboard's queued-job envelope (`job_id`) is recognized, so `abilities run --wait` polls to completion instead of returning immediately
+- One-shot chat failures exit non-zero through the documented JSON error envelope instead of printing a raw response object and exiting 0; an empty provider stream is an error, not a blank successful answer
+- Malformed `--input` JSON reports the parse position instead of echoing the raw payload, and JSON input that is not an object (array, string, number) is rejected locally instead of being sent to the Dashboard
+- Parse-time flag errors under `--json` emit a single JSON error envelope on stdout (exit code 1 unchanged)
+- `jobs watch` prints the `cancelled` batch status, mapped to `BATCH_CANCELLED`
+- Batch polling rejects unknown statuses, job-ID mismatches, invalid numeric fields, oversized arrays, and terminal-state regressions instead of trusting them
+- A keychain read error during login aborts before overwriting, instead of being treated as "nothing stored" and later rolling back a credential that still existed; keychain delete distinguishes not-found from failure, and profile delete reports not-found as the goal state
+- Cyclic or over-deep error details no longer crash `--json` output: both sanitizers bound depth and truncate cycles while legitimately shared references survive
+- Atomic config writes sync file contents to disk before the rename, so a crash at the wrong moment cannot leave a truncated file behind
+- Failures to repair config and audit file permissions now warn instead of being silently ignored
 
 ### Changed
 
+- **Breaking:** keychain credentials are now stored bound to the profile's canonical Dashboard identity, and unbound credentials stored by earlier versions are refused for authenticated requests. Each existing profile needs a one-time `mainwpcontrol login` to re-bind its credential; the error message says so. Repointing a profile at a different host by editing `profiles.json` now gets an authentication error instead of the stored password
+- A transport failure after a destructive confirm was dispatched exits 3 (`OUTCOME_UNKNOWN`) with audit entries for both the dispatch and the unknown outcome, instead of a generic network error that implied nothing ran; chat reports the same stable code and keeps the session alive
+- 2xx Dashboard responses must be parseable JSON with a JSON content type; empty or HTML responses are `INVALID_RESPONSE` errors, never treated as success
+- Ability discovery validates entries, caps pagination, warns and keeps the first entry on duplicate names, and no longer generates ambiguous short aliases
 - `--json` now emits exactly one JSON document when a batch job times out, fails, or completes partially: an error envelope with the job status in `error.details` (previously a success envelope was printed before the error envelope)
 - `jobs watch` and `abilities run --wait` exit 4 when the job ends `failed` or `partial`; `jobs watch` exits 130/143 with an error envelope when interrupted by SIGINT/SIGTERM (previously all of these exited 0 with a success envelope)
 - Flag and argument parse errors (for example passing `--dry-run` with `--confirm`) exit 1 (user input error) instead of 2
@@ -49,6 +66,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Mutual exclusion of `dry_run` and `confirm` is now also asserted at the executor boundary, not only at the flag layer
 - Updated `undici` to 7.28.0, resolving TLS certificate validation bypass and response queue poisoning advisories
 - Updated `@oclif/core`, `@oclif/plugin-help`, `@oclif/plugin-autocomplete`, and transitive dependencies; `npm audit --omit=dev` reports zero production vulnerabilities, dev-chain advisories are tracked separately
+- Abilities with missing or malformed safety annotations are classified destructive (fail closed) instead of defaulting to read-only; every real Dashboard ability declares all three annotation keys
+- Case-variant ability names (`Mainwp/Delete-Site-V1`) are refused at discovery, so a case variant can never evade destructive-name classification or alias a cache key
+- `pattern` and `patternProperties` from Dashboard schemas are stripped from every node of the tree and never compiled, so a hostile Dashboard cannot stall the CLI with a catastrophic regex; the whole tree, including arrays and literal data values, counts against a 32-level depth budget
+- Tool results are key-redacted before entering provider-bound chat history (local display stays raw); provider requests refuse redirects; hosted providers refuse `http://` base URLs; the local provider allows HTTP only to loopback and private-range hosts
+- Profile `skipSSLVerification` must be strictly boolean; the string `"false"` no longer disables TLS verification
+- SSE streams are bounded (line and buffer caps, idle and absolute timeouts), and provider error bodies are read bounded and key-redacted before they can reach an error message
+- Dashboard response bodies stream against a byte cap and the request timeout covers the body read, so an unbounded or stalled body cannot hang the process
+- Config files write via random-suffix `O_EXCL` temporary files; the audit log opens with `O_NOFOLLOW`; audit-log input is bounded at 8 KiB and free text at 2 KiB with visible truncation markers
+- URLs with username-only credentials now redact, and userinfo masking is greedy through the last `@` so passwords containing `@` mask fully; malformed URLs are no longer echoed in profile-store error messages
+- Sensitive query-string parameters (`access_token=...`) are redacted in error output, and keychain store errors pass through the same sanitizer as the rest of the keychain surface
+- Redaction and terminal sanitization build results on null-prototype objects, so a crafted `__proto__` key cannot pollute prototypes; terminal output also strips Unicode bidirectional and isolate controls to prevent right-to-left display spoofing
 
 ## [1.1.0-beta.1] - 2026-03-26
 
