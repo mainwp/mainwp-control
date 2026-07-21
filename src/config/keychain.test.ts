@@ -235,34 +235,24 @@ describe('Keychain identity binding', () => {
     });
   });
 
-  it('get() accepts a legacy bare-string entry and re-binds it to the expected URL', async () => {
+  it('get() refuses a legacy unbound entry for an authenticated request', async () => {
     vi.mocked(keytar.getPassword).mockResolvedValue('abcd efgh');
     vi.mocked(keytar.setPassword).mockResolvedValue(undefined);
 
+    // An unbound password cannot be safely bound to whatever URL the profile
+    // currently holds — the fix is a one-time re-login, never auto-binding.
     await expect(
       new Keychain().get('default', 'https://dash.example.com')
-    ).resolves.toBe('abcd efgh');
-
-    // Opportunistic upgrade: the legacy entry is rewritten as a v1 envelope
-    // bound to the URL this authenticated read was for.
-    const [, , payload] = vi.mocked(keytar.setPassword).mock.calls.at(-1)!;
-    expect(JSON.parse(payload as string)).toEqual({
-      v: 1,
-      password: 'abcd efgh',
-      identity: 'https://dash.example.com',
+    ).rejects.toBeInstanceOf(AuthError);
+    await expect(
+      new Keychain().get('default', 'https://dash.example.com')
+    ).rejects.toMatchObject({
+      hint: expect.stringContaining('login'),
     });
+    expect(vi.mocked(keytar.setPassword)).not.toHaveBeenCalled();
   });
 
-  it('get() still returns a legacy password when the re-bind write fails', async () => {
-    vi.mocked(keytar.getPassword).mockResolvedValue('abcd efgh');
-    vi.mocked(keytar.setPassword).mockRejectedValue(new Error('keychain locked'));
-
-    await expect(
-      new Keychain().get('default', 'https://dash.example.com')
-    ).resolves.toBe('abcd efgh');
-  });
-
-  it('get() without an expectedDashboardUrl never rewrites a legacy entry', async () => {
+  it('get() without an expectedDashboardUrl still reads a legacy entry (display paths)', async () => {
     vi.mocked(keytar.getPassword).mockResolvedValue('abcd efgh');
     vi.mocked(keytar.setPassword).mockResolvedValue(undefined);
 
@@ -284,8 +274,10 @@ describe('Keychain identity binding', () => {
   it('get() treats a "{"-prefixed non-envelope payload as a legacy raw password', async () => {
     vi.mocked(keytar.getPassword).mockResolvedValue('{not valid json');
 
+    // Legacy semantics apply: readable without a URL, refused with one.
+    await expect(new Keychain().get('default')).resolves.toBe('{not valid json');
     await expect(
       new Keychain().get('default', 'https://dash.example.com')
-    ).resolves.toBe('{not valid json');
+    ).rejects.toBeInstanceOf(AuthError);
   });
 });

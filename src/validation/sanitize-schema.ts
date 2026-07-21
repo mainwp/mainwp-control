@@ -24,10 +24,11 @@ export function sanitizeInputSchema(
   return schema;
 }
 
-/** Keys whose values are maps of subschemas ({ name: schema }). */
-const SCHEMA_MAP_KEYS = [
-  'properties', 'patternProperties', 'definitions', '$defs', 'dependentSchemas',
-];
+/**
+ * Keys whose values are maps of subschemas ({ name: schema }).
+ * patternProperties is absent because it is dropped wholesale below.
+ */
+const SCHEMA_MAP_KEYS = ['properties', 'definitions', '$defs', 'dependentSchemas'];
 /** Keys whose values are a single subschema. */
 const SCHEMA_KEYS = [
   'items', 'additionalItems', 'not', 'if', 'then', 'else',
@@ -40,20 +41,6 @@ const SCHEMA_LIST_KEYS = ['allOf', 'anyOf', 'oneOf', 'prefixItems'];
 // nested past this cap cannot meaningfully validate accepted input. Bounding recursion
 // here protects against a hostile schema exhausting the stack.
 const MAX_SCHEMA_DEPTH = 32;
-// An adversarial regex passed through unbounded can ReDoS ajv when input is validated.
-const MAX_PATTERN_LENGTH = 1000;
-
-/**
- * Heuristic for catastrophic backtracking: a quantifier applied to a group
- * that itself contains a quantifier (the `^(a+)+$` class). Not a complete
- * ReDoS analysis — over-matching is fine here because dropping a pattern only
- * loosens client-side validation; the Dashboard re-validates server-side.
- */
-const NESTED_QUANTIFIER = /\([^()]*[+*{][^()]*\)\s*[+*{?]/;
-
-function isUnsafePattern(pattern: string): boolean {
-  return pattern.length > MAX_PATTERN_LENGTH || NESTED_QUANTIFIER.test(pattern);
-}
 
 function sanitizeSchemaNode(node: Record<string, unknown>, depth = 0): Record<string, unknown> {
   if (depth > MAX_SCHEMA_DEPTH) return {};
@@ -65,7 +52,6 @@ function sanitizeSchemaNode(node: Record<string, unknown>, depth = 0): Record<st
     } else if (value !== null && typeof value === 'object' && !Array.isArray(value)) {
       const map: Record<string, unknown> = {};
       for (const [prop, sub] of Object.entries(value as Record<string, unknown>)) {
-        if (key === 'patternProperties' && isUnsafePattern(prop)) continue;
         map[prop] = sanitizeSubschema(sub, depth + 1);
       }
       out[key] = map;
@@ -85,10 +71,12 @@ function sanitizeSchemaNode(node: Record<string, unknown>, depth = 0): Record<st
   if (ap !== undefined && typeof ap !== 'boolean') {
     out['additionalProperties'] = sanitizeSubschema(ap, depth + 1);
   }
-  const pattern = out['pattern'];
-  if ('pattern' in out && (typeof pattern !== 'string' || isUnsafePattern(pattern))) {
-    delete out['pattern'];
-  }
+  // Remotely supplied regexes are never compiled client-side: no heuristic
+  // reliably separates safe patterns from catastrophic ones, and a hostile
+  // pattern can stall the CLI in ajv before any request is sent. Dropping
+  // them only loosens client-side validation; the Dashboard re-validates.
+  delete out['pattern'];
+  delete out['patternProperties'];
   return out;
 }
 

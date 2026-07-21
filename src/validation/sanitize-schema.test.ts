@@ -60,7 +60,7 @@ describe('sanitizeInputSchema', () => {
     expect(descend(result, 5)).toEqual({ type: 'string' });
   });
 
-  it('drops an overlong or non-string pattern but keeps a short one', () => {
+  it('drops every remotely supplied pattern, safe-looking or not', () => {
     const input = {
       type: 'object',
       properties: {
@@ -73,47 +73,47 @@ describe('sanitizeInputSchema', () => {
     const result = sanitizeInputSchema(input);
     const props = result['properties'] as Record<string, Record<string, unknown>>;
 
-    expect(props['short']['pattern']).toBe('^[a-z]+$');
-    expect('pattern' in props['long']).toBe(false);
-    expect('pattern' in props['notString']).toBe(false);
+    // Guaranteed-safe policy: no remote regex is ever compiled client-side,
+    // so even an innocuous-looking pattern is removed.
+    expect('pattern' in props['short']!).toBe(false);
+    expect('pattern' in props['long']!).toBe(false);
+    expect('pattern' in props['notString']!).toBe(false);
   });
 
-  it('drops a patternProperties entry whose regex key exceeds the cap', () => {
-    const longKey = 'x'.repeat(1001);
+  it('drops patternProperties wholesale', () => {
     const input = {
       type: 'object',
       patternProperties: {
         '^[a-z]+$': { type: 'string' },
-        [longKey]: { type: 'string' },
-      },
-    };
-
-    const result = sanitizeInputSchema(input);
-    const patternProperties = result['patternProperties'] as Record<string, unknown>;
-
-    expect(Object.keys(patternProperties)).toEqual(['^[a-z]+$']);
-  });
-
-  it('drops a short but catastrophic nested-quantifier pattern', () => {
-    const input = {
-      type: 'object',
-      properties: {
-        redos: { type: 'string', pattern: '^(a+)+$' },
-        redosStar: { type: 'string', pattern: '(\\d*)*x' },
-        safeGroup: { type: 'string', pattern: '^(abc)$' },
-      },
-      patternProperties: {
         '^(b+)+$': { type: 'string' },
       },
     };
 
     const result = sanitizeInputSchema(input);
-    const props = result['properties'] as Record<string, Record<string, unknown>>;
 
-    expect('pattern' in props['redos']!).toBe(false);
-    expect('pattern' in props['redosStar']!).toBe(false);
-    expect(props['safeGroup']!['pattern']).toBe('^(abc)$');
-    expect(Object.keys(result['patternProperties'] as Record<string, unknown>)).toEqual([]);
+    expect('patternProperties' in result).toBe(false);
+  });
+
+  it('drops patterns and patternProperties in nested subschemas too', () => {
+    const input = {
+      type: 'object',
+      properties: {
+        nested: {
+          type: 'object',
+          properties: {
+            inner: { type: 'string', pattern: '^(a+)+$' },
+          },
+          patternProperties: { '^x': { type: 'string' } },
+        },
+      },
+    };
+
+    const result = sanitizeInputSchema(input);
+    const nested = (result['properties'] as Record<string, Record<string, unknown>>)['nested']!;
+    const inner = (nested['properties'] as Record<string, Record<string, unknown>>)['inner']!;
+
+    expect('pattern' in inner).toBe(false);
+    expect('patternProperties' in nested).toBe(false);
   });
 
   it('sanitizes subschemas reached through contains and dependentSchemas', () => {

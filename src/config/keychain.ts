@@ -293,11 +293,16 @@ export class Keychain {
         }
       }
       if (expectedDashboardUrl && !decoded.identity) {
-        // Legacy unbound entry: opportunistically re-bind it to the URL this
-        // authenticated read is for, so existing users get identity
-        // protection without a re-login. Best-effort — a failed write leaves
-        // the legacy entry as it was.
-        await this.set(profileName, decoded.password, expectedDashboardUrl);
+        // Legacy unbound entry: refuse authenticated use. Binding it to the
+        // profile's current URL would just bless whatever the file says at
+        // first use — an unknown password cannot be safely bound without
+        // independently proving the destination. A one-time re-login binds
+        // it with the user seeing and providing the URL.
+        throw new AuthError(
+          `The stored credential for profile "${profileName}" predates credential-identity binding and cannot be safely used.`,
+          undefined,
+          'One-time upgrade: run `mainwpcontrol login` to re-authenticate and bind the credential to your Dashboard URL.'
+        );
       }
       return decoded.password;
     }
