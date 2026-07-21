@@ -292,6 +292,13 @@ export class Keychain {
           );
         }
       }
+      if (expectedDashboardUrl && !decoded.identity) {
+        // Legacy unbound entry: opportunistically re-bind it to the URL this
+        // authenticated read is for, so existing users get identity
+        // protection without a re-login. Best-effort — a failed write leaves
+        // the legacy entry as it was.
+        await this.set(profileName, decoded.password, expectedDashboardUrl);
+      }
       return decoded.password;
     }
 

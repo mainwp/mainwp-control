@@ -235,12 +235,39 @@ describe('Keychain identity binding', () => {
     });
   });
 
-  it('get() accepts a legacy bare-string entry unchanged even with an expectedDashboardUrl', async () => {
+  it('get() accepts a legacy bare-string entry and re-binds it to the expected URL', async () => {
     vi.mocked(keytar.getPassword).mockResolvedValue('abcd efgh');
+    vi.mocked(keytar.setPassword).mockResolvedValue(undefined);
 
     await expect(
       new Keychain().get('default', 'https://dash.example.com')
     ).resolves.toBe('abcd efgh');
+
+    // Opportunistic upgrade: the legacy entry is rewritten as a v1 envelope
+    // bound to the URL this authenticated read was for.
+    const [, , payload] = vi.mocked(keytar.setPassword).mock.calls.at(-1)!;
+    expect(JSON.parse(payload as string)).toEqual({
+      v: 1,
+      password: 'abcd efgh',
+      identity: 'https://dash.example.com',
+    });
+  });
+
+  it('get() still returns a legacy password when the re-bind write fails', async () => {
+    vi.mocked(keytar.getPassword).mockResolvedValue('abcd efgh');
+    vi.mocked(keytar.setPassword).mockRejectedValue(new Error('keychain locked'));
+
+    await expect(
+      new Keychain().get('default', 'https://dash.example.com')
+    ).resolves.toBe('abcd efgh');
+  });
+
+  it('get() without an expectedDashboardUrl never rewrites a legacy entry', async () => {
+    vi.mocked(keytar.getPassword).mockResolvedValue('abcd efgh');
+    vi.mocked(keytar.setPassword).mockResolvedValue(undefined);
+
+    await expect(new Keychain().get('default')).resolves.toBe('abcd efgh');
+    expect(vi.mocked(keytar.setPassword)).not.toHaveBeenCalled();
   });
 
   it('get() falls back to MAINWP_APP_PASSWORD without identity-checking the env var', async () => {

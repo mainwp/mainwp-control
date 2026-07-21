@@ -1165,6 +1165,9 @@ describe('ChatEngine', () => {
       if (responses[0]!.type === 'error') {
         expect(responses[0]!.error).toContain('delete-site-v1');
         expect(responses[0]!.error).toContain('verify');
+        // Callers map this stable code to the OUTCOME_UNKNOWN process exit —
+        // it must never be downgraded to a generic chat error.
+        expect(responses[0]!.code).toBe('OUTCOME_UNKNOWN');
       }
 
       // Dispatch is audited before the failure is known, then the failure

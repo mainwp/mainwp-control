@@ -66,6 +66,12 @@ export type ChatResponse =
       error: string;
       /** Ability name, when the error occurred while handling a specific tool */
       tool?: string;
+      /**
+       * Stable error code for callers that map chat errors to process
+       * outcomes (e.g. 'OUTCOME_UNKNOWN' for a confirm call that failed
+       * after dispatch).
+       */
+      code?: string;
     };
 
 /**
@@ -392,6 +398,7 @@ export class ChatEngine {
             `Confirm call for "${preview.ability.name}" failed after dispatch: ${reason}. ` +
             'The Dashboard may or may not have executed the action — verify its state before retrying.',
           tool: preview.ability.name,
+          code: 'OUTCOME_UNKNOWN',
         },
       ];
     }

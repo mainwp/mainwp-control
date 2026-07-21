@@ -6,12 +6,30 @@
  */
 
 import { stripControlChars } from '../../utils/terminal-sanitizer.js';
+import { isSensitiveKey } from '../../utils/redaction.js';
 import type { ReadableStreamReadResult } from 'node:stream/web';
 
 export const MAX_PROVIDER_ERROR_BODY_BYTES = 16 * 1024;
 
+/**
+ * Redact values of sensitive-looking keys in JSON-shaped error text, e.g.
+ * {"api_key":"secret"}. Regex-based rather than JSON.parse so it also works
+ * on truncated or almost-JSON bodies; key sensitivity comes from the shared
+ * redaction list.
+ */
+function redactJsonLikeSecrets(text: string): string {
+  // Value alternatives: a JSON string, or a bare scalar (number/bool/null).
+  // Object/array openers are deliberately excluded so a non-sensitive key
+  // with an object value doesn't swallow the nested keys inside it.
+  return text.replace(
+    /"([^"\\]{1,64})"(\s*:\s*)("(?:[^"\\]|\\.)*"|[^,{}[\]\s"]+)/g,
+    (match, key: string, sep: string) =>
+      isSensitiveKey(key) ? `"${key}"${sep}"[REDACTED]"` : match
+  );
+}
+
 export function sanitizeProviderErrorBody(errorText: string): string {
-  const sanitized = stripControlChars(errorText);
+  const sanitized = redactJsonLikeSecrets(stripControlChars(errorText));
   return sanitized.length > 500 ? sanitized.slice(0, 500) + '...' : sanitized;
 }
 

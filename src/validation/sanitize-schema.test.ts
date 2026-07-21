@@ -93,4 +93,69 @@ describe('sanitizeInputSchema', () => {
 
     expect(Object.keys(patternProperties)).toEqual(['^[a-z]+$']);
   });
+
+  it('drops a short but catastrophic nested-quantifier pattern', () => {
+    const input = {
+      type: 'object',
+      properties: {
+        redos: { type: 'string', pattern: '^(a+)+$' },
+        redosStar: { type: 'string', pattern: '(\\d*)*x' },
+        safeGroup: { type: 'string', pattern: '^(abc)$' },
+      },
+      patternProperties: {
+        '^(b+)+$': { type: 'string' },
+      },
+    };
+
+    const result = sanitizeInputSchema(input);
+    const props = result['properties'] as Record<string, Record<string, unknown>>;
+
+    expect('pattern' in props['redos']!).toBe(false);
+    expect('pattern' in props['redosStar']!).toBe(false);
+    expect(props['safeGroup']!['pattern']).toBe('^(abc)$');
+    expect(Object.keys(result['patternProperties'] as Record<string, unknown>)).toEqual([]);
+  });
+
+  it('sanitizes subschemas reached through contains and dependentSchemas', () => {
+    const input = {
+      type: 'object',
+      properties: {
+        list: {
+          type: 'array',
+          contains: { type: 'string', pattern: '^(a+)+$' },
+        },
+      },
+      dependentSchemas: {
+        list: { properties: { extra: { type: 'string', pattern: 'b'.repeat(1001) } } },
+      },
+    };
+
+    const result = sanitizeInputSchema(input);
+    const props = result['properties'] as Record<string, Record<string, unknown>>;
+    const contains = props['list']!['contains'] as Record<string, unknown>;
+    expect('pattern' in contains).toBe(false);
+
+    const dependent = (result['dependentSchemas'] as Record<string, Record<string, unknown>>)['list']!;
+    const extra = (dependent['properties'] as Record<string, Record<string, unknown>>)['extra']!;
+    expect('pattern' in extra).toBe(false);
+  });
+
+  it('applies the depth cap to nesting through contains', () => {
+    let schema: Record<string, unknown> = { type: 'string' };
+    for (let i = 0; i < 40; i++) {
+      schema = { type: 'array', contains: schema };
+    }
+
+    const result = sanitizeInputSchema({ type: 'object', properties: { deep: schema } });
+
+    let node = (result['properties'] as Record<string, Record<string, unknown>>)['deep']!;
+    let depth = 0;
+    while (node && typeof node === 'object' && 'contains' in node) {
+      node = node['contains'] as Record<string, Record<string, unknown>>;
+      depth++;
+    }
+    // The chain is cut off at the cap instead of recursing all 40 levels.
+    expect(depth).toBeLessThanOrEqual(33);
+    expect(node).toEqual({});
+  });
 });

@@ -15,6 +15,18 @@ describe('sanitizeProviderErrorBody', () => {
     expect(sanitizeProviderErrorBody('\x1b]0;Injected\x07failure')).toBe('failure');
   });
 
+  it('redacts values of sensitive-looking keys in JSON-shaped bodies', () => {
+    const body = '{"error":"bad request","api_key":"sk-live-12345","nested":{"authToken": "abc"},"count":2}';
+    const sanitized = sanitizeProviderErrorBody(body);
+
+    expect(sanitized).not.toContain('sk-live-12345');
+    expect(sanitized).not.toContain('abc"');
+    expect(sanitized).toContain('"api_key":"[REDACTED]"');
+    expect(sanitized).toContain('"authToken": "[REDACTED]"');
+    expect(sanitized).toContain('"error":"bad request"');
+    expect(sanitized).toContain('"count":2');
+  });
+
   it('truncates response bodies to 500 characters', () => {
     const output = sanitizeProviderErrorBody('x'.repeat(501));
 

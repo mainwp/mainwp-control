@@ -93,13 +93,7 @@ Expected output:
 
 You should see `@mainwp/control/` followed by a version number. If you see `command not found`, make sure Node.js 20+ is installed and try opening a new terminal window.
 
-> **Windows PowerShell note:** When running `mainwpcontrol` locally with `--input`, you need to escape the inner double quotes:
->
-> ```powershell
-> mainwpcontrol abilities run get-site-plugins-v1 --input '{\"site_id_or_domain\": 1}' --json
-> ```
->
-> The GitHub Actions workflow runs on Linux, so this quoting issue only affects local testing. You can also use `--input-file params.json` to avoid it entirely.
+> **Windows PowerShell note:** PowerShell's quoting of inline JSON is unreliable and varies by version. When running `mainwpcontrol` locally with `--input`, use `--input-file params.json` instead. The GitHub Actions workflow runs on Linux, so this only affects local testing.
 
 ---
 

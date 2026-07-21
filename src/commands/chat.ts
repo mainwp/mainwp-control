@@ -21,7 +21,7 @@ import type { PreviewResult } from '../core/safety-controller.js';
 import { isInteractive } from '../utils/prompt.js';
 import { stripControlChars } from '../utils/terminal-sanitizer.js';
 import { getInputSanitizer } from '../validation/input-sanitizer.js';
-import { APIError } from '../utils/errors.js';
+import { APIError, UnknownOutcomeError, type MainWPCTLError } from '../utils/errors.js';
 
 // Import providers to register them
 import '../chat/providers/index.js';
@@ -288,10 +288,16 @@ export default class ChatCommand extends BaseCommand {
    */
   private static terminalFailure(
     response: ChatResponse | undefined
-  ): APIError | undefined {
+  ): MainWPCTLError | undefined {
     if (!response) return undefined;
 
     if (response.type === 'error') {
+      // An unknown destructive outcome keeps its identity (and exit 3):
+      // downgrading it to a generic chat error would hide the one failure
+      // an operator must reconcile before retrying anything.
+      if (response.code === 'OUTCOME_UNKNOWN') {
+        return new UnknownOutcomeError(response.error, response);
+      }
       return new APIError('CHAT_ERROR', response.error, undefined, response);
     }
 
