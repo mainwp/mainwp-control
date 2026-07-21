@@ -53,12 +53,42 @@ describe('Keychain error normalization', () => {
     });
   });
 
-  it('delete() reports when keytar did not remove a credential', async () => {
+  it('delete() marks a missing credential as notFound, not a failure', async () => {
     vi.mocked(keytar.deletePassword).mockResolvedValue(false);
 
     await expect(new Keychain().delete('default')).resolves.toEqual({
       deleted: false,
+      notFound: true,
       error: 'No matching keychain credential was found',
+    });
+  });
+
+  it('getStored() ignores MAINWP_APP_PASSWORD while get() falls back to it', async () => {
+    vi.mocked(keytar.getPassword).mockResolvedValue(null);
+    vi.stubEnv('MAINWP_APP_PASSWORD', 'env-secret');
+
+    const keychain = new Keychain();
+    await expect(keychain.getStored('default')).resolves.toEqual({ status: 'not-found' });
+    await expect(keychain.get('default')).resolves.toBe('env-secret');
+
+    vi.unstubAllEnvs();
+  });
+
+  it('getStored() reports a read error distinctly from not-found', async () => {
+    vi.mocked(keytar.getPassword).mockRejectedValue(new Error('keychain locked'));
+
+    await expect(new Keychain().getStored('default')).resolves.toEqual({
+      status: 'error',
+      error: 'keychain locked',
+    });
+  });
+
+  it('getStored() returns the persisted credential when present', async () => {
+    vi.mocked(keytar.getPassword).mockResolvedValue('stored-secret');
+
+    await expect(new Keychain().getStored('default')).resolves.toEqual({
+      status: 'found',
+      password: 'stored-secret',
     });
   });
 

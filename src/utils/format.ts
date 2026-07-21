@@ -122,7 +122,9 @@ export function maskUrlUserinfo(url: string): string {
     return url;
   }
 
-  return url.replace(/^([a-z][a-z0-9+.-]*:\/\/)[^/@]*@/i, '$1***:***@');
+  // Greedy through the LAST @ in the authority: a password containing "@"
+  // must not leak its tail. `?`/`#`/`/` bound the authority section.
+  return url.replace(/^([a-z][a-z0-9+.-]*:\/\/)[^/?#\s]*@/i, '$1***:***@');
 }
 
 /**
@@ -135,5 +137,7 @@ export function maskUrlUserinfo(url: string): string {
  * @returns The text with each `scheme://user:pass@` replaced by `scheme://***:***@`
  */
 export function maskUrlUserinfoInText(text: string): string {
-  return text.replace(/([a-z][a-z0-9+.-]*:\/\/)[^\s/@]+@/gi, '$1***:***@');
+  // Greedy through the LAST @ before a path/query/fragment or whitespace, so
+  // passwords containing "@" mask fully instead of leaking after the first @.
+  return text.replace(/([a-z][a-z0-9+.-]*:\/\/)[^\s/?#]+@/gi, '$1***:***@');
 }

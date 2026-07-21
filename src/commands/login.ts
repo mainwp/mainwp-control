@@ -171,9 +171,23 @@ export default class Login extends BaseCommand {
     const profileStore = getProfileStore();
     const keychain = getKeychain();
     const previousProfile = await profileStore.get(profileName);
-    const previousCredential = previousProfile
-      ? await keychain.get(profileName)
-      : undefined;
+    // Rollback must restore only what the keychain actually held (the
+    // MAINWP_APP_PASSWORD env fallback must never be persisted), and an
+    // unreadable keychain must abort before the credential is overwritten:
+    // treating a failed read as "nothing stored" would make a later profile-
+    // save failure "roll back" by deleting a credential that still exists.
+    let previousCredential: string | undefined;
+    if (previousProfile) {
+      const stored = await keychain.getStored(profileName);
+      if (stored.status === 'error') {
+        throw new AuthError(
+          `Cannot read the existing keychain credential for profile "${profileName}": ${stored.error}`,
+          undefined,
+          'Unlock the system keychain and retry. The stored credential was left untouched.'
+        );
+      }
+      previousCredential = stored.status === 'found' ? stored.password : undefined;
+    }
     // Attempt credential storage before publishing the profile. A thrown
     // keychain failure cannot leave a profile that was only half-created.
     // Supported keychain-unavailable environments still receive the existing

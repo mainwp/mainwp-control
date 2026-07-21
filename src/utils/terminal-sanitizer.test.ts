@@ -243,6 +243,27 @@ describe('sanitizeForTerminal', () => {
       },
     });
   });
+
+  it('terminates on cyclic structures instead of overflowing the stack', () => {
+    const cyclic: Record<string, unknown> = { name: 'outer' };
+    cyclic['self'] = cyclic;
+
+    expect(sanitizeForTerminal(cyclic)).toEqual({
+      name: 'outer',
+      self: '[TRUNCATED]',
+    });
+  });
+
+  it('truncates beyond the depth limit instead of recursing indefinitely', () => {
+    let deep: unknown = 'leaf';
+    for (let index = 0; index < 100_000; index++) {
+      deep = { nested: deep };
+    }
+
+    const sanitized = JSON.stringify(sanitizeForTerminal(deep));
+    expect(sanitized).toContain('[TRUNCATED]');
+    expect(sanitized).not.toContain('leaf');
+  });
 });
 
 describe('safeString', () => {

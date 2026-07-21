@@ -118,8 +118,20 @@ export interface KeychainSetResult {
 
 export interface KeychainDeleteResult {
   deleted: boolean;
+  /** True when no credential existed to delete — the goal state already holds. */
+  notFound?: boolean;
   error?: string;
 }
+
+/**
+ * Result of a persisted-only credential read. Distinguishes "nothing stored"
+ * from "could not read" — callers making destructive decisions (rollback,
+ * overwrite) must not treat a failed read as an empty keychain.
+ */
+export type KeychainReadResult =
+  | { status: 'found'; password: string }
+  | { status: 'not-found' }
+  | { status: 'error'; error: string };
 
 /**
  * Keychain class
@@ -162,21 +174,36 @@ export class Keychain {
   }
 
   /**
-   * Retrieve a credential
+   * Read the persisted keychain credential only — no MAINWP_APP_PASSWORD
+   * fallback (the env var must never masquerade as a stored credential).
+   *
+   * An unavailable keytar reads as not-found: nothing can be stored or
+   * deleted through it either, so no overwrite/rollback hazard exists.
    */
-  async get(profileName: string): Promise<string | undefined> {
-    // First try keytar
+  async getStored(profileName: string): Promise<KeychainReadResult> {
     const kt = await loadKeytar();
 
-    if (kt) {
-      try {
-        const password = await withTimeout(kt.getPassword(SERVICE_NAME, profileName), KEYTAR_TIMEOUT_MS);
-        if (password) {
-          return password;
-        }
-      } catch {
-        // Keytar failed, fall through to env var
-      }
+    if (!kt) {
+      return { status: 'not-found' };
+    }
+
+    try {
+      const password = await withTimeout(kt.getPassword(SERVICE_NAME, profileName), KEYTAR_TIMEOUT_MS);
+      return password ? { status: 'found', password } : { status: 'not-found' };
+    } catch (error) {
+      return { status: 'error', error: sanitizeKeychainError(error) };
+    }
+  }
+
+  /**
+   * Retrieve a credential for authentication: keytar first, then the
+   * MAINWP_APP_PASSWORD environment variable. Keytar read errors fall
+   * through to the env var.
+   */
+  async get(profileName: string): Promise<string | undefined> {
+    const stored = await this.getStored(profileName);
+    if (stored.status === 'found') {
+      return stored.password;
     }
 
     // Fallback to environment variable
@@ -202,7 +229,7 @@ export class Keychain {
         );
         return deleted
           ? { deleted: true }
-          : { deleted: false, error: 'No matching keychain credential was found' };
+          : { deleted: false, notFound: true, error: 'No matching keychain credential was found' };
       } catch (error) {
         return {
           deleted: false,

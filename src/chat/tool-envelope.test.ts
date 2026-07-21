@@ -80,6 +80,40 @@ describe('parseResponse', () => {
     });
   });
 
+  it('treats prose containing non-JSON braces as an answer, not a protocol error', () => {
+    const content = 'The config uses { key: value } format for site entries.';
+
+    expect(parseResponse(contentResponse(content)).response).toEqual({
+      type: 'answer',
+      answer: content,
+    });
+  });
+
+  it('keeps malformed content that leads with "{" on the retryable error path', () => {
+    const result = parseResponse(contentResponse('{"type": "tool_call", broken'));
+
+    expect(result.response.type).toBe('error');
+    expect(result.response).toMatchObject({ retryable: true });
+  });
+
+  it('treats a malformed tool envelope after prose as retryable, not an answer', () => {
+    const result = parseResponse(
+      contentResponse('I will call it now: {"tool": "delete-site-v1", "input":')
+    );
+
+    expect(result.response.type).toBe('error');
+    expect(result.response).toMatchObject({ retryable: true });
+  });
+
+  it('treats a malformed answer envelope after prose as retryable, not an answer', () => {
+    const result = parseResponse(
+      contentResponse('Here is my reply: {"answer": "the site is')
+    );
+
+    expect(result.response.type).toBe('error');
+    expect(result.response).toMatchObject({ retryable: true });
+  });
+
   it('rejects native responses containing multiple tool calls', () => {
     const toolCalls: ToolCall[] = [
       { id: 'call_1', name: 'list-sites-v1', arguments: {} },

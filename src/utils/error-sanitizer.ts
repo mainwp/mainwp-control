@@ -16,8 +16,9 @@ export function sanitizeErrorMessage(message: string): string {
     sanitized = sanitized.replace(pattern, '[PATH]');
   }
 
+  // Password is optional: `https://alice@host` still leaks a username.
   sanitized = sanitized.replace(
-    /https?:\/\/[^:]+:[^@]+@[^\s]+/g,
+    /https?:\/\/[^\s@/]+(?::[^\s@]*)?@[^\s]+/g,
     '[URL_WITH_CREDENTIALS]'
   );
   sanitized = sanitized.replace(
@@ -32,22 +33,38 @@ export function sanitizeErrorMessage(message: string): string {
   return sanitized;
 }
 
-export function sanitizeErrorValue(value: unknown): unknown {
+// Error details can carry parsed API responses (hostile input): a deeply
+// nested payload or a locally-attached cyclic structure must not overflow
+// the stack while being sanitized. The WeakSet tracks the current ancestor
+// path (not all visited objects) so legitimately shared references survive.
+const MAX_SANITIZE_DEPTH = 8;
+
+export function sanitizeErrorValue(
+  value: unknown,
+  depth = 0,
+  path: WeakSet<object> = new WeakSet()
+): unknown {
   if (typeof value === 'string') {
     return sanitizeErrorMessage(value);
   }
 
-  if (Array.isArray(value)) {
-    return value.map((item) => sanitizeErrorValue(item));
-  }
-
   if (value !== null && typeof value === 'object') {
-    return Object.fromEntries(
-      Object.entries(value).map(([key, item]) => [
-        sanitizeErrorMessage(key),
-        sanitizeErrorValue(item),
-      ])
-    );
+    if (path.has(value) || depth >= MAX_SANITIZE_DEPTH) {
+      return '[TRUNCATED]';
+    }
+    path.add(value);
+
+    const result = Array.isArray(value)
+      ? value.map((item) => sanitizeErrorValue(item, depth + 1, path))
+      : Object.fromEntries(
+          Object.entries(value).map(([key, item]) => [
+            sanitizeErrorMessage(key),
+            sanitizeErrorValue(item, depth + 1, path),
+          ])
+        );
+
+    path.delete(value);
+    return result;
   }
 
   return value;

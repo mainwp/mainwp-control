@@ -215,7 +215,11 @@ describe('AuditLogger', () => {
     it('opens the log atomically in append mode and restricts permissions', async () => {
       await logger.logDestructiveAction(baseInput);
 
-      expect(mockOpen).toHaveBeenCalledWith(MOCK_LOG, 15, 0o600);
+      expect(mockOpen).toHaveBeenCalledWith(
+        MOCK_LOG,
+        process.platform === 'win32' ? 7 : 15,
+        0o600,
+      );
       expect(mockHandleChmod).toHaveBeenCalledWith(0o600);
       expect(mockHandleClose).toHaveBeenCalled();
     });

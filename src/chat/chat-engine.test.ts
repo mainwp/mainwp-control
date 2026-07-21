@@ -122,7 +122,7 @@ function createAnswerResponse(answer: string): LLMResponse {
 
 function createInvalidJsonResponse(): LLMResponse {
   return {
-    content: 'This is not valid JSON { broken',
+    content: '{"type": "tool_call", "tool": broken',
     finishReason: 'stop',
     model: 'test-model',
   };

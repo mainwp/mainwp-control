@@ -209,6 +209,16 @@ function recordAuditValues(
   values.add(credentials.appPassword);
   values.add(credentials.appPassword.replace(/\s+/g, ''));
   values.add(new URL(credentials.dashboardUrl).origin);
+  // Basic Authorization headers carry the credential base64-encoded; a leaked
+  // header would otherwise slip past the plaintext checks above.
+  values.add(
+    Buffer.from(`${credentials.username}:${credentials.appPassword}`).toString('base64'),
+  );
+  values.add(
+    Buffer.from(
+      `${credentials.username}:${credentials.appPassword.replace(/\s+/g, '')}`,
+    ).toString('base64'),
+  );
 }
 
 function auditArtifacts(runDir: string, auditValues: Set<string>): string[] {

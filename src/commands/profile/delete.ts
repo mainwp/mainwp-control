@@ -66,16 +66,24 @@ export default class ProfileDelete extends BaseCommand {
     // Remove profile from profile store (handles active profile switching automatically)
     await profileStore.remove(args.name);
 
+    // "No credential existed" is the goal state, not a failure — profiles
+    // authenticated via MAINWP_APP_PASSWORD never had a keychain entry.
+    const credentialsHandled = credentialDeletion.deleted || credentialDeletion.notFound === true;
+
     this.output(
       {
         deleted: args.name,
         credentialsDeleted: credentialDeletion.deleted,
         message: credentialDeletion.deleted
           ? 'Profile and credentials deleted successfully'
-          : 'Profile deleted, but keychain credential removal failed',
-        ...(credentialDeletion.error ? { credentialWarning: credentialDeletion.error } : {}),
+          : credentialsHandled
+            ? 'Profile deleted; no stored credentials found'
+            : 'Profile deleted, but keychain credential removal failed',
+        ...(credentialDeletion.error && !credentialsHandled
+          ? { credentialWarning: credentialDeletion.error }
+          : {}),
       },
-      () => credentialDeletion.deleted
+      () => credentialsHandled
         ? formatSuccess(`Deleted profile: ${args.name}`)
         : [
             formatSuccess(`Deleted profile: ${args.name}`),

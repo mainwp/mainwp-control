@@ -19,7 +19,7 @@ import {
 import { createAbilitiesExecutor, type AbilitiesExecutor } from '../core/abilities-executor.js';
 import { createBatchManager, type BatchManager } from '../core/batch-manager.js';
 import type { HttpClientConfig } from '../core/http-client.js';
-import { isMainWPCTLError, ConfigError } from '../utils/errors.js';
+import { isMainWPCTLError, ConfigError, InputError } from '../utils/errors.js';
 import { successOutput, errorOutput } from '../output/json-envelope.js';
 import { ExitCode } from '../utils/exit-codes.js';
 import { formatError, formatWarning } from '../output/formatter.js';
@@ -366,7 +366,9 @@ export abstract class BaseCommand extends Command {
         (argument) => argument === '--json' || argument.startsWith('--json=')
       );
       if (rawJsonRequested) {
-        this.log(JSON.stringify(errorOutput(err), null, 2));
+        // Wrap so the envelope code matches the exit code: a bare oclif parse
+        // error is not a MainWPCTLError and would be labeled INTERNAL_ERROR.
+        this.log(JSON.stringify(errorOutput(new InputError(err.message)), null, 2));
       } else {
         this.logToStderr(formatError(err));
       }

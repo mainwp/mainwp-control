@@ -142,6 +142,32 @@ describe('Golden Test: Error Code Propagation', () => {
     expect(output.error?.message).toContain(marker);
   });
 
+  it('emits a stable envelope for cyclic error details instead of overflowing', () => {
+    const details: Record<string, unknown> = { endpoint: 'https://host/x' };
+    details['self'] = details;
+
+    const output = errorOutput(new InputError('Bad input', details));
+    const parsed = JSON.parse(formatJSON(output));
+
+    expect(parsed.success).toBe(false);
+    expect(parsed.error.code).toBe('INPUT_ERROR');
+    expect(parsed.error.details.self).toBe('[TRUNCATED]');
+  });
+
+  it('emits a stable envelope for deeply nested error details instead of overflowing', () => {
+    let deep: unknown = 'leaf';
+    for (let index = 0; index < 100_000; index++) {
+      deep = { nested: deep };
+    }
+
+    const output = errorOutput(new InputError('Bad input', { deep }));
+    const serialized = formatJSON(output);
+
+    expect(JSON.parse(serialized).success).toBe(false);
+    expect(serialized).toContain('[TRUNCATED]');
+    expect(serialized).not.toContain('leaf');
+  });
+
   it('redacts credentials from error details and hints', () => {
     const output = errorOutput(
       new InputError(

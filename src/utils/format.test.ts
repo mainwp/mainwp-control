@@ -134,6 +134,18 @@ describe('maskUrlUserinfo', () => {
     );
   });
 
+  it('masks the full userinfo when the password contains "@"', () => {
+    expect(maskUrlUserinfo('https://admin:p@ssw@rd@dashboard.example.com/path')).toBe(
+      'https://***:***@dashboard.example.com/path'
+    );
+  });
+
+  it('does not consume past the query string when it contains "@"', () => {
+    expect(maskUrlUserinfo('https://admin:secret@dashboard.example.com?to=a@b')).toBe(
+      'https://***:***@dashboard.example.com?to=a@b'
+    );
+  });
+
   it('returns URLs without userinfo unchanged', () => {
     const url = 'https://dashboard.example.com/path?site=1';
     expect(maskUrlUserinfo(url)).toBe(url);
@@ -159,5 +171,11 @@ describe('maskUrlUserinfoInText', () => {
   it('leaves text without credentialed URLs unchanged', () => {
     const text = 'Connection refused for https://dashboard.example.com (mail admin@example.com)';
     expect(maskUrlUserinfoInText(text)).toBe(text);
+  });
+
+  it('masks the full userinfo when the password contains "@"', () => {
+    expect(
+      maskUrlUserinfoInText('fetch failed: https://legacy:p@ss@dashboard.example.com/wp-json timed out')
+    ).toBe('fetch failed: https://***:***@dashboard.example.com/wp-json timed out');
   });
 });

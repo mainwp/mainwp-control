@@ -98,6 +98,15 @@ export function sanitizeSingleLine(str: string): string {
 }
 
 /**
+ * Sanitized values can originate from hostile API responses: the traversal
+ * is depth-bounded so deep nesting cannot overflow the stack, and the
+ * current ancestor path is tracked so cycles terminate. Tracking the path
+ * (not all visited objects) keeps legitimately shared references intact —
+ * command envelopes do reuse objects across fields.
+ */
+const MAX_SANITIZE_DEPTH = 64;
+
+/**
  * Recursively sanitize a value for safe terminal output.
  *
  * Handles:
@@ -106,10 +115,21 @@ export function sanitizeSingleLine(str: string): string {
  * - Objects: recursively sanitizes each value
  * - Other types: converted to string and sanitized
  *
+ * Cyclic or deeper-than-bound structures are replaced with '[TRUNCATED]'
+ * rather than overflowing the stack.
+ *
  * @param value - The value to sanitize
  * @returns A sanitized copy of the value (original is not modified)
  */
 export function sanitizeForTerminal(value: unknown): unknown {
+  return sanitizeForTerminalBounded(value, 0, new WeakSet());
+}
+
+function sanitizeForTerminalBounded(
+  value: unknown,
+  depth: number,
+  path: WeakSet<object>
+): unknown {
   if (value === null || value === undefined) {
     return value;
   }
@@ -122,18 +142,27 @@ export function sanitizeForTerminal(value: unknown): unknown {
     return value;
   }
 
-  if (Array.isArray(value)) {
-    return value.map((item) => sanitizeForTerminal(item));
-  }
-
   if (typeof value === 'object') {
-    const sanitized: Record<string, unknown> = {};
-    for (const [key, val] of Object.entries(value)) {
-      // Sanitize both keys and values
-      const sanitizedKey = stripControlChars(key);
-      sanitized[sanitizedKey] = sanitizeForTerminal(val);
+    if (path.has(value) || depth >= MAX_SANITIZE_DEPTH) {
+      return '[TRUNCATED]';
     }
-    return sanitized;
+    path.add(value);
+
+    let result: unknown;
+    if (Array.isArray(value)) {
+      result = value.map((item) => sanitizeForTerminalBounded(item, depth + 1, path));
+    } else {
+      const sanitized: Record<string, unknown> = {};
+      for (const [key, val] of Object.entries(value)) {
+        // Sanitize both keys and values
+        const sanitizedKey = stripControlChars(key);
+        sanitized[sanitizedKey] = sanitizeForTerminalBounded(val, depth + 1, path);
+      }
+      result = sanitized;
+    }
+
+    path.delete(value);
+    return result;
   }
 
   // For other types (functions, symbols, etc.), convert to string and sanitize

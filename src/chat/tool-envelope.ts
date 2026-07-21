@@ -229,7 +229,14 @@ function parseContentJson(
       jsonStr = trimmed;
       attempts++;
     } catch {
-      if (!trimmed.includes('{')) {
+      // Only content that LOOKS like an attempted envelope goes to the
+      // retryable protocol-error path: it leads with "{", or it carries an
+      // envelope key after prose (a truncated `Deleting: {"tool": ...` must
+      // retry, not pass as an answer). Prose that merely contains braces —
+      // "the config uses { key: value } format" — is an answer; the
+      // balanced-object scan above already extracted any real embedded JSON.
+      const looksLikeEnvelopeAttempt = /"(?:tool|answer)"\s*:/.test(trimmed);
+      if (!trimmed.startsWith('{') && !looksLikeEnvelopeAttempt) {
         return {
           response: { type: 'answer', answer: trimmed },
           rawContent: content,

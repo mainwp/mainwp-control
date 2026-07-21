@@ -330,6 +330,8 @@ export default class JobsWatch extends BaseCommand {
       lines.push(formatSuccess(`Job ${jobId} completed`));
     } else if (status.status === 'failed') {
       lines.push(formatErrorText(`Job ${jobId} failed`));
+    } else if (status.status === 'cancelled') {
+      lines.push(formatWarning(`Job ${jobId} cancelled`));
     } else {
       lines.push(formatWarning(`Job ${jobId} partially completed`));
     }

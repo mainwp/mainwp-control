@@ -57,6 +57,7 @@ vi.mock('../../config/profile-store.js', async (importOriginal) => ({
 
 // Mock keychain singleton
 const mockKeychainGet = vi.fn();
+const mockKeychainGetStored = vi.fn();
 const mockKeychainGetOrThrow = vi.fn();
 const mockKeychainSet = vi.fn();
 const mockKeychainDelete = vi.fn();
@@ -64,6 +65,7 @@ const mockKeychainDelete = vi.fn();
 vi.mock('../../config/keychain.js', () => ({
   getKeychain: vi.fn(() => ({
     get: mockKeychainGet,
+    getStored: mockKeychainGetStored,
     getOrThrow: mockKeychainGetOrThrow,
     set: mockKeychainSet,
     delete: mockKeychainDelete,
@@ -305,6 +307,7 @@ describe('E2E: Command-Level Workflows', () => {
     mockProfileStoreSetActive.mockReset().mockResolvedValue(undefined);
 
     mockKeychainGet.mockReset();
+    mockKeychainGetStored.mockReset().mockResolvedValue({ status: 'not-found' });
     mockKeychainGetOrThrow.mockReset();
     mockKeychainSet.mockReset().mockResolvedValue({ stored: true, location: 'keychain' });
     mockKeychainDelete.mockReset().mockResolvedValue({ deleted: true });
@@ -418,7 +421,7 @@ describe('E2E: Command-Level Workflows', () => {
         createMockHttpResponse(200, { abilities: [] })
       );
       mockProfileStoreGet.mockResolvedValueOnce(createMockProfile({ name: 'existing' }));
-      mockKeychainGet.mockResolvedValueOnce('old-password');
+      mockKeychainGetStored.mockResolvedValueOnce({ status: 'found', password: 'old-password' });
       mockProfileStoreSave.mockRejectedValueOnce(new Error('disk full'));
 
       await runCommand(Login, [
@@ -430,6 +433,29 @@ describe('E2E: Command-Level Workflows', () => {
 
       expect(mockKeychainSet).toHaveBeenNthCalledWith(1, 'existing', 'new-password');
       expect(mockKeychainSet).toHaveBeenNthCalledWith(2, 'existing', 'old-password');
+      expect(mockProfileStoreSetActive).not.toHaveBeenCalled();
+    });
+
+    it('aborts before overwriting when the existing credential cannot be read', async () => {
+      mockHttpGet.mockResolvedValueOnce(
+        createMockHttpResponse(200, { abilities: [] })
+      );
+      mockProfileStoreGet.mockResolvedValueOnce(createMockProfile({ name: 'existing' }));
+      // A failed read is NOT "nothing stored": overwriting here and later
+      // rolling back would delete a credential that still exists.
+      mockKeychainGetStored.mockResolvedValueOnce({ status: 'error', error: 'keychain locked' });
+
+      const output = await runCommand(Login, [
+        '--url', 'https://dashboard.test',
+        '--username', 'admin',
+        '--password', 'new-password',
+        '--name', 'existing',
+      ], LOGIN_FLAGS);
+
+      expect(output.exitCode).toBe(1);
+      expect(mockKeychainSet).not.toHaveBeenCalled();
+      expect(mockKeychainDelete).not.toHaveBeenCalled();
+      expect(mockProfileStoreSave).not.toHaveBeenCalled();
       expect(mockProfileStoreSetActive).not.toHaveBeenCalled();
     });
 
