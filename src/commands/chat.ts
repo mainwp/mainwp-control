@@ -20,6 +20,8 @@ import {
 import type { PreviewResult } from '../core/safety-controller.js';
 import { isInteractive } from '../utils/prompt.js';
 import { stripControlChars } from '../utils/terminal-sanitizer.js';
+import { getInputSanitizer } from '../validation/input-sanitizer.js';
+import { APIError } from '../utils/errors.js';
 
 // Import providers to register them
 import '../chat/providers/index.js';
@@ -279,30 +281,66 @@ export default class ChatCommand extends BaseCommand {
   }
 
   /**
+   * Map a terminal chat response to the error that should decide the process
+   * outcome, or undefined when the turn succeeded. One-shot chat must not
+   * exit 0 when the turn ended in a failure — CI would read a failed MainWP
+   * operation as success.
+   */
+  private static terminalFailure(
+    response: ChatResponse | undefined
+  ): APIError | undefined {
+    if (!response) return undefined;
+
+    if (response.type === 'error') {
+      return new APIError('CHAT_ERROR', response.error, undefined, response);
+    }
+
+    if (response.type === 'tool_result' && !response.result.success) {
+      return new APIError(
+        response.result.error?.code ?? 'ABILITY_EXECUTION_ERROR',
+        response.result.error?.message ?? 'Tool execution failed',
+        undefined,
+        { tool: response.tool, error: response.result.error }
+      );
+    }
+
+    return undefined;
+  }
+
+  /**
    * Handle a single message (non-interactive mode)
    */
   private async handleSingleMessage(message: string): Promise<void> {
     const responses = await this.chatEngine!.sendMessage(message);
 
+    // Select the terminal-state response.
+    // preview/error: singular (loop breaks after producing one), so find() is correct.
+    // tool_result: multiple can accumulate in multi-step turns, so findLast()
+    // ensures we return the final outcome, not an intermediate step.
+    const terminal =
+      responses.find((response) => response.type === 'preview') ??
+      responses.find((response) => response.type === 'error') ??
+      responses.findLast((response) => response.type === 'tool_result') ??
+      responses.at(-1);
+
+    const failure = ChatCommand.terminalFailure(terminal);
+
     if (this.jsonOutput) {
-      // Select the terminal-state response for JSON output.
-      // preview/error: singular (loop breaks after producing one), so find() is correct.
-      // tool_result: multiple can accumulate in multi-step turns, so findLast()
-      // ensures we return the final outcome, not an intermediate step.
-      const jsonResponse =
-        responses.find((response) => response.type === 'preview') ??
-        responses.find((response) => response.type === 'error') ??
-        responses.findLast((response) => response.type === 'tool_result') ??
-        responses.at(-1);
-
-      if (jsonResponse) {
-        this.log(JSON.stringify(jsonResponse, null, 2));
+      // Failures go through catch(): documented error envelope + non-zero exit.
+      if (failure) throw failure;
+      // Success wraps in the documented {success, data, error, meta} envelope
+      // instead of printing a bare ChatResponse.
+      if (terminal) {
+        this.output(terminal);
       }
-
       return;
     }
 
     for (const response of responses) {
+      // The failing terminal response is printed by catch() below — printing
+      // it here too would duplicate the error line.
+      if (failure && response === terminal) continue;
+
       // Add newline after streamed content (streaming doesn't include final newline)
       if (this.isStreaming && response.type === 'message') {
         this.log(''); // Blank line after streamed content
@@ -316,13 +354,13 @@ export default class ChatCommand extends BaseCommand {
 
       // If preview is pending, we can't continue in non-interactive
       if (response.type === 'preview') {
-        if (!this.jsonOutput) {
-          this.log('\nDestructive action requires approval.');
-          this.log('Run in interactive mode to approve.');
-        }
+        this.log('\nDestructive action requires approval.');
+        this.log('Run in interactive mode to approve.');
         return;
       }
     }
+
+    if (failure) throw failure;
   }
 
   /**
@@ -405,9 +443,13 @@ export default class ChatCommand extends BaseCommand {
             this.log('This is a destructive action. Type "yes" to approve or "no" to cancel.');
           }
         } catch (error) {
-          this.logToStderr(
-            `Error: ${stripControlChars(error instanceof Error ? error.message : String(error))}`
+          // Provider/transport errors can echo untrusted response fragments;
+          // apply the same secret/path redaction the --json path gets before
+          // the message reaches the terminal.
+          const sanitized = getInputSanitizer().sanitizeErrorMessage(
+            error instanceof Error ? error.message : String(error)
           );
+          this.logToStderr(`Error: ${stripControlChars(sanitized)}`);
         }
 
         this.log('');

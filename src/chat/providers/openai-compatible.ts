@@ -16,7 +16,11 @@ import {
   type ToolCall,
 } from './provider.js';
 import { readSSEStream } from './sse-reader.js';
-import { readBoundedResponseText, sanitizeProviderErrorBody } from './provider-fetch.js';
+import {
+  assertNoRedirect,
+  readBoundedResponseText,
+  sanitizeProviderErrorBody,
+} from './provider-fetch.js';
 
 /**
  * OpenAI-compatible API message format
@@ -426,7 +430,10 @@ export abstract class OpenAICompatibleProvider implements LLMProvider {
         headers: this.getHeaders(),
         body: JSON.stringify(body),
         signal: combinedSignal,
+        redirect: 'manual',
       });
+
+      assertNoRedirect(response, this.name);
 
       if (!response.ok) {
         const error = await readBoundedResponseText(response);

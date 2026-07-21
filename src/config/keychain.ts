@@ -105,6 +105,63 @@ async function loadKeytar(): Promise<typeof import('keytar') | null> {
 }
 
 /**
+ * Canonical Dashboard identity used to bind a stored credential to the
+ * destination it was saved for: scheme + host(:port) + normalized base path.
+ * Profile names are user-facing selectors, not an authorization boundary
+ * (AGENTS.md) — this is the boundary.
+ */
+export function canonicalDashboardIdentity(dashboardUrl: string): string {
+  const parsed = new URL(dashboardUrl);
+  const path = parsed.pathname.replace(/\/+$/, '');
+  return `${parsed.protocol}//${parsed.host}${path}`;
+}
+
+/**
+ * Stored credential envelope (format v1). Legacy entries are the bare
+ * application password; new entries bind the password to the Dashboard
+ * identity they were saved for, so editing profiles.json cannot silently
+ * redirect a stored credential to a different host.
+ */
+interface StoredCredentialV1 {
+  v: 1;
+  password: string;
+  identity: string;
+}
+
+function encodeCredential(password: string, dashboardUrl: string): string {
+  const envelope: StoredCredentialV1 = {
+    v: 1,
+    password,
+    identity: canonicalDashboardIdentity(dashboardUrl),
+  };
+  return JSON.stringify(envelope);
+}
+
+/**
+ * Decode a stored keychain payload. WordPress application passwords never
+ * start with "{", so a JSON-looking payload that fails to parse as a v1
+ * envelope is treated as a legacy bare password rather than rejected.
+ */
+function decodeCredential(raw: string): { password: string; identity?: string } {
+  if (raw.startsWith('{')) {
+    try {
+      const parsed = JSON.parse(raw) as Partial<StoredCredentialV1>;
+      if (
+        parsed !== null &&
+        parsed.v === 1 &&
+        typeof parsed.password === 'string' &&
+        typeof parsed.identity === 'string'
+      ) {
+        return { password: parsed.password, identity: parsed.identity };
+      }
+    } catch {
+      // Fall through: treat as legacy raw secret
+    }
+  }
+  return { password: raw };
+}
+
+/**
  * Result of a credential storage operation
  */
 export interface KeychainSetResult {
@@ -146,16 +203,27 @@ export class Keychain {
   }
 
   /**
-   * Store a credential
+   * Store a credential.
+   *
+   * When `dashboardUrl` is provided the password is stored bound to that
+   * Dashboard's canonical identity; retrieval with an expected URL then
+   * refuses to release the credential to a different destination. Omit
+   * `dashboardUrl` only to restore a previously read raw payload verbatim
+   * (rollback).
    *
    * @returns Result indicating whether storage succeeded and where credentials are stored
    */
-  async set(profileName: string, password: string): Promise<KeychainSetResult> {
+  async set(
+    profileName: string,
+    password: string,
+    dashboardUrl?: string
+  ): Promise<KeychainSetResult> {
     const kt = await loadKeytar();
+    const payload = dashboardUrl ? encodeCredential(password, dashboardUrl) : password;
 
     if (kt) {
       try {
-        await withTimeout(kt.setPassword(SERVICE_NAME, profileName, password), KEYTAR_TIMEOUT_MS);
+        await withTimeout(kt.setPassword(SERVICE_NAME, profileName, payload), KEYTAR_TIMEOUT_MS);
         return { stored: true, location: 'keychain' };
       } catch (error) {
         return {
@@ -199,11 +267,32 @@ export class Keychain {
    * Retrieve a credential for authentication: keytar first, then the
    * MAINWP_APP_PASSWORD environment variable. Keytar read errors fall
    * through to the env var.
+   *
+   * When `expectedDashboardUrl` is provided and the stored credential is
+   * identity-bound, a mismatch throws instead of releasing the password —
+   * a hand-edited profiles.json must not redirect a stored credential to a
+   * different host. Legacy (unbound) entries are accepted and re-bound on
+   * the next `login`. The env var is per-invocation operator input and is
+   * not identity-checked.
    */
-  async get(profileName: string): Promise<string | undefined> {
+  async get(
+    profileName: string,
+    expectedDashboardUrl?: string
+  ): Promise<string | undefined> {
     const stored = await this.getStored(profileName);
     if (stored.status === 'found') {
-      return stored.password;
+      const decoded = decodeCredential(stored.password);
+      if (expectedDashboardUrl && decoded.identity) {
+        const expected = canonicalDashboardIdentity(expectedDashboardUrl);
+        if (decoded.identity !== expected) {
+          throw new AuthError(
+            `The stored credential for profile "${profileName}" was saved for ${decoded.identity}, but the profile now points to ${expected}. Refusing to send it.`,
+            undefined,
+            'The profile URL changed after login. Run `mainwpcontrol login` to re-authenticate against the new URL.'
+          );
+        }
+      }
+      return decoded.password;
     }
 
     // Fallback to environment variable
@@ -247,8 +336,8 @@ export class Keychain {
   /**
    * Get credential or throw
    */
-  async getOrThrow(profileName: string): Promise<string> {
-    const password = await this.get(profileName);
+  async getOrThrow(profileName: string, expectedDashboardUrl?: string): Promise<string> {
+    const password = await this.get(profileName, expectedDashboardUrl);
 
     if (!password) {
       throw new AuthError(

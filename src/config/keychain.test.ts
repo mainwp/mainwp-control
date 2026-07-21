@@ -16,7 +16,8 @@ vi.mock('keytar', () => ({
 }));
 
 import * as keytar from 'keytar';
-import { Keychain } from './keychain.js';
+import { Keychain, canonicalDashboardIdentity } from './keychain.js';
+import { AuthError } from '../utils/errors.js';
 
 describe('Keychain error normalization', () => {
   let errorSpy: ReturnType<typeof vi.spyOn>;
@@ -122,5 +123,142 @@ describe('Keychain error normalization', () => {
     const result = await new Keychain().set('default', 'secret');
 
     expect(result).toEqual({ stored: false, location: 'none', error: 'null' });
+  });
+});
+
+describe('Keychain identity binding', () => {
+  beforeEach(() => {
+    delete process.env['MAINWPCONTROL_NO_KEYTAR'];
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  describe('canonicalDashboardIdentity', () => {
+    it('strips a trailing slash', () => {
+      expect(canonicalDashboardIdentity('https://dash.example.com/wp/')).toBe(
+        'https://dash.example.com/wp'
+      );
+    });
+
+    it('preserves a non-default port', () => {
+      expect(canonicalDashboardIdentity('https://dash.example.com:8443')).toBe(
+        'https://dash.example.com:8443'
+      );
+    });
+
+    it('strips multiple trailing slashes', () => {
+      expect(canonicalDashboardIdentity('https://dash.example.com/wp///')).toBe(
+        'https://dash.example.com/wp'
+      );
+    });
+
+    it('leaves a bare host unchanged', () => {
+      expect(canonicalDashboardIdentity('https://dash.example.com')).toBe(
+        'https://dash.example.com'
+      );
+    });
+  });
+
+  it('set() with a dashboardUrl stores a v1 JSON envelope', async () => {
+    vi.mocked(keytar.setPassword).mockResolvedValue(undefined);
+
+    await new Keychain().set('default', 'pw', 'https://dash.example.com');
+
+    const [, , payload] = vi.mocked(keytar.setPassword).mock.calls[0]!;
+    expect(JSON.parse(payload)).toEqual({
+      v: 1,
+      password: 'pw',
+      identity: 'https://dash.example.com',
+    });
+  });
+
+  it('set() without a dashboardUrl stores the raw string verbatim (rollback path)', async () => {
+    vi.mocked(keytar.setPassword).mockResolvedValue(undefined);
+
+    await new Keychain().set('default', 'pw');
+
+    const [, , payload] = vi.mocked(keytar.setPassword).mock.calls[0]!;
+    expect(payload).toBe('pw');
+  });
+
+  it('get() with a matching expectedDashboardUrl returns the inner password', async () => {
+    vi.mocked(keytar.getPassword).mockResolvedValue(
+      JSON.stringify({ v: 1, password: 'pw', identity: 'https://dash.example.com' })
+    );
+
+    await expect(
+      new Keychain().get('default', 'https://dash.example.com')
+    ).resolves.toBe('pw');
+  });
+
+  it('get() throws AuthError mentioning both identities when the expected URL changed', async () => {
+    vi.mocked(keytar.getPassword).mockResolvedValue(
+      JSON.stringify({ v: 1, password: 'pw', identity: 'https://old.example.com' })
+    );
+
+    const keychain = new Keychain();
+    await expect(
+      keychain.get('default', 'https://new.example.com')
+    ).rejects.toBeInstanceOf(AuthError);
+    await expect(
+      keychain.get('default', 'https://new.example.com')
+    ).rejects.toMatchObject({
+      message: expect.stringContaining('https://old.example.com'),
+    });
+    await expect(
+      keychain.get('default', 'https://new.example.com')
+    ).rejects.toMatchObject({
+      message: expect.stringContaining('https://new.example.com'),
+    });
+  });
+
+  it('getOrThrow() throws AuthError mentioning both identities when the expected URL changed', async () => {
+    vi.mocked(keytar.getPassword).mockResolvedValue(
+      JSON.stringify({ v: 1, password: 'pw', identity: 'https://old.example.com' })
+    );
+
+    const keychain = new Keychain();
+    await expect(
+      keychain.getOrThrow('default', 'https://new.example.com')
+    ).rejects.toBeInstanceOf(AuthError);
+    await expect(
+      keychain.getOrThrow('default', 'https://new.example.com')
+    ).rejects.toMatchObject({
+      message: expect.stringContaining('https://old.example.com'),
+    });
+    await expect(
+      keychain.getOrThrow('default', 'https://new.example.com')
+    ).rejects.toMatchObject({
+      message: expect.stringContaining('https://new.example.com'),
+    });
+  });
+
+  it('get() accepts a legacy bare-string entry unchanged even with an expectedDashboardUrl', async () => {
+    vi.mocked(keytar.getPassword).mockResolvedValue('abcd efgh');
+
+    await expect(
+      new Keychain().get('default', 'https://dash.example.com')
+    ).resolves.toBe('abcd efgh');
+  });
+
+  it('get() falls back to MAINWP_APP_PASSWORD without identity-checking the env var', async () => {
+    vi.mocked(keytar.getPassword).mockResolvedValue(null);
+    vi.stubEnv('MAINWP_APP_PASSWORD', 'env-secret');
+
+    await expect(
+      new Keychain().get('default', 'https://dash.example.com')
+    ).resolves.toBe('env-secret');
+
+    vi.unstubAllEnvs();
+  });
+
+  it('get() treats a "{"-prefixed non-envelope payload as a legacy raw password', async () => {
+    vi.mocked(keytar.getPassword).mockResolvedValue('{not valid json');
+
+    await expect(
+      new Keychain().get('default', 'https://dash.example.com')
+    ).resolves.toBe('{not valid json');
   });
 });

@@ -879,6 +879,20 @@ function totals(results: AgentResult[]): Record<AgentStatus, number> {
   };
 }
 
+// Unverified scenarios (independent verification could not confirm the
+// outcome) must fail the run the same as `failed` ones, or CI reads a run
+// with unresolved evidence as green. Skipped scenarios must NOT affect this:
+// the live baseline legitimately skips guarded write scenarios.
+function computeExitCode(
+  counts: Record<AgentStatus, number>,
+  artifactAudit: AgentResultDocument['artifactAudit'],
+  hasHarnessError: boolean,
+): number {
+  return (
+    hasHarnessError || counts.failed > 0 || counts.unverified > 0 || !artifactAudit.passed
+  ) ? 1 : 0;
+}
+
 function resultDocument(
   artifacts: Artifacts,
   options: AgentRunnerOptions,
@@ -922,6 +936,7 @@ function summaryMarkdown(document: AgentResultDocument): string {
     `- Skipped: ${document.totals.skipped}`,
     `- Unverified: ${document.totals.unverified}`,
     `- Artifact audit: ${document.artifactAudit.passed ? 'passed' : 'failed'} - ${document.artifactAudit.message}`,
+    `- Exit code: ${computeExitCode(document.totals, document.artifactAudit, document.harnessError !== null)}${document.totals.failed === 0 && document.totals.unverified > 0 ? ' (unverified scenarios present)' : ''}`,
     ...(document.harnessError ? [`- Harness error: ${document.harnessError}`] : []),
     ...(slowest
       ? [
@@ -1348,11 +1363,7 @@ async function runAgentAcceptance(options: AgentRunnerOptions): Promise<number> 
   for (const result of results) console.log(`${result.status.toUpperCase()} ${result.id}`);
   console.log(`Agent acceptance artifacts: ${artifacts.runDir}`);
   if (harnessError) console.error(redactor.redact(harnessMessage ?? 'Agent harness failed'));
-  return (
-    harnessError
-    || results.some(result => result.status === 'failed')
-    || !artifactAudit.passed
-  ) ? 1 : 0;
+  return computeExitCode(totals(results), artifactAudit, Boolean(harnessError));
 }
 
 try {

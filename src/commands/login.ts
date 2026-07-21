@@ -192,7 +192,7 @@ export default class Login extends BaseCommand {
     // keychain failure cannot leave a profile that was only half-created.
     // Supported keychain-unavailable environments still receive the existing
     // explicit warning and MAINWP_APP_PASSWORD fallback behavior below.
-    const keychainResult = await keychain.set(profileName, password);
+    const keychainResult = await keychain.set(profileName, password, normalizedUrl);
     try {
       await profileStore.save(profile);
     } catch (error) {

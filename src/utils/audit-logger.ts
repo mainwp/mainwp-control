@@ -49,6 +49,12 @@ export interface AuditEntry {
   /** User's decision */
   userDecision: 'approved' | 'declined';
   /**
+   * Present on the entry written immediately before the confirm call is
+   * dispatched. A 'dispatch' entry with no later matching result entry means
+   * the process died or errored mid-confirm — the action may have executed.
+   */
+  stage?: 'dispatch';
+  /**
    * Execution result when approved. On a declined entry this instead records
    * why the flow was aborted before the user could approve (e.g.
    * "Preview failed: ..." from the fail-closed preview gate).
@@ -56,6 +62,11 @@ export interface AuditEntry {
   execution?: {
     success: boolean;
     error?: string;
+    /**
+     * True when the confirm call failed at the transport layer after
+     * dispatch: the Dashboard may or may not have executed the action.
+     */
+    outcomeUnknown?: boolean;
   };
   /** Input parameters (redacted of sensitive data) */
   input: Record<string, unknown>;
@@ -77,9 +88,11 @@ export interface LogDestructiveActionInput {
     affectedCount: number;
   };
   userDecision: 'approved' | 'declined';
+  stage?: 'dispatch';
   execution?: {
     success: boolean;
     error?: string;
+    outcomeUnknown?: boolean;
   };
   input: Record<string, unknown>;
 }
@@ -133,6 +146,9 @@ export class AuditLogger {
     }
 
     // Add optional fields
+    if (params.stage) {
+      entry.stage = params.stage;
+    }
     if (params.preview) {
       entry.preview = params.preview;
     }

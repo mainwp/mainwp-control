@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { abilityToTool, resolveProviderSelection } from './provider.js';
+import { abilityToTool, resolveProviderSelection, validateProviderBaseUrl } from './provider.js';
+import { ConfigError } from '../../utils/errors.js';
 
 describe('resolveProviderSelection', () => {
   afterEach(() => {
@@ -73,6 +74,80 @@ describe('resolveProviderSelection', () => {
       expect(result.config.baseUrl).toBe(baseUrl);
     },
   );
+
+  it('warns when a custom base URL overrides a hosted provider endpoint', () => {
+    const result = resolveProviderSelection({
+      flagProvider: 'openai',
+      apiKey: 'sk-test-openai',
+      baseUrl: 'https://proxy.example',
+    });
+
+    expect(result.warnings).toEqual([
+      expect.stringMatching(/Custom base URL overrides.*proxy\.example/),
+    ]);
+  });
+});
+
+describe('validateProviderBaseUrl', () => {
+  it('rejects cleartext HTTP for a hosted provider', () => {
+    expect(() =>
+      validateProviderBaseUrl('http://evil.example.com', { provider: 'openai' })
+    ).toThrow(ConfigError);
+  });
+
+  it('accepts HTTPS for a hosted provider and warns about the host', () => {
+    const warnings: string[] = [];
+
+    const result = validateProviderBaseUrl('https://proxy.corp.example', {
+      provider: 'openai',
+      warnings,
+    });
+
+    expect(result).toBe('https://proxy.corp.example');
+    expect(warnings).toEqual([
+      expect.stringMatching(/proxy\.corp\.example/),
+    ]);
+    expect(warnings[0]).toMatch(/openai/);
+  });
+
+  it('accepts cleartext HTTP to localhost for the local provider without warning', () => {
+    const warnings: string[] = [];
+
+    const result = validateProviderBaseUrl('http://localhost:8080/v1', {
+      provider: 'local',
+      warnings,
+    });
+
+    expect(result).toBe('http://localhost:8080/v1');
+    expect(warnings).toEqual([]);
+  });
+
+  it('accepts cleartext HTTP to private-network hosts for the local provider', () => {
+    expect(
+      validateProviderBaseUrl('http://192.168.1.50:8080', { provider: 'local' })
+    ).toBe('http://192.168.1.50:8080');
+    expect(
+      validateProviderBaseUrl('http://172.20.0.5', { provider: 'local' })
+    ).toBe('http://172.20.0.5');
+  });
+
+  it('rejects cleartext HTTP outside the 172.16-31 private range for the local provider', () => {
+    expect(() =>
+      validateProviderBaseUrl('http://172.32.0.1', { provider: 'local' })
+    ).toThrow(ConfigError);
+  });
+
+  it('rejects cleartext HTTP to a public host for the local provider', () => {
+    expect(() =>
+      validateProviderBaseUrl('http://myserver.example.com', { provider: 'local' })
+    ).toThrow(ConfigError);
+  });
+
+  it('accepts HTTPS with no provider context (back-compat)', () => {
+    expect(validateProviderBaseUrl('https://anything.example')).toBe(
+      'https://anything.example'
+    );
+  });
 });
 
 describe('abilityToTool', () => {

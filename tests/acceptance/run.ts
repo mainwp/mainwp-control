@@ -134,6 +134,17 @@ function summarize(results: ScenarioResult[]): ResultDocument['totals'] {
   };
 }
 
+// Unverified scenarios (independent verification could not confirm the
+// outcome) must fail the run the same as `failed` ones, or CI reads a run
+// with unresolved evidence as green. Skipped scenarios must NOT affect this:
+// the live baseline legitimately skips guarded write scenarios.
+function computeExitCode(
+  totals: ResultDocument['totals'],
+  artifactAudit: ResultDocument['artifactAudit'],
+): number {
+  return totals.failed > 0 || totals.unverified > 0 || !artifactAudit.passed ? 1 : 0;
+}
+
 function invocationLabel(record: CommandRecord): string {
   return record.argv.slice(1).join(' ');
 }
@@ -153,6 +164,7 @@ function summaryMarkdown(
     `- Skipped: ${document.totals.skipped}`,
     `- Unverified: ${document.totals.unverified}`,
     `- Artifact audit: ${document.artifactAudit.passed ? 'passed' : 'failed'} — ${document.artifactAudit.message}`,
+    `- Exit code: ${computeExitCode(document.totals, document.artifactAudit)}${document.totals.failed === 0 && document.totals.unverified > 0 ? ' (unverified scenarios present)' : ''}`,
     ...(document.harnessError ? [`- Harness error: ${document.harnessError}`] : []),
     '',
     '| Scenario | Status | Duration (ms) | Purpose |',
@@ -595,7 +607,7 @@ async function runAcceptance(options: RunnerOptions): Promise<number> {
     console.error(redactor.redact(harnessError instanceof Error ? harnessError.message : String(harnessError)));
     return 1;
   }
-  return summarize(results).failed > 0 || !artifactAudit.passed ? 1 : 0;
+  return computeExitCode(summarize(results), artifactAudit);
 }
 
 try {

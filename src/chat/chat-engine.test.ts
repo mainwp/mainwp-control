@@ -967,6 +967,22 @@ describe('ChatEngine', () => {
         { confirm: true }
       );
       expect(responses[0]!.type).toBe('tool_result');
+
+      // Audit is written twice: once at dispatch (before the confirm call, so
+      // a mid-confirm failure still leaves durable evidence) and once with
+      // the execution outcome.
+      expect(logDestructiveActionSafe).toHaveBeenCalledTimes(2);
+      expect(logDestructiveActionSafe).toHaveBeenNthCalledWith(
+        1,
+        expect.objectContaining({ stage: 'dispatch', userDecision: 'approved' })
+      );
+      expect(logDestructiveActionSafe).toHaveBeenNthCalledWith(
+        2,
+        expect.objectContaining({
+          userDecision: 'approved',
+          execution: expect.objectContaining({ success: true }),
+        })
+      );
     });
 
     it('approves with "y"', async () => {
@@ -1111,6 +1127,110 @@ describe('ChatEngine', () => {
       expect(calls).toHaveLength(2);
       expect(calls[0]![2]).toEqual({ dryRun: true });
       expect(calls[1]![2]).toEqual({ confirm: true });
+    });
+  });
+
+  // ==========================================================================
+  // Golden Test: Confirm Failure Leaves Unknown Outcome
+  // ==========================================================================
+
+  describe('Golden Test: Confirm Failure Leaves Unknown Outcome', () => {
+    it('reports an unknown-outcome error and preserves history when the confirm call rejects after dispatch', async () => {
+      const mockProvider = createMockProvider([
+        createNativeToolCallResponse('delete-site-v1', { site_id: 123 }, 'call_confirm_fail'),
+      ]);
+
+      const { engine, mockExecutor } = createTestEngine({
+        provider: mockProvider,
+        abilities: [DESTRUCTIVE_ABILITY],
+        executeHandler: (_name, _input, options) => {
+          if (options?.dryRun) {
+            return createPreviewResult([{ id: 123 }]);
+          }
+          return createErrorResult('UNEXPECTED', 'Unexpected call');
+        },
+      });
+
+      await engine.sendMessage('Delete site 123');
+      expect(engine.hasPendingPreview()).toBe(true);
+
+      mockExecutor.execute.mockRejectedValueOnce(new Error('Request timed out'));
+
+      const responses = await engine.sendMessage('yes');
+
+      // A single error response, never a rejected sendMessage — the caller
+      // must not have to catch this.
+      expect(responses).toHaveLength(1);
+      expect(responses[0]!.type).toBe('error');
+      if (responses[0]!.type === 'error') {
+        expect(responses[0]!.error).toContain('delete-site-v1');
+        expect(responses[0]!.error).toContain('verify');
+      }
+
+      // Dispatch is audited before the failure is known, then the failure
+      // itself is audited as an unknown outcome.
+      const auditCalls = vi.mocked(logDestructiveActionSafe).mock.calls;
+      expect(auditCalls).toHaveLength(2);
+      expect(auditCalls[0]![0]).toEqual(
+        expect.objectContaining({ stage: 'dispatch', userDecision: 'approved' })
+      );
+      expect(auditCalls[1]![0]).toEqual(
+        expect.objectContaining({
+          userDecision: 'approved',
+          execution: expect.objectContaining({ success: false, outcomeUnknown: true }),
+        })
+      );
+
+      // History stays coherent: the pending tool call got a matching tool
+      // message rather than being left dangling.
+      const history = engine.getHistory();
+      const toolMessage = history.find(
+        (m) => m.role === 'tool' && m.toolCallId === 'call_confirm_fail'
+      );
+      expect(toolMessage).toBeDefined();
+      expect(toolMessage!.content).toContain('OUTCOME_UNKNOWN');
+    });
+  });
+
+  // ==========================================================================
+  // Golden Test: Provider-Bound Redaction
+  // ==========================================================================
+
+  describe('Golden Test: Provider-Bound Redaction', () => {
+    it('redacts sensitive keys in provider-bound history but returns raw values to the local caller', async () => {
+      const mockProvider = createMockProvider([
+        createToolCallResponse('list-sites-v1', {}),
+        createAnswerResponse('Done'),
+      ]);
+
+      const sensitiveData = {
+        site: 'a.com',
+        appPassword: 'hunter2',
+        nested: { api_key: 'k' },
+      };
+
+      const { engine } = createTestEngine({
+        provider: mockProvider,
+        abilities: [READONLY_ABILITY],
+        executeHandler: () => createSuccessResult(sensitiveData),
+      });
+
+      const responses = await engine.sendMessage('List sites');
+
+      const toolResult = responses.find((r) => r.type === 'tool_result');
+      expect(toolResult).toBeDefined();
+      if (toolResult?.type === 'tool_result') {
+        expect(toolResult.result.data).toEqual(sensitiveData);
+      }
+
+      const history = engine.getHistory();
+      const toolMessage = history.find((m) => m.role === 'tool');
+      expect(toolMessage).toBeDefined();
+      expect(JSON.parse(toolMessage!.content)).toEqual({
+        site: 'a.com',
+        appPassword: '[REDACTED]',
+        nested: { api_key: '[REDACTED]' },
+      });
     });
   });
 
@@ -2875,6 +2995,82 @@ describe('ChatEngine', () => {
       // Executor should NOT have been called with partial tool call
       expect(mockExecutor.execute).not.toHaveBeenCalled();
       expect(consoleError).toHaveBeenCalledWith(expect.not.stringContaining('\x1b'));
+    });
+
+    it('treats a stream that yields nothing as an error, not an empty success', async () => {
+      const emptyStreamProvider: LLMProvider = {
+        name: 'mock-streaming-provider',
+        capabilities: {
+          functionCalling: true,
+          streaming: true,
+          systemMessages: true,
+          vision: false,
+          maxContextLength: 4096,
+        },
+        chat: vi.fn(),
+        chatStream: vi.fn(async function* () {
+          // Ends cleanly without yielding any content or tool calls
+        }),
+        isConfigured: () => true,
+        getModels: () => ['test-model'],
+        getDefaultModel: () => 'test-model',
+      };
+
+      const abilities = [READONLY_ABILITY];
+      const mockExecutor = createMockExecutor(abilities);
+
+      const engine = createChatEngine({
+        provider: emptyStreamProvider,
+        executor: mockExecutor as never,
+        stream: true,
+      });
+
+      await engine.initialize();
+
+      const responses = await engine.sendMessage('list sites');
+
+      expect(responses).toHaveLength(1);
+      expect(responses[0]!.type).toBe('error');
+      if (responses[0]!.type === 'error') {
+        expect(responses[0]!.error).toContain('interrupted');
+      }
+      expect(mockExecutor.execute).not.toHaveBeenCalled();
+    });
+
+    it('still succeeds when the stream yields content before done', async () => {
+      const contentStreamProvider: LLMProvider = {
+        name: 'mock-streaming-provider',
+        capabilities: {
+          functionCalling: true,
+          streaming: true,
+          systemMessages: true,
+          vision: false,
+          maxContextLength: 4096,
+        },
+        chat: vi.fn(),
+        chatStream: vi.fn(async function* () {
+          yield { content: JSON.stringify({ answer: 'Hi there' }) };
+          yield { done: true };
+        }),
+        isConfigured: () => true,
+        getModels: () => ['test-model'],
+        getDefaultModel: () => 'test-model',
+      };
+
+      const abilities = [READONLY_ABILITY];
+      const mockExecutor = createMockExecutor(abilities);
+
+      const engine = createChatEngine({
+        provider: contentStreamProvider,
+        executor: mockExecutor as never,
+        stream: true,
+      });
+
+      await engine.initialize();
+
+      const responses = await engine.sendMessage('hello');
+
+      expect(responses).toEqual([{ type: 'message', content: 'Hi there' }]);
     });
   });
 

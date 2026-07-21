@@ -70,7 +70,7 @@ mainwpcontrol abilities run list-updates-v1 --json
 mainwpcontrol abilities run get-site-v1 --input '{"site_id_or_domain": 1}' --json
 ```
 
-> **Windows?** This works as-is in [Git Bash](https://gitforwindows.org/). In PowerShell, escape the inner quotes: `'{\"site_id_or_domain\": 1}'`. Or skip quoting entirely with `--input-file` ([details](docs/workflows/input-from-file.md)).
+> **Windows?** This works as-is in [Git Bash](https://gitforwindows.org/). In PowerShell, use `--input-file` instead of inline JSON: how PowerShell passes quoted arguments to native commands varies by version ([details](docs/workflows/input-from-file.md)).
 
 **Preview a destructive action before running it:**
 
@@ -178,14 +178,11 @@ When you pass JSON with `--input`, quoting depends on your shell:
 ```bash
 # macOS / Linux / Git Bash on Windows
 mainwpcontrol abilities run get-site-v1 --input '{"site_id_or_domain": 1}' --json
-
-# Windows PowerShell
-mainwpcontrol abilities run get-site-v1 --input '{\"site_id_or_domain\": 1}' --json
 ```
 
 **Git Bash on Windows** (comes with [Git for Windows](https://gitforwindows.org/)) handles quoting the same way macOS and Linux do. If you use Git Bash, all the examples in this documentation work without changes.
 
-PowerShell strips the inner double quotes unless you escape them with backslashes. If this gets annoying, put your parameters in a file and use `--input-file`:
+**Windows PowerShell** quoting of inline JSON is unreliable: whether backslash-escaped quotes inside a single-quoted string reach the command intact depends on your PowerShell version. Don't fight it, put your parameters in a file and use `--input-file`:
 
 ```bash
 mainwpcontrol abilities run get-site-v1 --input-file params.json --json
@@ -219,10 +216,7 @@ mainwpcontrol abilities run list-sites-v1 --json
 # Run with input parameters
 mainwpcontrol abilities run get-site-v1 --input '{"site_id_or_domain": 1}' --json
 
-# Windows PowerShell: escape inner quotes (Git Bash doesn't need this)
-mainwpcontrol abilities run get-site-v1 --input '{\"site_id_or_domain\": 1}' --json
-
-# Or use a file (works everywhere)
+# Or use a file (works everywhere, and is the reliable option on Windows PowerShell)
 mainwpcontrol abilities run get-site-v1 --input-file params.json --json
 ```
 
@@ -277,7 +271,7 @@ See [Chat Mode Configuration](#chat-mode-configuration) for all supported provid
 
 ### Global Flags
 
-These flags work on every command.
+These flags work on every `mainwpcontrol` command except the built-in `help` and `autocomplete` commands.
 
 | Flag | Description |
 |------|-------------|

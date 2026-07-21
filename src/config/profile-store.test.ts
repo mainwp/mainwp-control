@@ -1,7 +1,7 @@
 import { promises as fs } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ProfileStore, type Profile } from './profile-store.js';
 
 const baseProfile: Profile = {
@@ -39,5 +39,66 @@ describe('ProfileStore URL validation', () => {
       message: 'Embedded credentials in the dashboard URL are not supported',
       hint: expect.stringMatching(/--username.*password prompt/i),
     });
+  });
+
+  async function writeProfilesFile(skipSSLVerification: unknown): Promise<void> {
+    const configDir = join(tempRoot, 'mainwpcontrol');
+    await fs.mkdir(configDir, { recursive: true });
+    await fs.writeFile(
+      join(configDir, 'profiles.json'),
+      JSON.stringify({
+        activeProfile: baseProfile.name,
+        profiles: [{ ...baseProfile, skipSSLVerification }],
+      })
+    );
+  }
+
+  it.each([
+    ['false', 'string "false"'],
+    ['true', 'string "true"'],
+  ])('coerces non-boolean skipSSLVerification (%s) to false and warns', async (rawValue) => {
+    await writeProfilesFile(rawValue);
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const store = new ProfileStore();
+
+    const profile = await store.get(baseProfile.name);
+
+    expect(profile?.skipSSLVerification).toBe(false);
+    expect(errorSpy).toHaveBeenCalledWith(
+      expect.stringContaining('Ignoring invalid skipSSLVerification for profile "test"; expected a boolean.')
+    );
+
+    errorSpy.mockRestore();
+  });
+
+  it('preserves a valid boolean skipSSLVerification without warning', async () => {
+    await writeProfilesFile(true);
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const store = new ProfileStore();
+
+    const profile = await store.get(baseProfile.name);
+
+    expect(profile?.skipSSLVerification).toBe(true);
+    expect(errorSpy).not.toHaveBeenCalled();
+
+    errorSpy.mockRestore();
+  });
+
+  it('leaves skipSSLVerification absent when not set', async () => {
+    const configDir = join(tempRoot, 'mainwpcontrol');
+    await fs.mkdir(configDir, { recursive: true });
+    await fs.writeFile(
+      join(configDir, 'profiles.json'),
+      JSON.stringify({ activeProfile: baseProfile.name, profiles: [baseProfile] })
+    );
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const store = new ProfileStore();
+
+    const profile = await store.get(baseProfile.name);
+
+    expect(profile?.skipSSLVerification).toBeUndefined();
+    expect(errorSpy).not.toHaveBeenCalled();
+
+    errorSpy.mockRestore();
   });
 });

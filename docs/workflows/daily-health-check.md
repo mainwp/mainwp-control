@@ -649,11 +649,33 @@ If the doctor command reports authentication issues, run `mainwpcontrol login` a
 
 ### Authentication errors in cron
 
-Cron runs in a minimal environment and may not have access to your system keychain where MainWP Control stores credentials. If the health check works when you run it manually but fails from cron, you can set the credentials as environment variables directly in your crontab:
+Cron runs in a minimal environment and may not have access to your system keychain where MainWP Control stores credentials. If the health check works when you run it manually but fails from cron, store the Application Password in a restricted-permission env file and have cron source it before running the script.
+
+Don't put the password directly in the crontab. Crontab contents are easy to expose: `crontab -l` output ends up in shared logs, and system backups often capture the crontab file itself.
+
+Create the env file:
+
+```bash
+mkdir -p ~/.config/mainwpcontrol
+nano ~/.config/mainwpcontrol/cron.env
+```
+
+Add this line, using the Application Password from Step 1 (spaces removed):
+
+```bash
+export MAINWP_APP_PASSWORD='your-app-password'
+```
+
+Save the file, then restrict its permissions so only you can read it:
+
+```bash
+chmod 600 ~/.config/mainwpcontrol/cron.env
+```
+
+Update the crontab entry to source the file before running the script:
 
 ```
-MAINWP_APP_PASSWORD='your-app-password'
-0 7 * * * /full/path/to/mainwp-health-check.sh
+0 7 * * * . "$HOME/.config/mainwpcontrol/cron.env" && /full/path/to/mainwp-health-check.sh
 ```
 
-Replace `your-app-password` with the Application Password from Step 1 (spaces removed). Environment variables set at the top of the crontab apply to all jobs below them.
+The `. "$HOME/.config/mainwpcontrol/cron.env"` part loads the environment variable from the file, and `&&` runs the script only if that succeeds.

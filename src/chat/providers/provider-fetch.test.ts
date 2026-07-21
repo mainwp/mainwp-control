@@ -1,5 +1,14 @@
-import { describe, expect, it } from 'vitest';
-import { readBoundedResponseText, sanitizeProviderErrorBody } from './provider-fetch.js';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import {
+  assertNoRedirect,
+  makeProviderRequest,
+  readBoundedResponseText,
+  sanitizeProviderErrorBody,
+} from './provider-fetch.js';
+
+// Mock fetch globally
+const mockFetch = vi.fn();
+vi.stubGlobal('fetch', mockFetch);
 
 describe('sanitizeProviderErrorBody', () => {
   it('strips terminal control characters', () => {
@@ -50,5 +59,70 @@ describe('readBoundedResponseText', () => {
 
     await expect(read).rejects.toThrow(/aborted/i);
     expect(cancelled).toBe(true);
+  });
+});
+
+describe('assertNoRedirect', () => {
+  it('throws on a redirect response, naming the redirect and the location', () => {
+    const response = {
+      status: 302,
+      headers: { get: () => 'https://elsewhere.example' },
+    } as unknown as Response;
+
+    expect(() => assertNoRedirect(response, 'openai')).toThrow(
+      /redirect.*elsewhere\.example/i
+    );
+  });
+
+  it('does not throw on a success response', () => {
+    const response = {
+      status: 200,
+      headers: { get: () => null },
+    } as unknown as Response;
+
+    expect(() => assertNoRedirect(response, 'openai')).not.toThrow();
+  });
+
+  it('does not throw on a not-found response', () => {
+    const response = {
+      status: 404,
+      headers: { get: () => null },
+    } as unknown as Response;
+
+    expect(() => assertNoRedirect(response, 'openai')).not.toThrow();
+  });
+});
+
+describe('makeProviderRequest', () => {
+  beforeEach(() => {
+    mockFetch.mockReset();
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('rejects a redirect response and requests fetch without following it', async () => {
+    mockFetch.mockResolvedValueOnce({
+      status: 307,
+      ok: false,
+      headers: new Headers({ location: 'https://elsewhere.example' }),
+    });
+
+    await expect(
+      makeProviderRequest({
+        url: 'https://api.openai.com/v1/chat/completions',
+        headers: { authorization: 'Bearer test-key' },
+        body: {},
+        timeout: 5000,
+        providerName: 'openai',
+      })
+    ).rejects.toThrow(/redirect/i);
+
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+    expect(mockFetch).toHaveBeenCalledWith(
+      'https://api.openai.com/v1/chat/completions',
+      expect.objectContaining({ redirect: 'manual' })
+    );
   });
 });

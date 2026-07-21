@@ -46,6 +46,7 @@ import { getInputSanitizer } from '../validation/input-sanitizer.js';
 import { getSchemaValidator } from '../validation/schema-validator.js';
 import { SchemaValidationError } from '../utils/errors.js';
 import { stripControlChars } from '../utils/terminal-sanitizer.js';
+import { redactSensitiveKeys } from '../utils/redaction.js';
 import { executeAbilityWithPolicy } from '../core/execute-ability-with-policy.js';
 
 /**
@@ -335,13 +336,65 @@ export class ChatEngine {
       ];
     }
 
-    // User approved - execute with confirm
-    const result = await executeAbilityWithPolicy(
-      this.executor,
-      preview.ability,
-      preview.input,
-      { confirm: true }
-    );
+    // Record the approval BEFORE dispatching the confirm call, so a transport
+    // failure (or process death) mid-confirm still leaves durable evidence
+    // that an approved destructive action may have reached the Dashboard.
+    await logDestructiveActionSafe({
+      abilityName: preview.ability.name,
+      preview: ChatEngine.previewAuditPayload(preview),
+      userDecision: 'approved',
+      stage: 'dispatch',
+      input: preview.input,
+    });
+
+    // User approved - execute with confirm. A throw here arrives after
+    // dispatch was initiated: the outcome is unknown. Fail closed — audit the
+    // uncertainty, keep history coherent, and tell the user to verify before
+    // retrying. Never auto-retry the confirm.
+    let result: ExecutionResult;
+    try {
+      result = await executeAbilityWithPolicy(
+        this.executor,
+        preview.ability,
+        preview.input,
+        { confirm: true }
+      );
+    } catch (error) {
+      const reason = getInputSanitizer().sanitizeErrorMessage(
+        error instanceof Error ? error.message : String(error)
+      );
+      await logDestructiveActionSafe({
+        abilityName: preview.ability.name,
+        preview: ChatEngine.previewAuditPayload(preview),
+        userDecision: 'approved',
+        execution: { success: false, error: reason, outcomeUnknown: true },
+        input: preview.input,
+      });
+      this.messages.push({
+        role: 'tool',
+        content: JSON.stringify({
+          success: false,
+          error: {
+            code: 'OUTCOME_UNKNOWN',
+            message:
+              'The confirm call failed after dispatch; the action may or may not have executed. Do not retry without verifying Dashboard state.',
+          },
+        }),
+        toolCallId: preview.toolCallId,
+        toolName: preview.toolAlias,
+      });
+      this.messages.push({ role: 'user', content: userMessage });
+      this.truncateHistory();
+      return [
+        {
+          type: 'error',
+          error:
+            `Confirm call for "${preview.ability.name}" failed after dispatch: ${reason}. ` +
+            'The Dashboard may or may not have executed the action — verify its state before retrying.',
+          tool: preview.ability.name,
+        },
+      ];
+    }
 
     // Log audit entry for approved and executed action (fire-and-forget)
     const executionAudit: { success: boolean; error?: string } = {
@@ -358,10 +411,12 @@ export class ChatEngine {
       input: preview.input,
     });
 
-    // Add result to context
+    // Add result to context. PROVIDER BOUNDARY: only a key-redacted copy of
+    // the result enters the history sent to the LLM provider; the unredacted
+    // result still goes back to the local user below.
     const toolResultMsg = {
       role: 'tool' as const,
-      content: JSON.stringify(result),
+      content: JSON.stringify(redactSensitiveKeys(result)),
       toolCallId: preview.toolCallId,
       toolName: preview.toolAlias,
     };
@@ -506,12 +561,16 @@ export class ChatEngine {
 
       responses.push(toolResult);
 
-      // Add tool result to context
+      // Add tool result to context. PROVIDER BOUNDARY: ability output is
+      // Dashboard-controlled data leaving the machine for a third-party LLM
+      // provider — redact sensitive-looking keys before it enters history
+      // (AGENTS.md: "minimize and redact secrets/customer data"). The
+      // unredacted result was already returned to the local user above.
       if (toolResult.type === 'tool_result') {
         const resultContent =
           toolResult.result.success
-            ? JSON.stringify(toolResult.result.data)
-            : JSON.stringify(toolResult.result.error);
+            ? JSON.stringify(redactSensitiveKeys(toolResult.result.data))
+            : JSON.stringify(redactSensitiveKeys(toolResult.result.error));
 
         this.messages.push({
           role: 'tool',
@@ -747,6 +806,19 @@ export class ChatEngine {
       }
       // If no content accumulated, re-throw
       throw error;
+    }
+
+    // A stream that ended cleanly but delivered nothing is a failed response,
+    // not an empty answer: reporting finishReason 'stop' here would flow into
+    // the envelope parser's plain-text fallback and surface as a successful
+    // blank reply (exit 0 in one-shot mode).
+    if (!content && toolCalls.length === 0) {
+      return {
+        content: '',
+        toolCalls: undefined,
+        finishReason: 'error',
+        model: this.provider.getDefaultModel(),
+      };
     }
 
     // Return accumulated LLMResponse

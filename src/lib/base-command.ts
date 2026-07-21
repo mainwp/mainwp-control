@@ -208,7 +208,12 @@ export abstract class BaseCommand extends Command {
     }
 
     const keychain = getKeychain();
-    const appPassword = await keychain.getOrThrow(this.currentProfile.name);
+    // Identity-bound read: refuses the credential if the profile's URL no
+    // longer matches the Dashboard the credential was saved for.
+    const appPassword = await keychain.getOrThrow(
+      this.currentProfile.name,
+      this.currentProfile.dashboardUrl
+    );
     this.clientConfig = {
       baseUrl: this.currentProfile.dashboardUrl,
       username: this.currentProfile.username,

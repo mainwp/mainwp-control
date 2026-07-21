@@ -358,7 +358,7 @@ describe('E2E: Command-Level Workflows', () => {
 
       // Verify profile was saved
       expect(mockProfileStoreSave).toHaveBeenCalled();
-      expect(mockKeychainSet).toHaveBeenCalledWith('test-profile', 'secret123');
+      expect(mockKeychainSet).toHaveBeenCalledWith('test-profile', 'secret123', 'https://dashboard.test');
     });
 
     it('outputs JSON envelope with --json flag', async () => {
@@ -413,7 +413,7 @@ describe('E2E: Command-Level Workflows', () => {
         '--name', 'keychain-test',
       ], LOGIN_FLAGS);
 
-      expect(mockKeychainSet).toHaveBeenCalledWith('keychain-test', 'mypassword');
+      expect(mockKeychainSet).toHaveBeenCalledWith('keychain-test', 'mypassword', 'https://dashboard.test');
     });
 
     it('restores an existing credential when profile persistence fails', async () => {
@@ -431,7 +431,7 @@ describe('E2E: Command-Level Workflows', () => {
         '--name', 'existing',
       ], LOGIN_FLAGS);
 
-      expect(mockKeychainSet).toHaveBeenNthCalledWith(1, 'existing', 'new-password');
+      expect(mockKeychainSet).toHaveBeenNthCalledWith(1, 'existing', 'new-password', 'https://dashboard.test');
       expect(mockKeychainSet).toHaveBeenNthCalledWith(2, 'existing', 'old-password');
       expect(mockProfileStoreSetActive).not.toHaveBeenCalled();
     });

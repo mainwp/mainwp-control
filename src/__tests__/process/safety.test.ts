@@ -1,4 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach } from 'vitest';
+import { readFile } from 'node:fs/promises';
+import { join } from 'node:path';
 import { MockServer } from './fixtures/mock-server.js';
 import { runCLI } from './fixtures/cli-runner.js';
 import { ConfigDir } from './fixtures/config-dir.js';
@@ -481,5 +483,78 @@ describe('safety / destructive action handling', () => {
     const preview = data['preview'] as Record<string, unknown>;
     expect(preview).toHaveProperty('summary');
     expect(preview).toHaveProperty('affected');
+  });
+
+  // -------------------------------------------------------------------------
+  // 11. Transport failure AFTER the confirm call is dispatched is an unknown
+  //     outcome: OUTCOME_UNKNOWN in the envelope, exit 3, and BOTH audit
+  //     entries (dispatch-stage before the call, outcomeUnknown after) are
+  //     on disk even though no response ever arrived.
+  // -------------------------------------------------------------------------
+  it('--confirm --force with connection dropped mid-confirm exits 3 with OUTCOME_UNKNOWN and audits the dispatch', async () => {
+    await createConfig();
+
+    const runPath = '/wp-json/wp-abilities/v1/abilities/mainwp/delete-site-v1/run';
+    server.addRoute('POST', runPath, (_req, res) => {
+      const body = _req.body as Record<string, unknown> | undefined;
+      const input = body?.['input'] as Record<string, unknown> | undefined;
+      if (input?.['dry_run'] === true) {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify(abilityDryRunResponse([{ site_id: 1, name: 'Test Site' }])));
+      } else {
+        // Confirm call: the server got the request, then the connection dies
+        // before any response — the Dashboard may have executed the action.
+        res.socket?.destroy();
+      }
+    });
+
+    const result = await runCLI(
+      [
+        'abilities', 'run', 'delete-site-v1',
+        '--input', '{"site_id_or_domain":1}',
+        '--confirm', '--force', '--json',
+      ],
+      {
+        xdgConfigHome: config.xdgHome,
+        env: { MAINWP_APP_PASSWORD: 'test-pass' },
+      },
+    );
+
+    // NETWORK_ERROR exit class, but labeled as an unknown outcome
+    expect(result.exitCode).toBe(3);
+    const envelope = result.json as Record<string, unknown>;
+    expect(envelope).toHaveProperty('success', false);
+    const error = envelope['error'] as Record<string, unknown>;
+    expect(error['code']).toBe('OUTCOME_UNKNOWN');
+    expect(String(error['message'])).toContain('may or may not have executed');
+
+    // The confirm request really was dispatched
+    const confirmRequests = server
+      .getRecordedRequests()
+      .filter((r) => r.path.includes('delete-site-v1'))
+      .filter((r) => {
+        const body = r.body as Record<string, unknown> | undefined;
+        const input = body?.['input'] as Record<string, unknown> | undefined;
+        return input?.['dry_run'] !== true;
+      });
+    expect(confirmRequests.length).toBe(1);
+
+    // Audit trail: a dispatch-stage entry written before the confirm call,
+    // then an outcomeUnknown entry after the transport failure.
+    const auditRaw = await readFile(join(config.configPath, 'audit.log'), 'utf-8');
+    const entries = auditRaw
+      .trim()
+      .split('\n')
+      .map((line) => JSON.parse(line) as Record<string, unknown>);
+    const dispatchEntry = entries.find((e) => e['stage'] === 'dispatch');
+    expect(dispatchEntry).toBeDefined();
+    expect(dispatchEntry!['userDecision']).toBe('approved');
+    expect(dispatchEntry!['abilityName']).toContain('delete-site-v1');
+    const unknownEntry = entries.find(
+      (e) => (e['execution'] as Record<string, unknown> | undefined)?.['outcomeUnknown'] === true
+    );
+    expect(unknownEntry).toBeDefined();
+    expect(unknownEntry!['userDecision']).toBe('approved');
+    expect((unknownEntry!['execution'] as Record<string, unknown>)['success']).toBe(false);
   });
 });

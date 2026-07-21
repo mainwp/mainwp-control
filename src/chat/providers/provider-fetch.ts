@@ -15,6 +15,23 @@ export function sanitizeProviderErrorBody(errorText: string): string {
   return sanitized.length > 500 ? sanitized.slice(0, 500) + '...' : sanitized;
 }
 
+/**
+ * Reject redirect responses on provider requests. Following a redirect would
+ * re-send the Authorization header (the user's API key) to whatever origin
+ * the response names — same policy as the Dashboard transport's manual
+ * redirect handling. All provider fetches use `redirect: 'manual'` and call
+ * this on the response.
+ */
+export function assertNoRedirect(response: Response, providerName: string): void {
+  if (response.status >= 300 && response.status < 400) {
+    const location = response.headers.get('location');
+    const target = location ? ` to "${sanitizeProviderErrorBody(location)}"` : '';
+    throw new Error(
+      `${providerName} API error: unexpected redirect (${response.status})${target} — provider requests never follow redirects`
+    );
+  }
+}
+
 export async function readBoundedResponseText(
   response: Response,
   maxBytes = MAX_PROVIDER_ERROR_BODY_BYTES,
@@ -98,7 +115,10 @@ export async function makeProviderRequest<T>(options: {
       headers: options.headers,
       body: JSON.stringify(options.body),
       signal: combinedSignal,
+      redirect: 'manual',
     });
+
+    assertNoRedirect(response, options.providerName);
 
     if (!response.ok) {
       const errorText = await readBoundedResponseText(

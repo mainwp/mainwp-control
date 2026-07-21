@@ -529,6 +529,90 @@ describe('M6: Known-destructive pattern defense-in-depth', () => {
   });
 });
 
+describe('formatPreviewResult: fail closed on absent preview evidence', () => {
+  let controller: SafetyController;
+
+  beforeEach(() => {
+    controller = new SafetyController();
+  });
+
+  it('data undefined: honest "no data" warning, affected [], requiresApproval true', () => {
+    const ability = createTestAbility('delete-site-v1', { destructive: true });
+    const result = controller.formatPreviewResult(ability, {}, {
+      success: true,
+    });
+
+    expect(result.affected).toEqual([]);
+    expect(result.summary).toContain('Preview returned no data');
+    expect(result.summary).not.toContain('No items would be affected');
+    expect(result.requiresApproval).toBe(true);
+  });
+
+  it('data {}: same "no data" warning path as undefined data', () => {
+    const ability = createTestAbility('delete-site-v1', { destructive: true });
+    const result = controller.formatPreviewResult(ability, {}, {
+      success: true,
+      data: {},
+    });
+
+    expect(result.affected).toEqual([]);
+    expect(result.summary).toContain('Preview returned no data');
+    expect(result.summary).not.toContain('No items would be affected');
+    expect(result.requiresApproval).toBe(true);
+  });
+
+  it('data in an unrecognized shape: "unrecognized format" warning, raw payload as affected', () => {
+    const ability = createTestAbility('delete-site-v1', { destructive: true });
+    const data = { foo: 'bar' };
+    const result = controller.formatPreviewResult(ability, {}, {
+      success: true,
+      data,
+    });
+
+    expect(result.summary).toContain('unrecognized format');
+    expect(result.affected).toEqual([data]);
+    expect(result.requiresApproval).toBe(true);
+  });
+
+  it('data {affected: []}: recognized-but-empty summary "No items would be <verb>."', () => {
+    const ability = createTestAbility('delete-site-v1', { destructive: true });
+    const result = controller.formatPreviewResult(ability, {}, {
+      success: true,
+      data: { affected: [] },
+    });
+
+    expect(result.summary).toBe('No items would be deleted.');
+    expect(result.affected).toEqual([]);
+    expect(result.requiresApproval).toBe(true);
+  });
+
+  it('data {affected: [{id: 1}]}: counts 1 item, affected contains the item', () => {
+    const ability = createTestAbility('delete-site-v1', { destructive: true });
+    const item = { id: 1 };
+    const result = controller.formatPreviewResult(ability, {}, {
+      success: true,
+      data: { affected: [item] },
+    });
+
+    expect(result.summary).toBe('1 item would be deleted.');
+    expect(result.affected).toEqual([item]);
+    expect(result.requiresApproval).toBe(true);
+  });
+
+  it('data {preview: {...}}: single-item preview still works', () => {
+    const ability = createTestAbility('delete-site-v1', { destructive: true });
+    const preview = { name: 'site-1' };
+    const result = controller.formatPreviewResult(ability, {}, {
+      success: true,
+      data: { preview },
+    });
+
+    expect(result.summary).toBe('1 item would be deleted.');
+    expect(result.affected).toEqual([preview]);
+    expect(result.requiresApproval).toBe(true);
+  });
+});
+
 describe('ACTION_VERBS substring ordering', () => {
   it('uses "deactivated" verb for deactivate abilities, not "activated"', () => {
     const controller = new SafetyController();

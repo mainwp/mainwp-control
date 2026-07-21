@@ -347,7 +347,10 @@ export function resolveProviderSelection(options: {
 
   const envConfig = getProviderConfigFromEnv(selectedName) ?? {};
   const apiKey = options.apiKey ?? envConfig.apiKey ?? '';
-  const baseUrl = validateProviderBaseUrl(options.baseUrl ?? envConfig.baseUrl);
+  const baseUrl = validateProviderBaseUrl(options.baseUrl ?? envConfig.baseUrl, {
+    provider: selectedName,
+    warnings,
+  });
 
   return {
     name: selectedName,
@@ -363,7 +366,39 @@ export function resolveProviderSelection(options: {
   };
 }
 
-export function validateProviderBaseUrl(baseUrl: string | undefined): string | undefined {
+/**
+ * Loopback/private-network hostnames where cleartext HTTP to a local LLM is
+ * an accepted tradeoff. Everything else must use TLS.
+ */
+function isPrivateHostname(hostname: string): boolean {
+  const host = hostname.toLowerCase();
+  return (
+    host === 'localhost' ||
+    host === '[::1]' ||
+    host === '::1' ||
+    host.endsWith('.localhost') ||
+    /^127\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(host) ||
+    /^10\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(host) ||
+    /^192\.168\.\d{1,3}\.\d{1,3}$/.test(host) ||
+    /^172\.(1[6-9]|2\d|3[01])\.\d{1,3}\.\d{1,3}$/.test(host)
+  );
+}
+
+/**
+ * Validate a custom provider base URL.
+ *
+ * Policy (AGENTS.md: API keys go "only to the fixed provider origin", local
+ * endpoints carry "TLS expectations"):
+ * - Hosted providers (openai, anthropic, gemini, openrouter): a base-URL
+ *   override must be HTTPS — the API key would otherwise cross the network in
+ *   cleartext — and always draws a warning naming the host the key will be
+ *   sent to. HTTP endpoints belong on the `local` provider.
+ * - Local provider: HTTP is allowed only for loopback/private-network hosts.
+ */
+export function validateProviderBaseUrl(
+  baseUrl: string | undefined,
+  context?: { provider?: ProviderName; warnings?: string[] }
+): string | undefined {
   if (baseUrl === undefined) return undefined;
 
   const normalized = baseUrl.trim();
@@ -376,6 +411,32 @@ export function validateProviderBaseUrl(baseUrl: string | undefined): string | u
 
   if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
     throw new ConfigError('Invalid provider base URL scheme. Only HTTP and HTTPS are supported.');
+  }
+
+  const provider = context?.provider;
+  const isHostedProvider = provider !== undefined && provider !== 'local';
+
+  if (parsed.protocol === 'http:') {
+    if (isHostedProvider) {
+      throw new ConfigError(
+        `Cleartext HTTP base URL is not allowed for the ${provider} provider — the API key and chat data would cross the network unencrypted.`,
+        undefined,
+        'Use an https:// URL, or use --provider local for a local OpenAI-compatible endpoint.'
+      );
+    }
+    if (!isPrivateHostname(parsed.hostname)) {
+      throw new ConfigError(
+        `Cleartext HTTP base URL to a non-private host ("${parsed.hostname}") is not allowed.`,
+        undefined,
+        'Use https://, or point at a localhost/private-network address.'
+      );
+    }
+  }
+
+  if (isHostedProvider && context?.warnings) {
+    context.warnings.push(
+      `Custom base URL overrides the fixed ${provider} endpoint — the ${provider} API key and chat data will be sent to ${parsed.host}.`
+    );
   }
 
   return normalized;

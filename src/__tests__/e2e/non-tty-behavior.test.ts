@@ -352,13 +352,14 @@ describe('E2E: Non-TTY Behavior', () => {
 
       try { await command.run(); } catch { /* exit */ }
 
-      // Contract: exactly one JSON object emitted, no preamble text
+      // Contract: exactly one JSON envelope emitted, no preamble text
       expect(output.stdout).toHaveLength(1);
       const allOutput = output.stdout[0]!;
       const parsed = JSON.parse(allOutput);
-      expect(parsed.type).toBe('tool_result');
-      expect(parsed.tool).toBe('mainwp/list-sites-v1');
-      expect(parsed.result.success).toBe(true);
+      expect(parsed.success).toBe(true);
+      expect(parsed.data.type).toBe('tool_result');
+      expect(parsed.data.tool).toBe('mainwp/list-sites-v1');
+      expect(parsed.data.result.success).toBe(true);
       expect(mockExecutorExecute).toHaveBeenCalledTimes(1);
       expect(mockCreateInterface).not.toHaveBeenCalled();
     });
@@ -407,13 +408,57 @@ describe('E2E: Non-TTY Behavior', () => {
 
       const allOutput = output.stdout.join('\n');
       const parsed = JSON.parse(allOutput);
-      // Contract: exactly one JSON object, selecting the final tool result
+      // Contract: exactly one JSON envelope, selecting the final tool result
       expect(output.stdout).toHaveLength(1);
-      expect(parsed.type).toBe('tool_result');
-      expect(parsed.tool).toBe('mainwp/sync-sites-v1');
-      expect(parsed.result.data.synced).toContain(1);
+      expect(parsed.success).toBe(true);
+      expect(parsed.data.type).toBe('tool_result');
+      expect(parsed.data.tool).toBe('mainwp/sync-sites-v1');
+      expect(parsed.data.result.data.synced).toContain(1);
       expect(mockExecutorExecute).toHaveBeenCalledTimes(2);
       expect(mockCreateInterface).not.toHaveBeenCalled();
+    });
+
+    it('rejects with a non-zero-exit APIError when the turn ends in a failed tool result', async () => {
+      const listSitesAbility = createMockAbility('list-sites-v1', { readonly: true });
+
+      mockProviderChat.mockResolvedValueOnce(
+        createMockLLMToolCallResponse('list-sites-v1', {})
+      );
+      mockExecutorListAbilities.mockResolvedValue([listSitesAbility]);
+      mockExecutorGetAbility.mockResolvedValue(listSitesAbility);
+      mockExecutorExecute.mockResolvedValue({
+        success: false,
+        error: { code: 'SITE_NOT_FOUND', message: 'No such site' },
+      });
+      // Turn ends on the failed tool result (no recovery answer)
+      mockProviderChat.mockResolvedValueOnce(
+        createMockLLMAnswerResponse('')
+      );
+
+      const { command } = createCommandInstance(ChatCommand);
+      command.parse = vi.fn().mockResolvedValue({
+        flags: {
+          json: true,
+          quiet: false,
+          debug: false,
+          provider: undefined,
+          model: undefined,
+          'api-key': undefined,
+          'base-url': undefined,
+          'max-turns': 1,
+          'max-context-messages': undefined,
+          stream: false,
+        },
+        args: { message: 'list all sites' },
+      }) as never;
+
+      // CI honesty: a failed MainWP operation must not exit 0. The thrown
+      // APIError carries the ability's error code and a non-zero exit code;
+      // BaseCommand.catch() turns it into the error envelope in real runs.
+      await expect(command.run()).rejects.toMatchObject({
+        code: 'SITE_NOT_FOUND',
+        exitCode: 4,
+      });
     });
 
     it('exits with code 2 when no provider is configured for single-message mode', async () => {

@@ -18,7 +18,7 @@ import {
   formatHeading,
   formatKeyValue,
 } from '../../output/formatter.js';
-import { InputError, MutualExclusionError } from '../../utils/errors.js';
+import { InputError, MutualExclusionError, UnknownOutcomeError } from '../../utils/errors.js';
 import { getSafetyController, type PreviewResult } from '../../core/safety-controller.js';
 import { getSchemaValidator } from '../../validation/schema-validator.js';
 import { getInputSanitizer } from '../../validation/input-sanitizer.js';
@@ -120,12 +120,21 @@ export default class AbilitiesRun extends BaseCommand {
     // Resolve input from --input, --input-file, or stdin
     const rawInput = await this.resolveInput(flags.input, flags['input-file']);
 
-    // Parse input JSON
+    // Parse input JSON. The raw input never goes into the error message: it
+    // can carry secrets (a password pasted into a malformed payload) that
+    // would otherwise land in stderr, CI logs, or the --json envelope.
     let input: Record<string, unknown>;
     try {
       input = JSON.parse(rawInput) as Record<string, unknown>;
-    } catch {
-      throw new InputError(`Invalid JSON input: ${rawInput}`);
+    } catch (error) {
+      const position = error instanceof Error
+        ? /at position (\d+)/.exec(error.message)?.[1]
+        : undefined;
+      throw new InputError(
+        `Invalid JSON input${position ? ` (parse error at position ${position})` : ''}`,
+        undefined,
+        'Check the JSON passed via --input, --input-file, or stdin. Use --input-file for complex payloads.'
+      );
     }
 
     // Sanitize input
@@ -326,13 +335,48 @@ export default class AbilitiesRun extends BaseCommand {
       }
     }
 
-    // Execute with confirm
-    const result = await executeAbilityWithPolicy(
-      executor,
-      ability,
+    // Record the approval BEFORE dispatching the confirm call. If the process
+    // dies or the transport fails mid-confirm, this entry is the only durable
+    // evidence that an approved destructive action may have reached the
+    // Dashboard.
+    await logDestructiveActionSafe({
+      abilityName,
+      ...previewMeta,
+      userDecision: 'approved',
+      stage: 'dispatch',
       input,
-      { confirm: true }
-    );
+    });
+
+    // Execute with confirm. A throw here (timeout, connection reset, response
+    // parse failure) arrives AFTER dispatch was initiated: the outcome is
+    // unknown, not a plain network failure. Fail closed: audit the uncertainty
+    // and surface it as OUTCOME_UNKNOWN. Never auto-retry the confirm.
+    let result: Awaited<ReturnType<typeof executeAbilityWithPolicy>>;
+    try {
+      result = await executeAbilityWithPolicy(
+        executor,
+        ability,
+        input,
+        { confirm: true }
+      );
+    } catch (error) {
+      const reason = getInputSanitizer().sanitizeErrorMessage(
+        error instanceof Error ? error.message : String(error)
+      );
+      await logDestructiveActionSafe({
+        abilityName,
+        ...previewMeta,
+        userDecision: 'approved',
+        execution: { success: false, error: reason, outcomeUnknown: true },
+        input,
+      });
+      throw new UnknownOutcomeError(
+        `Confirm call for "${abilityName}" failed after dispatch: ${reason}. ` +
+          'The Dashboard may or may not have executed the action.',
+        { reason },
+        'Verify the Dashboard state (e.g. with a read-only ability) before retrying. Do not re-run with --confirm until you have confirmed the action did not complete.'
+      );
+    }
 
     // Build execution result for audit
     const executionResult: { success: boolean; error?: string } = {

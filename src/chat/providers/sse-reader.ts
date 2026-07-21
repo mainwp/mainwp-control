@@ -7,6 +7,7 @@
  */
 
 import {
+  assertNoRedirect,
   readBoundedResponseText,
   sanitizeProviderErrorBody,
 } from './provider-fetch.js';
@@ -38,9 +39,12 @@ export async function* readSSEStream(options: {
     headers: options.headers,
     body: JSON.stringify(options.body),
     signal: combinedSignal,
+    redirect: 'manual',
   };
 
   const response = await fetch(options.url, fetchOptions);
+
+  assertNoRedirect(response, options.providerName);
 
   if (!response.ok) {
     const error = await readBoundedResponseText(response, undefined, combinedSignal);

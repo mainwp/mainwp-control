@@ -278,10 +278,12 @@ export class SafetyController {
     // data and say so, since a falsely reassuring summary right before a
     // destructive confirm is worse than an honest "unknown".
     if (affected === null) {
+      const noData = data === undefined || Object.keys(data).length === 0;
       return {
-        affected: [data],
-        summary:
-          'Preview returned data in an unrecognized format — review the raw response below before approving.',
+        affected: noData ? [] : [data],
+        summary: noData
+          ? 'Preview returned no data — the ability did not report what would be affected. Review the request carefully before approving.'
+          : 'Preview returned data in an unrecognized format — review the raw response below before approving.',
         requiresApproval: true,
         abilityName: ability.name,
         input,
@@ -300,13 +302,16 @@ export class SafetyController {
   /**
    * Extract affected items from API preview response.
    *
-   * Returns null when the response contains data in none of the recognized
-   * shapes — callers must distinguish "nothing affected" from "couldn't read
-   * the preview".
+   * Returns null when the response carries no positive preview evidence —
+   * either data in none of the recognized shapes, or no data at all. Callers
+   * must distinguish "the preview showed zero items" (a recognized-but-empty
+   * array) from "the preview showed nothing" (null): only the former may be
+   * summarized as "no items would be affected".
    */
   private extractAffectedItems(data: Record<string, unknown> | undefined): unknown[] | null {
+    // Absent data is not evidence that nothing would be affected.
     if (!data) {
-      return [];
+      return null;
     }
 
     // Common patterns for affected items
@@ -328,12 +333,9 @@ export class SafetyController {
       return [data['preview']];
     }
 
-    // Data present but in no recognized shape
-    if (Object.keys(data).length > 0) {
-      return null;
-    }
-
-    return [];
+    // Data present but in no recognized shape — and an empty object is the
+    // same lack of evidence as no data.
+    return null;
   }
 
   /** Ability name keywords → past-tense action verbs */

@@ -175,6 +175,20 @@ export class ProfileStore {
     }
 
     this.validateUrl(profile.dashboardUrl, options);
+
+    // SECURITY: a non-boolean skipSSLVerification (e.g. the string "false")
+    // is truthy and would silently disable TLS verification downstream.
+    // Fail closed: coerce to false and warn, mirroring readBooleanSetting()
+    // in settings.ts.
+    if (
+      profile.skipSSLVerification !== undefined &&
+      typeof profile.skipSSLVerification !== 'boolean'
+    ) {
+      console.error(
+        `Warning: Ignoring invalid skipSSLVerification for profile "${sanitizeSingleLine(profile.name)}"; expected a boolean. Falling back to false.`
+      );
+      profile.skipSSLVerification = false;
+    }
   }
 
   /**
