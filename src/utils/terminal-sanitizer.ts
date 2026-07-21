@@ -49,6 +49,13 @@ const ESCAPE_PATTERNS = {
 const C0_UNSAFE = /[\x00-\x08\x0b\x0c\x0e-\x1f]/g;
 
 /**
+ * Unicode bidirectional and isolate controls (U+202A–U+202E, U+2066–U+2069).
+ * Hostile names could otherwise visually reorder terminal output and spoof
+ * copy-pasteable commands. job-id validation rejects the same range.
+ */
+const BIDI_CONTROLS = /[‪-‮⁦-⁩]/g;
+
+/**
  * Strip all ANSI escape sequences and control characters from a string.
  *
  * This is the core sanitization function that removes:
@@ -80,6 +87,7 @@ export function stripControlChars(str: string): string {
   // Remove control characters
   result = result.replace(ESCAPE_PATTERNS.c1, '');
   result = result.replace(C0_UNSAFE, '');
+  result = result.replace(BIDI_CONTROLS, '');
 
   // Remove any remaining bare ESC characters
   result = result.replace(/\x1b/g, '');
@@ -152,7 +160,9 @@ function sanitizeForTerminalBounded(
     if (Array.isArray(value)) {
       result = value.map((item) => sanitizeForTerminalBounded(item, depth + 1, path));
     } else {
-      const sanitized: Record<string, unknown> = {};
+      // Null prototype so a hostile "__proto__" key lands as an ordinary
+      // data property instead of rewriting the accumulator's prototype.
+      const sanitized: Record<string, unknown> = Object.create(null) as Record<string, unknown>;
       for (const [key, val] of Object.entries(value)) {
         // Sanitize both keys and values
         const sanitizedKey = stripControlChars(key);

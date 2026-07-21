@@ -23,12 +23,18 @@ export async function atomicWriteFile(filePath: string, content: string): Promis
 
   let temporaryFileCreated = false;
   try {
-    await fs.writeFile(tmpPath, content, {
-      encoding: 'utf-8',
-      mode: 0o600,
-      flag: 'wx',
-    });
+    // Exclusive create + explicit fsync before rename: after a crash the
+    // renamed file must contain the new content, not a zero-length shell.
+    // (Parent-directory fsync is deliberately omitted — it is not portable
+    // to Windows and the worst case there is the old file surviving whole.)
+    const handle = await fs.open(tmpPath, 'wx', 0o600);
     temporaryFileCreated = true;
+    try {
+      await handle.writeFile(content, 'utf-8');
+      await handle.sync();
+    } finally {
+      await handle.close();
+    }
     await fs.rename(tmpPath, filePath);
   } catch (error) {
     if (temporaryFileCreated) {

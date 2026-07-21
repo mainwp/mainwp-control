@@ -29,6 +29,13 @@ const MAX_ROTATIONS = 5;
 const MAX_SERIALIZED_INPUT_BYTES = 8 * 1024;
 
 /**
+ * Byte cap for free-text entry fields (preview summary, execution error).
+ * These strings can be derived from Dashboard responses, so an unbounded
+ * value could bloat the audit log the same way unbounded input could.
+ */
+const MAX_FREE_TEXT_BYTES = 2 * 1024;
+
+/**
  * Audit log filename
  */
 const AUDIT_LOG_FILENAME = 'audit.log';
@@ -105,6 +112,33 @@ export function getAuditLogPath(): string {
 }
 
 /**
+ * Cap a free-text field at MAX_FREE_TEXT_BYTES, cutting on a byte boundary
+ * and dropping any trailing replacement characters from a split multi-byte
+ * sequence. Over-limit values end with a visible [TRUNCATED] marker.
+ */
+function boundText(text: string): string {
+  if (Buffer.byteLength(text, 'utf8') <= MAX_FREE_TEXT_BYTES) {
+    return text;
+  }
+  const truncated = Buffer.from(text, 'utf8')
+    .subarray(0, MAX_FREE_TEXT_BYTES)
+    .toString('utf8')
+    .replace(/�+$/, '');
+  return `${truncated}[TRUNCATED]`;
+}
+
+/**
+ * A failed permission repair must not abort the audit write, but it also
+ * must not pass silently: the log may be left readable by other users.
+ */
+function warnPermissionRepairFailed(path: string, error: unknown): void {
+  console.error(
+    `Warning: [AuditLogger] could not restrict permissions on ${path}: ` +
+    (error instanceof Error ? error.message : String(error))
+  );
+}
+
+/**
  * Audit Logger class
  */
 export class AuditLogger {
@@ -123,7 +157,9 @@ export class AuditLogger {
     // Create directory with restricted permissions (owner only)
     const dir = getConfigDir();
     await fs.mkdir(dir, { recursive: true, mode: 0o700 });
-    await fs.chmod(dir, 0o700).catch(() => {});
+    await fs.chmod(dir, 0o700).catch((error: unknown) => {
+      warnPermissionRepairFailed(dir, error);
+    });
 
     // Check if rotation is needed
     if (await this.shouldRotate(logPath)) {
@@ -150,10 +186,16 @@ export class AuditLogger {
       entry.stage = params.stage;
     }
     if (params.preview) {
-      entry.preview = params.preview;
+      entry.preview = {
+        summary: boundText(params.preview.summary),
+        affectedCount: params.preview.affectedCount,
+      };
     }
     if (params.execution) {
-      entry.execution = params.execution;
+      entry.execution = { ...params.execution };
+      if (entry.execution.error !== undefined) {
+        entry.execution.error = boundText(entry.execution.error);
+      }
     }
 
     // Format as NDJSON line
@@ -165,7 +207,9 @@ export class AuditLogger {
       fsConstants.O_WRONLY | noFollow;
     const handle = await fs.open(logPath, appendFlags, 0o600);
     try {
-      await handle.chmod(0o600).catch(() => {});
+      await handle.chmod(0o600).catch((error: unknown) => {
+        warnPermissionRepairFailed(logPath, error);
+      });
       await handle.writeFile(line, 'utf-8');
     } finally {
       await handle.close();
@@ -187,7 +231,12 @@ export class AuditLogger {
     let bounded: Record<string, unknown>;
     do {
       bounded = {
-        serializedPrefix: serializedBytes.subarray(0, prefixBytes).toString('utf8'),
+        // Cutting on a byte boundary can split a multi-byte sequence; drop
+        // the resulting trailing replacement characters.
+        serializedPrefix: serializedBytes
+          .subarray(0, prefixBytes)
+          .toString('utf8')
+          .replace(/�+$/, ''),
       };
       if (Buffer.byteLength(JSON.stringify(bounded), 'utf8') <= MAX_SERIALIZED_INPUT_BYTES) {
         break;

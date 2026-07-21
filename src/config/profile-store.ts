@@ -95,8 +95,10 @@ export function validateDashboardUrl(
   try {
     parsed = new URL(url);
   } catch {
+    // Never echo the malformed URL: it can embed credentials
+    // (https://user:pass@host) that would land in terminal output and logs.
     throw new ConfigError(
-      `Invalid Dashboard URL format: ${url}`,
+      'Invalid Dashboard URL format',
       undefined,
       'URL must include protocol (http:// or https://) and hostname'
     );

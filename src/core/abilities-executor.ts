@@ -67,7 +67,11 @@ export interface ExecutionResult<T = unknown> {
 type AbilitiesListResponse = Ability[];
 
 const MAX_DISCOVERY_PAGES = 20;
-const ABILITY_NAME_PATTERN = /^[a-z0-9][a-z0-9._-]*\/[a-z0-9][a-z0-9._-]*-v[1-9]\d*$/i;
+// Deliberately case-SENSITIVE: the Dashboard registers lowercase names, and
+// the destructive-name override (DESTRUCTIVE_NAME_PATTERNS) matches lowercase.
+// A case-variant like "Mainwp/Delete-Site-V1" is refused at discovery rather
+// than normalized, so it can never evade classification or alias a cache key.
+const ABILITY_NAME_PATTERN = /^[a-z0-9][a-z0-9._-]*\/[a-z0-9][a-z0-9._-]*-v[1-9]\d*$/;
 
 /**
  * Abilities Executor class

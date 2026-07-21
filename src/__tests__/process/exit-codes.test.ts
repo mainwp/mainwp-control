@@ -283,6 +283,12 @@ describe('exit 5: unexpected settings read failure', () => {
     });
 
     expect(result.exitCode).toBe(5);
+    // stderr carries the human-readable error line; the --json contract
+    // guarantees stdout purity, not stderr silence.
+    expect(JSON.parse(result.stdout)).toMatchObject({
+      success: false,
+      error: expect.any(Object),
+    });
   });
 });
 

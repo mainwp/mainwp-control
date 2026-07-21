@@ -130,6 +130,11 @@ export abstract class BaseCommand extends Command {
    * Call this at the start of each command's run() method.
    */
   protected async initCommon(flags: CommonFlags): Promise<void> {
+    // Provisional, before anything that can throw: a settings-load failure
+    // must still honor an explicit --json so catch() emits the envelope on
+    // stdout instead of prose-only stderr.
+    this.jsonOutput = flags.json ?? false;
+
     // Load and validate settings
     this.rawSettings = await loadSettings();
     const resolved = resolveSettings(this.rawSettings);

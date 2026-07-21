@@ -91,6 +91,23 @@ describe('AnthropicProvider.convertMessages (via chat)', () => {
       'user', // tool result converted to user role
       'user', // decline echo — consecutive user entries are valid; API merges
     ]);
+    expect(messages[1]).toEqual({
+      role: 'assistant',
+      content: [{
+        type: 'tool_use',
+        id: 'call_1',
+        name: 'delete-site-v1',
+        input: { site_id: 7 },
+      }],
+    });
+    expect(messages[2]).toEqual({
+      role: 'user',
+      content: [{
+        type: 'tool_result',
+        tool_use_id: 'call_1',
+        content: '{"declined":true}',
+      }],
+    });
   });
 
   it('keeps a normally alternating history unchanged', async () => {
@@ -130,7 +147,12 @@ describe('AnthropicProvider.convertMessages (via chat)', () => {
     const messages = await captureMessages(history);
 
     expect(messages.map((m) => m.role)).toEqual(['user', 'assistant', 'user']);
-    const toolResults = messages[2]!.content as Array<{ type: string; tool_use_id: string }>;
-    expect(toolResults.map((block) => block.tool_use_id)).toEqual(['call_1', 'call_2']);
+    expect(messages[2]).toEqual({
+      role: 'user',
+      content: [
+        { type: 'tool_result', tool_use_id: 'call_1', content: '{"ok":true}' },
+        { type: 'tool_result', tool_use_id: 'call_2', content: '{"ok":true}' },
+      ],
+    });
   });
 });

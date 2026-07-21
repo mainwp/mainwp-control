@@ -67,8 +67,17 @@ export function resolveAcceptanceCredentials(
     username: env.MAINWP_USER ?? '',
     appPassword: env.MAINWP_APP_PASSWORD ?? '',
   };
-  if (Object.values(fromEnvironment).every(value => value.length > 0)) {
+  const setCount = Object.values(fromEnvironment).filter(value => value.length > 0).length;
+  if (setCount === 3) {
     return fromEnvironment;
+  }
+  if (setCount > 0) {
+    // A partial environment must not silently fall back to the file: the
+    // run would target a different Dashboard than the operator intended.
+    throw new Error(
+      'Partial live acceptance environment: set all of MAINWP_URL, MAINWP_USER, ' +
+      'and MAINWP_APP_PASSWORD, or none of them to use the env file.'
+    );
   }
 
   const envPath = expandHome(

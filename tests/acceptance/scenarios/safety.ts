@@ -63,6 +63,7 @@ export const dryRunPreview: ScenarioDefinition = {
     ctx.assert.equal('dry run reports preview mode', output.data?.mode, 'preview');
     ctx.assert.equal('dry run ability succeeds', output.data?.success, true);
     ctx.assert.truthy('dry run includes a preview summary', output.data?.preview?.summary);
+    ctx.assert.equal('exactly one delete request reached the fixture in total', requests.length, 1);
     ctx.assert.equal('exactly one dry-run request reached the fixture', dryRuns.length, 1);
     ctx.assert.equal('no confirm request reached the fixture', confirms.length, 0);
     ctx.assert.equal('dry-run request uses POST', dryRuns[0]?.method, 'POST');
@@ -74,7 +75,10 @@ export const dryRunPreview: ScenarioDefinition = {
 export const previewThenConfirm: ScenarioDefinition = {
   id: 'preview-then-confirm',
   purpose: 'Prove force skips only the prompt: preview first, then exactly one confirmation.',
-  kind: 'read',
+  // 'write': the scenario completes a confirmed deletion. It only ever runs
+  // against the fixture (the write guard passes fixture targets through),
+  // but if a live target is ever added, the guard must apply.
+  kind: 'write',
   targets: ['fixture'],
   async run(ctx) {
     const result = await ctx.cli.run(deleteArgs('--confirm', '--force'));
@@ -100,7 +104,9 @@ export const previewThenConfirm: ScenarioDefinition = {
 export const previewFailureFailsClosed: ScenarioDefinition = {
   id: 'preview-failure-fails-closed',
   purpose: 'Prove a failed destructive preview returns PREVIEW_FAILED and never confirms.',
-  kind: 'read',
+  // 'write': the invocation requests a confirmed deletion; only the fixture's
+  // programmed preview failure keeps it from executing.
+  kind: 'write',
   targets: ['fixture'],
   async run(ctx) {
     if (!ctx.mockServer) throw new Error('Fixture scenario did not receive a MockServer');
@@ -114,6 +120,7 @@ export const previewFailureFailsClosed: ScenarioDefinition = {
     ctx.assert.equal('preview failure envelope fails', output.success, false);
     ctx.assert.equal('preview failure classification', output.error?.code, 'PREVIEW_FAILED');
     ctx.assert.equal('preview failure message identifies preview', /preview/i.test(output.error?.message ?? ''), true);
+    ctx.assert.equal('exactly one delete request reached the fixture in total', requests.length, 1);
     ctx.assert.equal('exactly one failed preview reached the fixture', dryRuns.length, 1);
     ctx.assert.equal('failed preview sends no confirm request', confirms.length, 0);
   },

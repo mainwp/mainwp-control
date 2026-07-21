@@ -97,6 +97,13 @@ describe('stripControlChars', () => {
     });
   });
 
+  describe('bidirectional controls', () => {
+    it('strips RLO and isolate controls that could visually reorder output', () => {
+      expect(stripControlChars('safe‮detrevni‬ end')).toBe('safedetrevni end');
+      expect(stripControlChars('a⁦b⁧c⁨d⁩e')).toBe('abcde');
+    });
+  });
+
   describe('C1 control characters', () => {
     it('strips C1 control range (0x80-0x9F)', () => {
       const c1 = 'before\x80\x90\x9Fafter';
@@ -221,6 +228,17 @@ describe('sanitizeForTerminal', () => {
     expect(sanitizeForTerminal(input)).toEqual({
       'redKey': 'value',
     });
+  });
+
+  it('keeps a hostile __proto__ key as an ordinary data property', () => {
+    const input = JSON.parse('{"__proto__": {"polluted": true}, "safe": "ok"}') as unknown;
+
+    const result = sanitizeForTerminal(input) as Record<string, unknown>;
+
+    expect(result['safe']).toBe('ok');
+    expect(result['__proto__']).toEqual({ polluted: true });
+    expect(Object.getPrototypeOf(result)).toBeNull();
+    expect(({} as Record<string, unknown>)['polluted']).toBeUndefined();
   });
 
   it('handles deeply nested structures', () => {

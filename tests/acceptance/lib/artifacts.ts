@@ -57,10 +57,11 @@ export class Artifacts {
   ) {
     this.runDir = path.join(repoRoot, 'test-results', 'acceptance', runId);
     this.manifest = manifest;
-    fs.mkdirSync(this.runDir, { recursive: true });
+    fs.mkdirSync(this.runDir, { recursive: true, mode: 0o700 });
+    fs.chmodSync(this.runDir, 0o700);
     this.writeJson('manifest.json', manifest);
-    fs.writeFileSync(path.join(this.runDir, 'events.jsonl'), '');
-    fs.writeFileSync(path.join(this.runDir, 'commands.jsonl'), '');
+    fs.writeFileSync(path.join(this.runDir, 'events.jsonl'), '', { mode: 0o600 });
+    fs.writeFileSync(path.join(this.runDir, 'commands.jsonl'), '', { mode: 0o600 });
   }
 
   writeJson(filename: string, value: unknown): void {
@@ -68,14 +69,17 @@ export class Artifacts {
   }
 
   write(filename: string, value: string): void {
-    fs.writeFileSync(path.join(this.runDir, filename), this.redactor.redact(value), 'utf8');
+    fs.writeFileSync(path.join(this.runDir, filename), this.redactor.redact(value), {
+      encoding: 'utf8',
+      mode: 0o600,
+    });
   }
 
   appendJsonLine(filename: string, value: unknown): void {
     fs.appendFileSync(
       path.join(this.runDir, filename),
       `${this.redactor.stringify(value)}\n`,
-      'utf8'
+      { encoding: 'utf8', mode: 0o600 }
     );
   }
 

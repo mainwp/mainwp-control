@@ -15,7 +15,7 @@ import {
   resolveAcceptanceCredentials,
   type AcceptanceCredentials,
 } from './lib/env.js';
-import { getWriteGuardReason } from './lib/guards.js';
+import { getWriteGuardReason, isWriteHostAllowed } from './lib/guards.js';
 import { packAndInstall, type PackedPackage } from './lib/pack.js';
 import { Redactor } from './lib/redact.js';
 import { IndependentVerifier } from './lib/verify.js';
@@ -141,8 +141,11 @@ function summarize(results: ScenarioResult[]): ResultDocument['totals'] {
 function computeExitCode(
   totals: ResultDocument['totals'],
   artifactAudit: ResultDocument['artifactAudit'],
+  hasHarnessError: boolean,
 ): number {
-  return totals.failed > 0 || totals.unverified > 0 || !artifactAudit.passed ? 1 : 0;
+  return totals.failed > 0 || totals.unverified > 0 || !artifactAudit.passed || hasHarnessError
+    ? 1
+    : 0;
 }
 
 function invocationLabel(record: CommandRecord): string {
@@ -164,7 +167,7 @@ function summaryMarkdown(
     `- Skipped: ${document.totals.skipped}`,
     `- Unverified: ${document.totals.unverified}`,
     `- Artifact audit: ${document.artifactAudit.passed ? 'passed' : 'failed'} — ${document.artifactAudit.message}`,
-    `- Exit code: ${computeExitCode(document.totals, document.artifactAudit)}${document.totals.failed === 0 && document.totals.unverified > 0 ? ' (unverified scenarios present)' : ''}`,
+    `- Exit code: ${computeExitCode(document.totals, document.artifactAudit, document.harnessError !== null)}${document.totals.failed === 0 && document.totals.unverified > 0 ? ' (unverified scenarios present)' : ''}`,
     ...(document.harnessError ? [`- Harness error: ${document.harnessError}`] : []),
     '',
     '| Scenario | Status | Duration (ms) | Purpose |',
@@ -335,7 +338,11 @@ async function runScenario(
       ).toString('base64')}`,
     });
 
-    const skipTlsVerify = options.target === 'live';
+    // TLS verification stays on unless the target is the local self-signed
+    // testbed (same host classes the write guard trusts). Pointing the
+    // harness at a non-local Dashboard must never silently disable TLS.
+    const skipTlsVerify = options.target === 'live'
+      && isWriteHostAllowed(new URL(credentials.dashboardUrl).hostname);
     verifier = new IndependentVerifier(credentials, skipTlsVerify);
     let precondition;
     try {
@@ -607,7 +614,7 @@ async function runAcceptance(options: RunnerOptions): Promise<number> {
     console.error(redactor.redact(harnessError instanceof Error ? harnessError.message : String(harnessError)));
     return 1;
   }
-  return computeExitCode(summarize(results), artifactAudit);
+  return computeExitCode(summarize(results), artifactAudit, harnessError !== undefined);
 }
 
 try {

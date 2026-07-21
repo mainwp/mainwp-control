@@ -34,10 +34,8 @@ function loadTestbedEnv(path: string): Record<string, string> {
   }
 }
 
-const testbedEnv = loadTestbedEnv(
-  process.env['MAINWP_TESTBED_ENV'] ??
-    '/Users/denni1/github/dev-tools/network-testbed/.env',
-);
+const testbedEnvPath = process.env['MAINWP_TESTBED_ENV'];
+const testbedEnv = testbedEnvPath ? loadTestbedEnv(testbedEnvPath) : {};
 
 const DASH_URL =
   process.env['MAINWP_API_URL'] ?? testbedEnv['MAINWP_API_URL'] ?? '';
@@ -72,7 +70,17 @@ async function checkDashboard(
   }
 }
 
-const liveTestsEnabled = Boolean(process.env['MAINWP_LIVE_TEST']);
+// Only explicit opt-in values enable live tests; "false"/"0"/anything else
+// stays disabled — this gate also controls the TLS-verification override.
+const rawLiveFlag = process.env['MAINWP_LIVE_TEST'];
+const liveTestsEnabled = rawLiveFlag === '1' || rawLiveFlag === 'true';
+if (liveTestsEnabled && (!DASH_URL || !DASH_USER || !DASH_PASS)) {
+  throw new Error(
+    'MAINWP_LIVE_TEST is enabled but live credentials are incomplete. ' +
+    'Set MAINWP_TESTBED_ENV to your testbed .env file, or export ' +
+    'MAINWP_API_URL, MAINWP_USER, and MAINWP_APP_PASSWORD.'
+  );
+}
 if (liveTestsEnabled) {
   // Set only for explicitly enabled live tests using the self-signed testbed.
   process.env['NODE_TLS_REJECT_UNAUTHORIZED'] = '0';

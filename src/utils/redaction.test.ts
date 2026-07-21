@@ -93,4 +93,46 @@ describe('redactSensitiveKeys', () => {
     expect(redactSensitiveKeys(null)).toBe(null);
     expect(redactSensitiveKeys(undefined)).toBe(undefined);
   });
+
+  it('terminates on cyclic structures instead of overflowing the stack', () => {
+    const cyclic: Record<string, unknown> = { name: 'outer' };
+    cyclic['self'] = cyclic;
+
+    expect(redactSensitiveKeys(cyclic)).toEqual({
+      name: 'outer',
+      self: '[TRUNCATED]',
+    });
+  });
+
+  it('truncates beyond the depth limit instead of recursing indefinitely', () => {
+    let deep: unknown = { password: 'leaf' };
+    for (let index = 0; index < 50; index++) {
+      deep = { nested: deep };
+    }
+
+    const serialized = JSON.stringify(redactSensitiveKeys(deep));
+    expect(serialized).toContain('[TRUNCATED]');
+    expect(serialized).not.toContain('leaf');
+  });
+
+  it('keeps a hostile __proto__ key as an ordinary data property', () => {
+    const input = JSON.parse('{"__proto__": {"polluted": true}, "password": "x"}') as unknown;
+
+    const result = redactSensitiveKeys(input) as Record<string, unknown>;
+
+    expect(result['password']).toBe('[REDACTED]');
+    expect(result['__proto__']).toEqual({ polluted: true });
+    expect(Object.getPrototypeOf(result)).toBeNull();
+    expect(({} as Record<string, unknown>)['polluted']).toBeUndefined();
+  });
+
+  it('keeps legitimately shared (non-cyclic) references intact', () => {
+    const shared = { host: 'example.com' };
+    const data = { first: shared, second: shared };
+
+    expect(redactSensitiveKeys(data)).toEqual({
+      first: { host: 'example.com' },
+      second: { host: 'example.com' },
+    });
+  });
 });

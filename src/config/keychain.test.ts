@@ -117,6 +117,18 @@ describe('Keychain error normalization', () => {
     });
   });
 
+  it('set() redacts paths and bounds keytar errors', async () => {
+    vi.mocked(keytar.setPassword).mockRejectedValue(
+      new Error(`/Users/tester/.config/mainwpcontrol ${'x'.repeat(1000)}`),
+    );
+
+    const result = await new Keychain().set('default', 'secret');
+
+    expect(result.stored).toBe(false);
+    expect(result.error).not.toContain('/Users/tester');
+    expect(result.error?.length).toBeLessThanOrEqual(500);
+  });
+
   it('set() returns a failure result when keytar rejects with a non-Error', async () => {
     vi.mocked(keytar.setPassword).mockRejectedValue(null);
 

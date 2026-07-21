@@ -18,12 +18,12 @@ import {
   FIXTURE_USERNAME,
 } from './fixtures.js';
 import { createArtifacts, type Artifacts } from './lib/artifacts.js';
-import { CommandRunner } from './lib/commands.js';
+import { appendBounded, CommandRunner } from './lib/commands.js';
 import {
   resolveAcceptanceCredentials,
   type AcceptanceCredentials,
 } from './lib/env.js';
-import { getWriteGuardReason } from './lib/guards.js';
+import { getWriteGuardReason, isWriteHostAllowed } from './lib/guards.js';
 import { packAndInstall, type PackedPackage } from './lib/pack.js';
 import { Redactor } from './lib/redact.js';
 import { IndependentVerifier } from './lib/verify.js';
@@ -805,6 +805,12 @@ async function evaluateDeleteScenario(
   };
 }
 
+/**
+ * Wall-clock cap per agent invocation. Agent turns legitimately take
+ * minutes; a hung claude process must not hang the harness forever.
+ */
+const CLAUDE_TIMEOUT_MS = 15 * 60_000;
+
 async function runClaude(
   argv: string[],
   cwd: string,
@@ -825,7 +831,7 @@ async function runClaude(
   let pending = '';
   child.stdout.on('data', chunk => {
     const buffer = Buffer.from(chunk);
-    stdoutChunks.push(buffer);
+    appendBounded(stdoutChunks, buffer);
     pending += buffer.toString('utf8');
     const lines = pending.split(/\r?\n/);
     pending = lines.pop() ?? '';
@@ -833,14 +839,35 @@ async function runClaude(
       onLine(line, Math.round(performance.now() - started));
     }
   });
-  child.stderr.on('data', chunk => stderrChunks.push(Buffer.from(chunk)));
+  child.stderr.on('data', chunk => appendBounded(stderrChunks, Buffer.from(chunk)));
+  let timedOut = false;
   const exitCode = await new Promise<number>((resolve, reject) => {
-    child.once('error', reject);
-    child.once('close', code => resolve(code ?? 1));
+    let forceKill: NodeJS.Timeout | undefined;
+    const timeout = setTimeout(() => {
+      timedOut = true;
+      child.kill('SIGTERM');
+      forceKill = setTimeout(() => child.kill('SIGKILL'), 5_000);
+    }, CLAUDE_TIMEOUT_MS);
+    child.once('error', error => {
+      clearTimeout(timeout);
+      if (forceKill) clearTimeout(forceKill);
+      reject(error);
+    });
+    child.once('close', code => {
+      clearTimeout(timeout);
+      if (forceKill) clearTimeout(forceKill);
+      resolve(code ?? 1);
+    });
   });
   if (pending.length > 0) onLine(pending, Math.round(performance.now() - started));
+  if (timedOut) {
+    appendBounded(
+      stderrChunks,
+      Buffer.from(`\nHarness: claude run exceeded ${CLAUDE_TIMEOUT_MS}ms and was terminated.\n`),
+    );
+  }
   return {
-    exitCode,
+    exitCode: timedOut && exitCode === 0 ? 1 : exitCode,
     stdout: Buffer.concat(stdoutChunks).toString('utf8'),
     stderr: Buffer.concat(stderrChunks).toString('utf8'),
     durationMs: Math.round(performance.now() - started),
@@ -1026,6 +1053,69 @@ async function prepareCli(
   };
 }
 
+/**
+ * Guard shim installed ahead of the real binary on the agent's PATH. The
+ * agent's allowedTools only permit commands starting with "mainwpcontrol",
+ * so every invocation resolves to this shim, which enforces the scenario's
+ * ability allowlist and confirm policy before delegating. Defense in depth
+ * for live scenarios: grading after the fact does not stop a stray
+ * destructive call against the testbed.
+ */
+const GUARD_SHIM_SOURCE = `#!/usr/bin/env node
+const { spawnSync } = require('node:child_process');
+const realBin = process.env.MAINWP_ACCEPTANCE_REAL_BIN;
+if (!realBin) {
+  console.error('Acceptance guard: MAINWP_ACCEPTANCE_REAL_BIN is not set.');
+  process.exit(3);
+}
+const allowed = (process.env.MAINWP_ACCEPTANCE_ALLOWED_ABILITIES || '')
+  .split(',').map((s) => s.trim()).filter(Boolean);
+const allowConfirm = process.env.MAINWP_ACCEPTANCE_ALLOW_CONFIRM === '1';
+const argv = process.argv.slice(2);
+if (!allowConfirm && argv.some((a) => a === '--confirm' || a === '--force')) {
+  console.error('Acceptance guard: --confirm/--force are not authorized for this scenario.');
+  process.exit(3);
+}
+const isRun = (argv[0] === 'abilities' && argv[1] === 'run') || argv[0] === 'abilities:run';
+if (isRun) {
+  const abilityName = argv[0] === 'abilities:run' ? argv[1] : argv[2];
+  const ok = typeof abilityName === 'string' && allowed.some(
+    (full) => full === abilityName || full.endsWith('/' + abilityName)
+  );
+  if (!ok) {
+    console.error(
+      'Acceptance guard: ability "' + (abilityName || '') + '" is not in this scenario allowlist.'
+    );
+    process.exit(3);
+  }
+}
+const result = spawnSync(realBin, argv, { stdio: 'inherit' });
+process.exit(result.status === null ? 1 : result.status);
+`;
+
+interface GuardShim {
+  dir: string;
+  env: Record<string, string>;
+  cleanup(): void;
+}
+
+function createGuardShim(scenario: AgentScenario, realBinDir: string): GuardShim {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mainwp-control-agent-guard-'));
+  fs.writeFileSync(path.join(dir, 'mainwpcontrol'), GUARD_SHIM_SOURCE, { mode: 0o755 });
+  return {
+    dir,
+    env: {
+      MAINWP_ACCEPTANCE_REAL_BIN: path.join(realBinDir, 'mainwpcontrol'),
+      MAINWP_ACCEPTANCE_ALLOWED_ABILITIES: scenario.expectedAbilities.join(','),
+      // Confirmed destructive execution is authorized only for the fixture
+      // write scenario; live scenarios never get --confirm/--force.
+      MAINWP_ACCEPTANCE_ALLOW_CONFIRM:
+        scenario.kind === 'write' && scenario.target === 'fixture' ? '1' : '0',
+    },
+    cleanup: () => fs.rmSync(dir, { recursive: true, force: true }),
+  };
+}
+
 const agentSystemPrompt = [
   'A MainWP Dashboard is managed exclusively through the mainwpcontrol CLI,',
   'which is on PATH and already configured with credentials.',
@@ -1085,7 +1175,10 @@ async function runAgentAcceptance(options: AgentRunnerOptions): Promise<number> 
     },
     '-agent',
   );
-  const verifier = new IndependentVerifier(credentials, true);
+  // TLS verification stays on unless the Dashboard is the local self-signed
+  // testbed (same host classes the write guard trusts).
+  const liveSkipTlsVerify = isWriteHostAllowed(new URL(credentials.dashboardUrl).hostname);
+  const verifier = new IndependentVerifier(credentials, liveSkipTlsVerify);
   const results: AgentResult[] = [];
   let preparedCli: PreparedCli | null = null;
   let harnessError: unknown;
@@ -1103,6 +1196,7 @@ async function runAgentAcceptance(options: AgentRunnerOptions): Promise<number> 
       let truth: AgentGroundTruth | undefined;
       let configDir: ConfigDir | null = null;
       let mockServer: MockServer | null = null;
+      let guardShim: GuardShim | null = null;
       let scenarioVerifier = verifier;
       let scenarioCredentials = credentials;
       let result: AgentResult | undefined;
@@ -1192,7 +1286,9 @@ async function runAgentAcceptance(options: AgentRunnerOptions): Promise<number> 
             name: 'acceptance',
             dashboardUrl: scenarioCredentials.dashboardUrl,
             username: scenarioCredentials.username,
-            ...(scenario.target === 'live' ? { skipSSLVerification: true } : {}),
+            ...(scenario.target === 'live' && liveSkipTlsVerify
+              ? { skipSSLVerification: true }
+              : {}),
           }],
           activeProfile: 'acceptance',
           ...(insecureHttp ? { settings: { allowInsecureHttp: true } } : {}),
@@ -1202,12 +1298,17 @@ async function runAgentAcceptance(options: AgentRunnerOptions): Promise<number> 
           toolResults: [],
           finalText: '',
         };
+        // The guard shim shadows the real binary on PATH; allowedTools only
+        // permits commands starting with "mainwpcontrol", so every CLI call
+        // goes through the scenario's ability allowlist.
+        guardShim = createGuardShim(scenario, preparedCli.binDir);
         const command = await runClaude(
           argv,
           preparedCli.cwd,
           {
             ...process.env,
-            PATH: `${preparedCli.binDir}${path.delimiter}${process.env['PATH'] ?? ''}`,
+            ...guardShim.env,
+            PATH: `${guardShim.dir}${path.delimiter}${process.env['PATH'] ?? ''}`,
             XDG_CONFIG_HOME: configDir.xdgHome,
             MAINWPCONTROL_NO_KEYTAR: '1',
             MAINWP_APP_PASSWORD: scenarioCredentials.appPassword,
@@ -1290,6 +1391,7 @@ async function runAgentAcceptance(options: AgentRunnerOptions): Promise<number> 
             reason: `Config cleanup failed: ${error instanceof Error ? error.message : String(error)}`,
           };
         });
+        guardShim?.cleanup();
         if (scenarioVerifier !== verifier) {
           await scenarioVerifier.close().catch(() => {});
         }

@@ -135,6 +135,10 @@ export interface ScenarioResult {
   error?: string;
 }
 
+// Far beyond any testbed (10k sites at per_page 100); a Dashboard paging bug
+// must fail the run loudly instead of hanging it.
+const MAX_SITE_PAGES = 100;
+
 export async function cliListAllSites(cli: CLIInvoker): Promise<VerifiedSite[]> {
   const sites: VerifiedSite[] = [];
   let page = 1;
@@ -156,11 +160,22 @@ export async function cliListAllSites(cli: CLIInvoker): Promise<VerifiedSite[]> 
       throw new Error(`mainwp/list-sites-v1 failed: ${result.stderr || result.stdout}`);
     }
     const response = result.json.data?.data;
-    if (!response || !Array.isArray(response.items) || typeof response.total !== 'number') {
+    if (
+      !response ||
+      !Array.isArray(response.items) ||
+      typeof response.total !== 'number' ||
+      !Number.isFinite(response.total) ||
+      response.total < 0
+    ) {
       throw new Error('mainwp/list-sites-v1 returned an unexpected CLI envelope');
     }
     sites.push(...response.items);
     if (sites.length >= response.total || response.items.length === 0) return sites;
+    if (page >= MAX_SITE_PAGES) {
+      throw new Error(
+        `mainwp/list-sites-v1 pagination did not terminate within ${MAX_SITE_PAGES} pages`
+      );
+    }
     page += 1;
   }
 }

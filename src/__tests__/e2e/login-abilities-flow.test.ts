@@ -37,12 +37,22 @@ const mockFsWriteFile = vi.fn();
 const mockFsMkdir = vi.fn();
 const mockFsRename = vi.fn();
 
+// atomicWriteFile writes through an exclusive fs.open handle; delegate the
+// handle's writeFile back to mockFsWriteFile as (path, content) so existing
+// assertions keep their shape.
+const mockFsOpen = vi.fn((path: unknown) => Promise.resolve({
+  writeFile: (content: unknown) => mockFsWriteFile(path, content) as Promise<void>,
+  sync: () => Promise.resolve(),
+  close: () => Promise.resolve(),
+}));
+
 vi.mock('node:fs', () => ({
   promises: {
     readFile: (...args: unknown[]) => mockFsReadFile(...args),
     writeFile: (...args: unknown[]) => mockFsWriteFile(...args),
     mkdir: (...args: unknown[]) => mockFsMkdir(...args),
     rename: (...args: unknown[]) => mockFsRename(...args),
+    open: (...args: unknown[]) => mockFsOpen(args[0]),
   },
 }));
 

@@ -26,6 +26,12 @@ describe('sanitizeErrorMessage', () => {
     const message = 'failed: https://dashboard.example.com/wp-json?page=1';
     expect(sanitizeErrorMessage(message)).toBe(message);
   });
+
+  it('redacts sensitive query-string parameter values', () => {
+    expect(
+      sanitizeErrorMessage('failed: https://dashboard.example.com/cb?access_token=abc123&page=2')
+    ).toBe('failed: https://dashboard.example.com/cb?access_token=[REDACTED]&page=2');
+  });
 });
 
 describe('sanitizeErrorValue', () => {
@@ -35,6 +41,20 @@ describe('sanitizeErrorValue', () => {
         urls: ['https://admin:secret@dashboard.example.com'],
       })
     ).toEqual({ urls: ['[URL_WITH_CREDENTIALS]'] });
+  });
+
+  it('redacts values under sensitive keys outright', () => {
+    expect(
+      sanitizeErrorValue({
+        password: 'hunter2',
+        api_key: { nested: 'secret' },
+        note: 'kept',
+      })
+    ).toEqual({
+      password: '[REDACTED]',
+      api_key: '[REDACTED]',
+      note: 'kept',
+    });
   });
 
   it('terminates on cyclic structures instead of overflowing the stack', () => {

@@ -229,7 +229,7 @@ export class Keychain {
         return {
           stored: false,
           location: 'none',
-          error: errorMessage(error),
+          error: sanitizeKeychainError(error),
         };
       }
     }

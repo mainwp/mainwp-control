@@ -51,6 +51,8 @@ export class Redactor {
   }
 
   stringify(value: unknown, spacing?: number): string {
-    return this.redact(JSON.stringify(value, null, spacing));
+    // JSON.stringify returns undefined for undefined/functions/symbols;
+    // redact() must always receive a string.
+    return this.redact(JSON.stringify(value, null, spacing) ?? 'null');
   }
 }

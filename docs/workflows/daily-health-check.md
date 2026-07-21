@@ -524,7 +524,7 @@ An asterisk (`*`) means "every," so `* * * * *` means every minute of every hour
 
 Add this line to schedule the health check to run every day at 7:00 AM:
 
-```
+```cron
 0 7 * * * /full/path/to/mainwp-health-check.sh
 ```
 
@@ -536,13 +536,13 @@ realpath mainwp-health-check.sh
 
 For example, if the script is in your home directory, the line might be:
 
-```
+```cron
 0 7 * * * /Users/yourname/mainwp-health-check.sh
 ```
 
 **Note on PATH:** Cron runs in a minimal environment. It does not load your shell profile, so commands like `mainwpcontrol` or `jq` may not be found by their short names. If you encounter issues, add a `PATH` line at the top of your crontab:
 
-```
+```cron
 PATH=/usr/local/bin:/usr/bin:/bin:/opt/homebrew/bin
 0 7 * * * /full/path/to/mainwp-health-check.sh
 ```
@@ -653,6 +653,8 @@ Cron runs in a minimal environment and may not have access to your system keycha
 
 Don't put the password directly in the crontab. Crontab contents are easy to expose: `crontab -l` output ends up in shared logs, and system backups often capture the crontab file itself.
 
+Be aware of the trade-off: this file stores the Application Password in plain text on disk, protected only by its file permissions. That is inherent to unattended runs — cron cannot unlock your OS keychain. `MAINWP_APP_PASSWORD` is MainWP Control's supported environment fallback for exactly this situation; for interactive use, keep credentials in the keychain via `mainwpcontrol login`. If the password may have been exposed, revoke it in WordPress and issue a new one.
+
 Create the env file:
 
 ```bash
@@ -674,7 +676,7 @@ chmod 600 ~/.config/mainwpcontrol/cron.env
 
 Update the crontab entry to source the file before running the script:
 
-```
+```cron
 0 7 * * * . "$HOME/.config/mainwpcontrol/cron.env" && /full/path/to/mainwp-health-check.sh
 ```
 

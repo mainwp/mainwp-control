@@ -154,6 +154,32 @@ describe('AuditLogger', () => {
       expect(entry.execution).toEqual({ success: false, error: 'Site not found' });
     });
 
+    it('bounds an oversized preview summary with a visible marker', async () => {
+      await logger.logDestructiveAction({
+        ...baseInput,
+        preview: { summary: 'y'.repeat(10_000), affectedCount: 3 },
+      });
+
+      const entry = JSON.parse(mockHandleWriteFile.mock.calls[0]![0].trim());
+      expect(entry.preview.affectedCount).toBe(3);
+      expect(entry.preview.summary.endsWith('[TRUNCATED]')).toBe(true);
+      expect(Buffer.byteLength(entry.preview.summary, 'utf8'))
+        .toBeLessThanOrEqual(2 * 1024 + '[TRUNCATED]'.length);
+    });
+
+    it('bounds an oversized execution error with a visible marker', async () => {
+      await logger.logDestructiveAction({
+        ...baseInput,
+        execution: { success: false, error: 'z'.repeat(10_000) },
+      });
+
+      const entry = JSON.parse(mockHandleWriteFile.mock.calls[0]![0].trim());
+      expect(entry.execution.success).toBe(false);
+      expect(entry.execution.error.endsWith('[TRUNCATED]')).toBe(true);
+      expect(Buffer.byteLength(entry.execution.error, 'utf8'))
+        .toBeLessThanOrEqual(2 * 1024 + '[TRUNCATED]'.length);
+    });
+
     it('omits preview and execution when not provided', async () => {
       await logger.logDestructiveAction(baseInput);
 
@@ -202,6 +228,17 @@ describe('AuditLogger', () => {
       });
     });
 
+    it('leaves no replacement characters when truncation splits a multi-byte character', async () => {
+      const payload = 'a' + '😀'.repeat(5_000);
+      mockRedactSensitive.mockReturnValueOnce({ p: payload });
+
+      await logger.logDestructiveAction({ ...baseInput, input: { p: payload } });
+
+      const entry = JSON.parse(mockHandleWriteFile.mock.calls[0]![0].trim());
+      expect(entry.inputTruncated?.marker).toBe('TRUNCATED');
+      expect(entry.input.serializedPrefix.endsWith('�')).toBe(false);
+    });
+
     it('creates config directory with restricted permissions', async () => {
       await logger.logDestructiveAction(baseInput);
 
@@ -210,6 +247,19 @@ describe('AuditLogger', () => {
         mode: 0o700,
       });
       expect(mockChmod).toHaveBeenCalledWith('/mock/config', 0o700);
+    });
+
+    it('warns but still writes when a permission repair fails', async () => {
+      const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+      mockChmod.mockRejectedValueOnce(new Error('EPERM: operation not permitted'));
+
+      await logger.logDestructiveAction(baseInput);
+
+      expect(mockHandleWriteFile).toHaveBeenCalledTimes(1);
+      expect(consoleError).toHaveBeenCalledWith(
+        expect.stringContaining('could not restrict permissions'),
+      );
+      consoleError.mockRestore();
     });
 
     it('opens the log atomically in append mode and restricts permissions', async () => {

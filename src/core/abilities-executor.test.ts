@@ -203,6 +203,21 @@ describe('AbilitiesExecutor', () => {
       expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining('invalid ability'));
     });
 
+    it('refuses case-variant ability names so they cannot evade destructive classification', async () => {
+      const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+      mockGet.mockResolvedValueOnce({
+        data: [
+          { ...mockAbilities[0], name: 'Mainwp/Delete-Site-V1' },
+          mockAbilities[0],
+        ],
+      });
+
+      const abilities = await executor.listAbilities();
+
+      expect(abilities).toEqual([mockAbilities[0]]);
+      expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining('invalid ability'));
+    });
+
     it('keeps the first duplicate full name and warns', async () => {
       const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
       mockGet.mockResolvedValueOnce({
@@ -336,9 +351,12 @@ describe('AbilitiesExecutor', () => {
       await executor.execute('reset-site-v1', { site_id: 1 }, { confirm: true });
 
       // The run request went out as POST; a readonly GET run would have left
-      // mockPost uncalled. (mockGet fires only for the abilities-list fetch.)
+      // mockPost uncalled.
       expect(mockPost).toHaveBeenCalledOnce();
       expect(mockDelete).not.toHaveBeenCalled();
+      // The only GET is the abilities-list fetch — the run itself never uses GET.
+      expect(mockGet).toHaveBeenCalledTimes(1);
+      expect(String(mockGet.mock.calls[0]?.[0])).not.toContain('/run');
     });
 
     it('treats non-boolean annotation values as unset for method selection', async () => {

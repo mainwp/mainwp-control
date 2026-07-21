@@ -4,7 +4,6 @@
 
 import { isMainWPCTLError } from '../utils/errors.js';
 import {
-  stripControlChars,
   sanitizeForTerminal,
   sanitizeSingleLine,
   safeString,
@@ -23,8 +22,10 @@ export function formatSuccess(message: string): string {
  * Format an error message
  */
 export function formatError(error: Error | string): string {
+  // Single-line: hostile error text must not inject CR/LF and fake
+  // subsequent output lines (anti-spoofing, same rule as other terminal fields).
   const message = sanitizeErrorMessage(
-    error instanceof Error ? stripControlChars(error.message) : stripControlChars(error)
+    sanitizeSingleLine(error instanceof Error ? error.message : error)
   );
   let output = color('✗ Error: ', colors.red, colors.bold) + message;
 
@@ -36,7 +37,7 @@ export function formatError(error: Error | string): string {
     }
     if (error.hint) {
       output += '\n' + color(
-        '💡 ' + sanitizeErrorMessage(stripControlChars(error.hint)),
+        '💡 ' + sanitizeErrorMessage(sanitizeSingleLine(error.hint)),
         colors.dim
       );
     }

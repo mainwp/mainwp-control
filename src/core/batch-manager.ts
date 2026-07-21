@@ -107,6 +107,9 @@ export class BatchManager {
     jobId: string,
     options: WatchOptions = {}
   ): AsyncGenerator<JobStatus, WatchResult> {
+    // Validate up front: a timeout/abort before the first poll builds a
+    // placeholder status from this ID, which must never carry a raw value.
+    const validatedJobId = validateJobId(jobId);
     const maxWait = options.maxWait ?? DEFAULTS.maxWait;
     const startTime = Date.now();
 
@@ -135,7 +138,7 @@ export class BatchManager {
 
       // Fetch current status
       try {
-        const status = await this.getJobStatus(jobId, options.signal);
+        const status = await this.getJobStatus(validatedJobId, options.signal);
         lastStatus = status;
 
         // Yield the status update
@@ -186,7 +189,7 @@ export class BatchManager {
     // If we don't have a status, create a placeholder
     if (!lastStatus) {
       lastStatus = {
-        id: jobId,
+        id: validatedJobId,
         status: timedOut ? 'partial' : 'failed',
         errors: [{ message: timedOut ? 'Polling timed out' : 'Polling aborted' }],
       };

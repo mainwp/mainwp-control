@@ -174,7 +174,7 @@ The typical flow in any script is:
 Once you schedule `--confirm --force`, updates apply without anyone watching. Before you turn on either option below, make sure:
 
 - **Backups are current for every site in scope.** Use the MainWP Backups extension or your host's backup tool, and confirm a recent, restorable backup exists before the first automated run.
-- **You've run a canary first.** Point the workflow at a tag or group with a couple of low-risk sites before widening it to your full network. Only expand once a full cycle has run clean.
+- **You've run a canary first.** Run the workflow against one or two low-risk sites before widening it to your full network. `run-updates-v1` accepts a `site_ids_or_domains` input that limits its scope, so a canary run looks like `mainwpcontrol abilities run run-updates-v1 --input '{"site_ids_or_domains": [12, 34]}' --confirm --force --wait --json` with your low-risk site IDs (or domains). Only expand once a full cycle has run clean.
 - **You know your rollback path.** If an update breaks a site, you need a way back: restoring from backup, or rolling back the specific plugin or theme version. Confirm this actually works before you rely on it.
 - **The confirmed run lands inside a maintenance window you can monitor.** Even with `--wait`, something can go wrong. Schedule the `--confirm` run for a time when you, or someone, can check the result and react.
 
@@ -303,7 +303,7 @@ Expected output:
 
 ### Step 6: Apply Updates
 
-When you are satisfied with the preview, apply the updates for real. The prerequisites above apply here: confirm backups are current and run against a canary group before pointing this at your full network.
+When you are satisfied with the preview, apply the updates for real. The prerequisites above apply here: confirm backups are current and run against your canary sites before pointing this at your full network.
 
 ```bash
 mainwpcontrol abilities run run-updates-v1 --confirm --force --wait --json
@@ -568,7 +568,7 @@ jobs:
 
 #### Apply Step (Conditional)
 
-The prerequisites above apply here too: confirm backups are current and run this workflow against a canary group before scheduling it against your full network.
+The prerequisites above apply here too: confirm backups are current and run this workflow against your canary sites before scheduling it against your full network.
 
 ```yaml
       - name: Apply updates

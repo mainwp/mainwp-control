@@ -204,6 +204,15 @@ describe('BatchManager', () => {
   });
 
   describe('watchJob', () => {
+    it('rejects an invalid job ID before polling or building a placeholder', async () => {
+      const generator = manager.watchJob('job\x1b[2Jmalicious');
+
+      await expect(generator.next()).rejects.toMatchObject({
+        code: 'INVALID_RESPONSE',
+      });
+      expect(mockGet).not.toHaveBeenCalled();
+    });
+
     it('yields status updates until completed', async () => {
       mockGet
         .mockResolvedValueOnce({

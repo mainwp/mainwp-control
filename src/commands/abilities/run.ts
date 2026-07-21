@@ -123,9 +123,9 @@ export default class AbilitiesRun extends BaseCommand {
     // Parse input JSON. The raw input never goes into the error message: it
     // can carry secrets (a password pasted into a malformed payload) that
     // would otherwise land in stderr, CI logs, or the --json envelope.
-    let input: Record<string, unknown>;
+    let parsed: unknown;
     try {
-      input = JSON.parse(rawInput) as Record<string, unknown>;
+      parsed = JSON.parse(rawInput) as unknown;
     } catch (error) {
       const position = error instanceof Error
         ? /at position (\d+)/.exec(error.message)?.[1]
@@ -136,6 +136,17 @@ export default class AbilitiesRun extends BaseCommand {
         'Check the JSON passed via --input, --input-file, or stdin. Use --input-file for complex payloads.'
       );
     }
+
+    // Abilities take named parameters; an array or primitive would otherwise
+    // slip through to the Dashboard when the ability declares no schema.
+    if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      throw new InputError(
+        'Input JSON must be an object of ability parameters',
+        undefined,
+        'Pass a JSON object, e.g. --input \'{"site_id": 5}\'.'
+      );
+    }
+    let input: Record<string, unknown> = parsed as Record<string, unknown>;
 
     // Sanitize input
     input = inputSanitizer.sanitize(input);

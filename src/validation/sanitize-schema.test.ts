@@ -36,6 +36,10 @@ describe('sanitizeInputSchema', () => {
     expect(sanitizeInputSchema(input)).toEqual(input);
   });
 
+  it('returns the object-schema default for a null schema', () => {
+    expect(sanitizeInputSchema(null)).toEqual({ type: 'object', properties: {} });
+  });
+
   it('normalizes PHP empty-array artifacts', () => {
     const input = {
       type: ['object', 'null'],

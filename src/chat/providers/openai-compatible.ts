@@ -18,6 +18,7 @@ import {
 import { readSSEStream } from './sse-reader.js';
 import {
   assertNoRedirect,
+  MAX_PROVIDER_ERROR_BODY_BYTES,
   readBoundedResponseText,
   sanitizeProviderErrorBody,
 } from './provider-fetch.js';
@@ -436,7 +437,11 @@ export abstract class OpenAICompatibleProvider implements LLMProvider {
       assertNoRedirect(response, this.name);
 
       if (!response.ok) {
-        const error = await readBoundedResponseText(response);
+        const error = await readBoundedResponseText(
+          response,
+          MAX_PROVIDER_ERROR_BODY_BYTES,
+          combinedSignal,
+        );
         throw new Error(
           `${this.name} API error: ${response.status} ${sanitizeProviderErrorBody(error)}`
         );

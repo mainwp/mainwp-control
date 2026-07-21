@@ -26,6 +26,21 @@ function tail(value: string, maxLength = 12_000): string {
   return value.length <= maxLength ? value : value.slice(-maxLength);
 }
 
+/**
+ * Cap per-stream buffering: retain only the trailing bytes once the limit is
+ * exceeded, so a runaway subprocess cannot balloon harness memory. 10 MiB is
+ * far beyond any legitimate CLI or npm output in this harness.
+ */
+const MAX_STREAM_BYTES = 10 * 1024 * 1024;
+
+export function appendBounded(chunks: Buffer[], chunk: Buffer): void {
+  chunks.push(chunk);
+  let total = chunks.reduce((sum, item) => sum + item.length, 0);
+  while (total > MAX_STREAM_BYTES && chunks.length > 1) {
+    total -= chunks.shift()!.length;
+  }
+}
+
 export class CommandRunner {
   readonly records: CommandRecord[] = [];
   onRecord?: (record: CommandRecord) => void;
@@ -72,8 +87,8 @@ export class CommandRunner {
     });
     const stdout: Buffer[] = [];
     const stderr: Buffer[] = [];
-    child.stdout.on('data', chunk => stdout.push(Buffer.from(chunk)));
-    child.stderr.on('data', chunk => stderr.push(Buffer.from(chunk)));
+    child.stdout.on('data', chunk => appendBounded(stdout, Buffer.from(chunk)));
+    child.stderr.on('data', chunk => appendBounded(stderr, Buffer.from(chunk)));
 
     let spawnError: Error | undefined;
     let timedOut = false;

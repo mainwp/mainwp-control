@@ -2,6 +2,8 @@
  * Pure sanitizers for error messages and structured error details.
  */
 
+import { isSensitiveKey } from './redaction.js';
+
 const PATH_PATTERNS = [
   /\/Users\/[^/\s]+/g,
   /\/home\/[^/\s]+/g,
@@ -28,6 +30,15 @@ export function sanitizeErrorMessage(message: string): string {
   sanitized = sanitized.replace(
     /Bearer\s+[A-Za-z0-9._-]+/gi,
     'Bearer [REDACTED]'
+  );
+
+  // Query-string parameters whose key is on the shared sensitive list
+  // (access_token, api_key, ...) — a URL like ?access_token=... carries the
+  // credential outside the userinfo form handled above.
+  sanitized = sanitized.replace(
+    /([?&])([^=&\s"']{1,64})=([^&\s"']+)/g,
+    (match, sep: string, key: string) =>
+      isSensitiveKey(key) ? `${sep}${key}=[REDACTED]` : match
   );
 
   return sanitized;
@@ -59,7 +70,11 @@ export function sanitizeErrorValue(
       : Object.fromEntries(
           Object.entries(value).map(([key, item]) => [
             sanitizeErrorMessage(key),
-            sanitizeErrorValue(item, depth + 1, path),
+            // A sensitive key's value is a credential wherever it appears in
+            // hostile error details — redact it outright instead of recursing.
+            isSensitiveKey(key)
+              ? '[REDACTED]'
+              : sanitizeErrorValue(item, depth + 1, path),
           ])
         );
 

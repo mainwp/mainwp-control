@@ -28,10 +28,11 @@
  * inside them must survive.
  */
 export function sanitizeInputSchema(
-  inputSchema: Record<string, unknown> | undefined
+  inputSchema: Record<string, unknown> | null | undefined
 ): Record<string, unknown> {
   if (
     inputSchema === undefined ||
+    inputSchema === null ||
     Array.isArray(inputSchema) ||
     typeof inputSchema !== 'object'
   ) {
