@@ -41,6 +41,7 @@ export class MockServer {
   private server: Server | null = null;
   private routes: Route[] = [];
   private recorded: RecordedRequest[] = [];
+  private requestWaiters: Array<{ match: (r: RecordedRequest) => boolean; resolve: () => void }> = [];
   private credentials = { username: 'admin', password: 'test-pass' };
 
   /** The port the server is listening on (available after start()). */
@@ -88,6 +89,7 @@ export class MockServer {
   reset(): void {
     this.routes = [];
     this.recorded = [];
+    this.requestWaiters = [];
     this.credentials = { username: 'admin', password: 'test-pass' };
   }
 
@@ -170,6 +172,21 @@ export class MockServer {
     return [...this.recorded];
   }
 
+  /**
+   * Resolves once a request whose path contains the given substring arrives
+   * (immediately if one is already recorded). Lets a test key an action, like
+   * delivering a signal, off evidence the CLI is booted and talking to the
+   * server instead of a wall-clock delay that races slow CI runners.
+   */
+  waitForRequest(pathSubstring: string): Promise<void> {
+    if (this.recorded.some((r) => r.path.includes(pathSubstring))) {
+      return Promise.resolve();
+    }
+    return new Promise((resolve) => {
+      this.requestWaiters.push({ match: (r) => r.path.includes(pathSubstring), resolve });
+    });
+  }
+
   /** Return the last recorded request matching the given path substring. */
   getLastRequest(pathSubstring: string): RecordedRequest | undefined {
     return [...this.recorded].reverse().find((r) => r.path.includes(pathSubstring));
@@ -198,6 +215,13 @@ export class MockServer {
       body,
     };
     this.recorded.push(recorded);
+    this.requestWaiters = this.requestWaiters.filter((waiter) => {
+      if (waiter.match(recorded)) {
+        waiter.resolve();
+        return false;
+      }
+      return true;
+    });
 
     // Auth check
     if (!this.checkAuth(req)) {

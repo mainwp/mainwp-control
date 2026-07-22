@@ -9,6 +9,9 @@ on:
 jobs:
   test:
     strategy:
+      # Let every matrix cell report: a canceled job hides whether its
+      # platform actually passes, which has already cost a debugging round.
+      fail-fast: false
       matrix:
         node: ['20.18.1', 22]
         os: [ubuntu-latest, macos-latest, windows-latest]

@@ -250,7 +250,11 @@ describe('batch job waiting', () => {
     expect(result.stdout).toContain('BATCH_FAILED');
   });
 
-  it('jobs watch --json emits one envelope and exits 130 on SIGINT', async () => {
+  // On Windows, child.kill('SIGINT') terminates the process without running
+  // signal handlers (no POSIX signals), so the cancellation contract these
+  // two tests pin cannot execute there. The contract itself is POSIX-only:
+  // exit 130 is the SIGINT convention.
+  it.skipIf(process.platform === 'win32')('jobs watch --json emits one envelope and exits 130 on SIGINT', async () => {
     const cfg = await createConfig();
     server.setJobProgression('sync_123', [
       jobStatus({ job_id: 'sync_123', status: 'running', progress: 10 }),
@@ -262,6 +266,10 @@ describe('batch job waiting', () => {
         xdgConfigHome: cfg.xdgHome,
         env: { MAINWP_APP_PASSWORD: 'test-pass' },
       },
+      'SIGINT',
+      // Deliver SIGINT only after the first status poll: the watch command
+      // has installed its handler by then, on any speed of runner.
+      server.waitForRequest('get-batch-job-status'),
     );
 
     expect(result.exitCode).toBe(130);
@@ -273,7 +281,7 @@ describe('batch job waiting', () => {
     expect(envelope.error?.code).toBe('CANCELLED');
   });
 
-  it('jobs watch reports SIGINT cancellation on stderr in human mode', async () => {
+  it.skipIf(process.platform === 'win32')('jobs watch reports SIGINT cancellation on stderr in human mode', async () => {
     const cfg = await createConfig();
     server.setJobProgression('sync_123', [
       jobStatus({ job_id: 'sync_123', status: 'running', progress: 10 }),
@@ -285,6 +293,8 @@ describe('batch job waiting', () => {
         xdgConfigHome: cfg.xdgHome,
         env: { MAINWP_APP_PASSWORD: 'test-pass' },
       },
+      'SIGINT',
+      server.waitForRequest('get-batch-job-status'),
     );
 
     expect(result.exitCode).toBe(130);

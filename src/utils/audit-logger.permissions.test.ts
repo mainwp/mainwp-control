@@ -21,7 +21,10 @@ describe('AuditLogger permissions', () => {
     }
   });
 
-  it('self-heals loose config directory and audit log permissions', async () => {
+  // POSIX-only: Windows has no mode bits for chmod to set — it only toggles
+  // the read-only flag, and stat reports 0o666 regardless. The self-heal
+  // contract this test pins cannot be expressed there.
+  it.skipIf(process.platform === 'win32')('self-heals loose config directory and audit log permissions', async () => {
     tempRoot = await fs.mkdtemp(join(tmpdir(), 'mainwp-audit-'));
     process.env['XDG_CONFIG_HOME'] = tempRoot;
 

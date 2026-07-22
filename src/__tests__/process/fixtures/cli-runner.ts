@@ -38,7 +38,22 @@ export interface CLIResult {
 }
 
 function buildEnv(options: CLIRunnerOptions): Record<string, string> {
+  // On Windows, children must inherit the OS plumbing (SystemRoot, TEMP,
+  // PATHEXT, APPDATA, ...): a hand-built minimal env sends node into
+  // multi-second fallback paths on every boot (measured 20-40s per child
+  // on CI runners vs ~800ms with a full env). Hermeticity comes from
+  // stripping MAINWP* and overriding every variable the CLI reads, not
+  // from starting empty. POSIX keeps the fully minimal env.
+  const base: Record<string, string> = {};
+  if (process.platform === 'win32') {
+    for (const [key, value] of Object.entries(process.env)) {
+      if (value !== undefined && !key.toUpperCase().startsWith('MAINWP')) {
+        base[key] = value;
+      }
+    }
+  }
   return {
+    ...base,
     PATH: process.env['PATH'] ?? '',
     XDG_CONFIG_HOME: options.xdgConfigHome,
     HOME: options.xdgConfigHome,
@@ -53,11 +68,19 @@ function buildEnv(options: CLIRunnerOptions): Record<string, string> {
 /**
  * Run the CLI with the given arguments and return the result.
  */
+/**
+ * Default child timeout. Windows children run ~1-3s with the inherited env
+ * (see buildEnv), but CI runner speed varies; the extra headroom there is
+ * free when tests are healthy and prevents a slow runner from SIGKILLing a
+ * working child mid-boot, which reports as empty output.
+ */
+const DEFAULT_TIMEOUT = process.platform === 'win32' ? 60_000 : 15_000;
+
 export async function runCLI(
   args: string[],
   options: CLIRunnerOptions,
 ): Promise<CLIResult> {
-  const timeout = options.timeout ?? 15_000;
+  const timeout = options.timeout ?? DEFAULT_TIMEOUT;
   const start = Date.now();
 
   const env = buildEnv(options);
@@ -104,7 +127,7 @@ export function runCLIWithSignal(
   args: string[],
   options: CLIRunnerOptions,
   signal: NodeJS.Signals = 'SIGINT',
-  signalDelay = 750,
+  signalAfter: number | Promise<void> = 750,
 ): Promise<CLIResult> {
   const start = Date.now();
   return new Promise((resolve) => {
@@ -114,8 +137,17 @@ export function runCLIWithSignal(
     });
     const stdoutChunks: Buffer[] = [];
     const stderrChunks: Buffer[] = [];
-    const signalTimer = setTimeout(() => child.kill(signal), signalDelay);
-    const timeoutTimer = setTimeout(() => child.kill('SIGKILL'), options.timeout ?? 15_000);
+    // A numeric delay races slow CI runners: SIGINT can land before the CLI
+    // has booted and installed its handler, killing it with no output. Pass a
+    // readiness promise (e.g. MockServer.waitForRequest) to deliver the
+    // signal only once the CLI is demonstrably up.
+    let signalTimer: NodeJS.Timeout | undefined;
+    if (typeof signalAfter === 'number') {
+      signalTimer = setTimeout(() => child.kill(signal), signalAfter);
+    } else {
+      void signalAfter.then(() => child.kill(signal));
+    }
+    const timeoutTimer = setTimeout(() => child.kill('SIGKILL'), options.timeout ?? DEFAULT_TIMEOUT);
 
     child.stdout.on('data', (chunk: Buffer) => stdoutChunks.push(chunk));
     child.stderr.on('data', (chunk: Buffer) => stderrChunks.push(chunk));
