@@ -7,6 +7,8 @@
  */
 
 import { InputError } from '../utils/errors.js';
+import { isSensitiveKey as isSensitiveKeyShared, redactSensitiveKeys } from '../utils/redaction.js';
+import { sanitizeErrorMessage as sanitizeErrorMessageShared } from '../utils/error-sanitizer.js';
 
 /**
  * Default limits for input sanitization
@@ -34,34 +36,6 @@ export interface SanitizeOptions {
   maxObjectKeys?: number;
   maxInputSize?: number;
 }
-
-/**
- * Patterns that indicate sensitive data
- */
-const SENSITIVE_PATTERNS = [
-  /password/i,
-  /secret/i,
-  /token/i,
-  /api[_-]?key/i,
-  /auth/i,
-  /credential/i,
-  /private[_-]?key/i,
-  /bearer/i,
-  /signing[_-]?key/i,
-  /encryption[_-]?key/i,
-];
-
-/**
- * Patterns for redacting file paths
- */
-const PATH_PATTERNS = [
-  // Absolute paths
-  /\/Users\/[^/\s]+/g,
-  /\/home\/[^/\s]+/g,
-  /C:\\Users\\[^\\]+/gi,
-  // Config directories
-  /\.config\/mainwpcontrol/g,
-];
 
 /**
  * Input Sanitizer class
@@ -155,6 +129,20 @@ export class InputSanitizer {
         );
       }
       for (const key of keys) {
+        // SECURITY: reject keys containing PHP query-structural characters.
+        // On the GET/DELETE transport, a key like `confirm]` serializes to
+        // `input[confirm%5D]=…`, which PHP url-decodes and parses back to
+        // `input.confirm`, aliasing a control flag past the exact-name strip
+        // in AbilitiesExecutor.buildEffectiveParams. Plain field names never
+        // contain brackets, so rejecting them closes the canonicalization
+        // hole for control flags and every other field.
+        if (key.includes('[') || key.includes(']')) {
+          throw new InputError(
+            `Invalid characters in input key at "${path}.${key}"`,
+            { path, key },
+            'Input property names cannot contain "[" or "]" characters'
+          );
+        }
         this.validateValue((value as Record<string, unknown>)[key], depth + 1, `${path}.${key}`);
       }
     }
@@ -164,73 +152,21 @@ export class InputSanitizer {
    * Check if a key name appears to contain sensitive data
    */
   isSensitiveKey(key: string): boolean {
-    return SENSITIVE_PATTERNS.some((pattern) => pattern.test(key));
+    return isSensitiveKeyShared(key);
   }
 
   /**
    * Redact sensitive values in an object (for logging/errors)
    */
   redactSensitive(data: Record<string, unknown>): Record<string, unknown> {
-    return this.redactValue(data) as Record<string, unknown>;
-  }
-
-  /**
-   * Recursively redact sensitive values
-   */
-  private redactValue(value: unknown): unknown {
-    if (value === null || value === undefined) {
-      return value;
-    }
-
-    if (Array.isArray(value)) {
-      return value.map((item) => this.redactValue(item));
-    }
-
-    if (typeof value === 'object') {
-      const result: Record<string, unknown> = {};
-      for (const [key, val] of Object.entries(value)) {
-        if (this.isSensitiveKey(key)) {
-          result[key] = '[REDACTED]';
-        } else {
-          result[key] = this.redactValue(val);
-        }
-      }
-      return result;
-    }
-
-    return value;
+    return redactSensitiveKeys(data) as Record<string, unknown>;
   }
 
   /**
    * Sanitize error message to remove sensitive paths and data
    */
   sanitizeErrorMessage(message: string): string {
-    let sanitized = message;
-
-    // Redact file paths
-    for (const pattern of PATH_PATTERNS) {
-      sanitized = sanitized.replace(pattern, '[PATH]');
-    }
-
-    // Redact URLs with credentials
-    sanitized = sanitized.replace(
-      /https?:\/\/[^:]+:[^@]+@[^\s]+/g,
-      '[URL_WITH_CREDENTIALS]'
-    );
-
-    // Redact base64 that might be auth headers
-    sanitized = sanitized.replace(
-      /Basic\s+[A-Za-z0-9+/]+=*/gi,
-      'Basic [REDACTED]'
-    );
-
-    // Redact bearer tokens
-    sanitized = sanitized.replace(
-      /Bearer\s+[A-Za-z0-9._-]+/gi,
-      'Bearer [REDACTED]'
-    );
-
-    return sanitized;
+    return sanitizeErrorMessageShared(message);
   }
 
   /**
@@ -267,4 +203,3 @@ export function getInputSanitizer(): InputSanitizer {
   }
   return instance;
 }
-

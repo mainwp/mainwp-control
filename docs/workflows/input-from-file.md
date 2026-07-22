@@ -28,10 +28,9 @@ Some MainWP Control abilities need more than a flag. For example, updating speci
 ```bash
 # macOS / Linux / Git Bash
 mainwpcontrol abilities run get-site-v1 --input '{"site_id_or_domain": 5}' --json
-
-# Windows PowerShell (escape inner quotes with backslashes)
-mainwpcontrol abilities run get-site-v1 --input '{\"site_id_or_domain\": 5}' --json
 ```
+
+On Windows PowerShell, quoting of inline JSON is unreliable and varies by version -- use `--input-file` instead, which is what the rest of this guide covers.
 
 But when parameters get complex (nested objects, arrays, multiple fields), inline JSON becomes hard to read and easy to get wrong. A misplaced quote or missing comma can cause confusing errors.
 

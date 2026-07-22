@@ -14,7 +14,7 @@ import { tmpdir } from 'node:os';
 import { MockServer } from './fixtures/mock-server.js';
 import { runCLI, type CLIResult } from './fixtures/cli-runner.js';
 import { ConfigDir } from './fixtures/config-dir.js';
-import { abilityRunSuccess } from './fixtures/api-responses.js';
+import { abilityRunSuccess, mockAbility } from './fixtures/api-responses.js';
 
 describe('abilities run', () => {
   const server = new MockServer();
@@ -104,6 +104,41 @@ describe('abilities run', () => {
       const req = server.getLastRequest('/run');
       expect(req).toBeDefined();
       expect(req!.method).toBe('GET');
+    });
+  });
+
+  describe('PHP-artifact input schema --json', () => {
+    it('exits 0 with one success envelope when properties is an empty array', async () => {
+      server.reset();
+      server.setAbilities([
+        mockAbility({
+          name: 'mainwp/php-empty-properties-v1',
+          readonly: true,
+          input_schema: {
+            type: 'object',
+            properties: [] as unknown as Record<string, unknown>,
+          },
+        }),
+      ]);
+      server.setRunResponse(
+        'php-empty-properties-v1',
+        abilityRunSuccess({ status: 'ok' }),
+      );
+
+      const result = await run([
+        'abilities', 'run', 'php-empty-properties-v1', '--json',
+      ]);
+
+      expect(result.exitCode).toBe(0);
+      expect(result.json).toEqual({
+        success: true,
+        data: {
+          mode: 'execute',
+          ability: 'mainwp/php-empty-properties-v1',
+          success: true,
+          data: { status: 'ok' },
+        },
+      });
     });
   });
 

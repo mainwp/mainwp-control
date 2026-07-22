@@ -511,7 +511,7 @@ describe('E2E: Batch Operation → Polling Flow', () => {
       ['completed', 'completed'],
       ['failed', 'failed'],
       ['partial', 'partial'],
-      ['unknown', 'pending'], // Defaults to pending
+      ['cancelled', 'cancelled'],
     ];
 
     for (const [input, expected] of statusMappings) {
@@ -524,6 +524,16 @@ describe('E2E: Batch Operation → Polling Flow', () => {
         expect(status.status).toBe(expected);
       });
     }
+
+    it('rejects an unknown status', async () => {
+      mockHttpGet.mockResolvedValueOnce({
+        data: { job_id: 'job_test', status: 'unknown' },
+      });
+
+      await expect(manager.getJobStatus('job_test')).rejects.toMatchObject({
+        code: 'INVALID_RESPONSE',
+      });
+    });
   });
 
   // ==========================================================================
@@ -644,14 +654,15 @@ describe('E2E: Batch Operation → Polling Flow', () => {
 
   describe('Edge Cases', () => {
     it('handles job with zero total items', async () => {
-      mockHttpGet.mockResolvedValue(
-        createJobStatusResponse({
+      mockHttpGet.mockResolvedValue({
+        data: {
+          job_id: 'job_test',
           status: 'completed',
           total: 0,
           processed: 0,
           results: [],
-        })
-      );
+        },
+      });
 
       const result = await manager.resumeJob('job_test', { initialDelay: 1 });
 

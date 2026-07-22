@@ -14,6 +14,7 @@ import {
   type StreamChunk,
   type ToolCall,
   registerProvider,
+  splitSystemMessage,
 } from './provider.js';
 import { makeProviderRequest } from './provider-fetch.js';
 import { readSSEStream } from './sse-reader.js';
@@ -33,12 +34,15 @@ type GeminiPart =
   | { text: string }
   | {
       functionCall: {
+        id?: string;
         name: string;
         args: Record<string, unknown>;
       };
+      thoughtSignature?: string;
     }
   | {
       functionResponse: {
+        id?: string;
         name: string;
         response: Record<string, unknown>;
       };
@@ -78,13 +82,13 @@ interface GeminiResponse {
  * Available Gemini models
  */
 const GEMINI_MODELS = [
-  'gemini-2.0-flash-exp',
-  'gemini-1.5-pro',
-  'gemini-1.5-flash',
-  'gemini-1.5-flash-8b',
+  'gemini-3.5-flash',
+  'gemini-3.1-pro-preview',
+  'gemini-3-flash-preview',
+  'gemini-3.1-flash-lite',
 ] as const;
 
-const DEFAULT_MODEL = 'gemini-1.5-flash';
+const DEFAULT_MODEL = 'gemini-3.5-flash';
 
 /**
  * Gemini provider implementation
@@ -127,18 +131,16 @@ export class GeminiProvider implements LLMProvider {
   async chat(messages: Message[], options?: ChatOptions): Promise<LLMResponse> {
     const model = options?.model ?? this.defaultModel;
 
-    // Extract system message
-    const systemMessage = messages.find((m) => m.role === 'system');
-    const chatMessages = messages.filter((m) => m.role !== 'system');
+    const { systemContent, chatMessages } = splitSystemMessage(messages);
 
     const requestBody: Record<string, unknown> = {
       contents: this.convertMessages(chatMessages),
     };
 
     // System instruction
-    if (systemMessage) {
+    if (systemContent !== undefined) {
       requestBody['systemInstruction'] = {
-        parts: [{ text: systemMessage.content }],
+        parts: [{ text: systemContent }],
       };
     }
 
@@ -162,12 +164,14 @@ export class GeminiProvider implements LLMProvider {
       requestBody['tools'] = [this.convertTools(options.tools)];
     }
 
-    const endpoint = `/models/${model}:generateContent`;
-    const response = await this.makeRequest<GeminiResponse>(
-      endpoint,
-      requestBody,
-      options?.signal
-    );
+    const response = await makeProviderRequest<GeminiResponse>({
+      url: `${this.baseUrl}/models/${model}:generateContent`,
+      headers: this.getHeaders(),
+      body: requestBody,
+      timeout: this.timeout,
+      signal: options?.signal,
+      providerName: 'Gemini',
+    });
 
     return this.convertResponse(response, model);
   }
@@ -178,17 +182,15 @@ export class GeminiProvider implements LLMProvider {
   ): AsyncGenerator<StreamChunk, void, undefined> {
     const model = options?.model ?? this.defaultModel;
 
-    // Extract system message
-    const systemMessage = messages.find((m) => m.role === 'system');
-    const chatMessages = messages.filter((m) => m.role !== 'system');
+    const { systemContent, chatMessages } = splitSystemMessage(messages);
 
     const requestBody: Record<string, unknown> = {
       contents: this.convertMessages(chatMessages),
     };
 
-    if (systemMessage) {
+    if (systemContent !== undefined) {
       requestBody['systemInstruction'] = {
-        parts: [{ text: systemMessage.content }],
+        parts: [{ text: systemContent }],
       };
     }
 
@@ -209,10 +211,7 @@ export class GeminiProvider implements LLMProvider {
 
     for await (const data of readSSEStream({
       url: `${this.baseUrl}/models/${model}:streamGenerateContent?alt=sse`,
-      headers: {
-        'Content-Type': 'application/json',
-        'x-goog-api-key': this.apiKey,
-      },
+      headers: this.getHeaders(),
       body: requestBody,
       signal: options?.signal,
       providerName: 'Gemini',
@@ -231,6 +230,9 @@ export class GeminiProvider implements LLMProvider {
                 id: `fc_${Date.now()}`,
                 name: part.functionCall.name,
                 arguments: part.functionCall.args,
+                ...(part.thoughtSignature !== undefined
+                  ? { thoughtSignature: part.thoughtSignature }
+                  : {}),
               },
               done: false,
             };
@@ -242,7 +244,11 @@ export class GeminiProvider implements LLMProvider {
           return;
         }
       } catch {
-        // Invalid JSON, skip line
+        // Invalid JSON, skip line — a systematically malformed stream would
+        // otherwise fail silently, so leave a trail when debugging
+        if (process.env['DEBUG']) {
+          console.debug('[Gemini] Skipped malformed SSE chunk');
+        }
       }
     }
 
@@ -260,21 +266,45 @@ export class GeminiProvider implements LLMProvider {
 
       if (msg.role === 'tool') {
         // Function response
+        const functionResponse: {
+          id?: string;
+          name: string;
+          response: Record<string, unknown>;
+        } = {
+          name: msg.toolName ?? 'unknown',
+          response: this.parseToolResponse(msg.content),
+        };
+        if (msg.toolCallId !== undefined) {
+          functionResponse.id = msg.toolCallId;
+        }
         result.push({
           role: 'user',
           parts: [
             {
-              functionResponse: {
-                name: msg.toolName ?? 'unknown',
-                response: this.parseToolResponse(msg.content),
-              },
+              functionResponse,
             },
           ],
         });
       } else {
+        const parts: GeminiPart[] = [];
+        if (msg.content) {
+          parts.push({ text: msg.content });
+        }
+        for (const toolCall of msg.toolCalls ?? []) {
+          parts.push({
+            functionCall: {
+              id: toolCall.id,
+              name: toolCall.name,
+              args: toolCall.arguments,
+            },
+            ...(toolCall.thoughtSignature !== undefined
+              ? { thoughtSignature: toolCall.thoughtSignature }
+              : {}),
+          });
+        }
         result.push({
           role: msg.role === 'assistant' ? 'model' : 'user',
-          parts: [{ text: msg.content }],
+          parts: parts.length > 0 ? parts : [{ text: msg.content }],
         });
       }
     }
@@ -329,9 +359,12 @@ export class GeminiProvider implements LLMProvider {
         content += part.text;
       } else if ('functionCall' in part) {
         toolCalls.push({
-          id: `fc_${Date.now()}_${toolCalls.length}`,
+          id: part.functionCall.id ?? `fc_${Date.now()}_${toolCalls.length}`,
           name: part.functionCall.name,
           arguments: part.functionCall.args,
+          ...(part.thoughtSignature !== undefined
+            ? { thoughtSignature: part.thoughtSignature }
+            : {}),
         });
       }
     }
@@ -339,7 +372,10 @@ export class GeminiProvider implements LLMProvider {
     return {
       content,
       toolCalls: toolCalls.length > 0 ? toolCalls : undefined,
-      finishReason: this.convertFinishReason(candidate.finishReason),
+      finishReason:
+        toolCalls.length > 0 && candidate.finishReason === 'STOP'
+          ? 'tool_calls'
+          : this.convertFinishReason(candidate.finishReason),
       usage: response.usageMetadata
         ? {
             promptTokens: response.usageMetadata.promptTokenCount,
@@ -370,26 +406,14 @@ export class GeminiProvider implements LLMProvider {
   }
 
   /**
-   * Make API request
+   * Get request headers
    */
-  private async makeRequest<T>(
-    endpoint: string,
-    body: Record<string, unknown>,
-    signal?: AbortSignal
-  ): Promise<T> {
-    return makeProviderRequest<T>({
-      url: `${this.baseUrl}${endpoint}`,
-      headers: {
-        'Content-Type': 'application/json',
-        'x-goog-api-key': this.apiKey,
-      },
-      body,
-      timeout: this.timeout,
-      signal,
-      providerName: 'Gemini',
-    });
+  private getHeaders(): Record<string, string> {
+    return {
+      'Content-Type': 'application/json',
+      'x-goog-api-key': this.apiKey,
+    };
   }
-
 }
 
 /**

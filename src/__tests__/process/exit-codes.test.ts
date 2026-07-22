@@ -14,6 +14,8 @@
  */
 
 import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach } from 'vitest';
+import { mkdir } from 'node:fs/promises';
+import { join } from 'node:path';
 import { MockServer } from './fixtures/mock-server.js';
 import { runCLI, type CLIResult } from './fixtures/cli-runner.js';
 import { ConfigDir } from './fixtures/config-dir.js';
@@ -87,7 +89,7 @@ describe('exit code contract', () => {
   // ---------------------------------------------------------------------------
 
   describe('exit 1: mutually exclusive flags', () => {
-    it('abilities run delete-site-v1 --dry-run --confirm exits non-zero with exclusive flag error', async () => {
+    it('abilities run delete-site-v1 --dry-run --confirm exits 1 with prose on stderr', async () => {
       config = await ConfigDir.create({
         profiles: [
           { name: 'test', dashboardUrl: server.baseUrl, username: 'admin' },
@@ -100,22 +102,40 @@ describe('exit code contract', () => {
       const result = await run([
         'abilities', 'run', 'delete-site-v1',
         '--dry-run', '--confirm',
-        '--json',
       ]);
 
-      // oclif throws a CLIError for exclusive flag violations.
-      // The exact exit code depends on oclif's internal handling
-      // (typically 2 for arg validation), so we assert non-zero and
-      // verify the error message references the flag conflict.
-      expect(result.exitCode).not.toBe(0);
+      expect(result.exitCode).toBe(1);
+      expect(result.stdout).toBe('');
 
-      const combined = result.stdout + result.stderr;
       const mentionsExclusion =
-        /exclusive/i.test(combined) ||
-        /cannot also be provided/i.test(combined) ||
-        /mutually exclusive/i.test(combined) ||
-        /dry-run.*confirm/i.test(combined);
+        /exclusive/i.test(result.stderr) ||
+        /cannot also be provided/i.test(result.stderr) ||
+        /mutually exclusive/i.test(result.stderr) ||
+        /dry-run.*confirm/i.test(result.stderr);
       expect(mentionsExclusion).toBe(true);
+    });
+
+    it('emits exactly one JSON error envelope on stdout for a parse-time error', async () => {
+      config = await ConfigDir.create({
+        profiles: [
+          { name: 'test', dashboardUrl: server.baseUrl, username: 'admin' },
+        ],
+        activeProfile: 'test',
+      });
+
+      const result = await run([
+        'abilities', 'run', 'delete-site-v1',
+        '--dry-run', '--confirm', '--json',
+      ]);
+
+      expect(result.exitCode).toBe(1);
+      expect(result.stderr).toBe('');
+      const envelope = JSON.parse(result.stdout) as {
+        success: boolean;
+        error?: { message?: string };
+      };
+      expect(envelope.success).toBe(false);
+      expect(envelope.error?.message).toMatch(/confirm|exclusive|provided/i);
     });
   });
 
@@ -239,5 +259,71 @@ describe('exit code contract', () => {
       expect(envelope.success).toBe(false);
       expect(envelope.error).toBeDefined();
     });
+  });
+});
+
+// -----------------------------------------------------------------------------
+// Exit 5 — Internal error: untyped settings I/O failure
+// -----------------------------------------------------------------------------
+
+describe('exit 5: unexpected settings read failure', () => {
+  let config: ConfigDir;
+
+  afterEach(async () => {
+    if (config) await config.cleanup();
+  });
+
+  it('abilities list exits 5 when settings.json cannot be read as a file', async () => {
+    config = await ConfigDir.create({ profiles: [] });
+    await mkdir(join(config.configPath, 'settings.json'));
+
+    const result = await runCLI(['abilities', 'list', '--json'], {
+      xdgConfigHome: config.xdgHome,
+      env: { MAINWP_APP_PASSWORD: 'test-pass' },
+    });
+
+    expect(result.exitCode).toBe(5);
+    // stderr carries the human-readable error line; the --json contract
+    // guarantees stdout purity, not stderr silence.
+    expect(JSON.parse(result.stdout)).toMatchObject({
+      success: false,
+      error: expect.any(Object),
+    });
+  });
+});
+
+// -----------------------------------------------------------------------------
+// Exit 130 — Ctrl-C at an interactive password prompt
+// -----------------------------------------------------------------------------
+
+describe('exit 130: password prompt interrupted', () => {
+  let config: ConfigDir;
+
+  afterEach(async () => {
+    if (config) await config.cleanup();
+  });
+
+  it('login exits 130 when Ctrl-C interrupts the password prompt', async () => {
+    config = await ConfigDir.create({ profiles: [] });
+
+    const result = await runCLI(
+      [
+        'login',
+        '--url', 'https://dashboard.example.com',
+        '--username', 'admin',
+      ],
+      {
+        xdgConfigHome: config.xdgHome,
+        env: {},
+        // Keep stdin pipe-based for deterministic CI input while emulating the
+        // TTY flags checked by login. In raw mode, Ctrl-C arrives as ETX.
+        emulateTTY: true,
+        stdin: '\u0003',
+        stdinWaitFor: 'Application password',
+      },
+    );
+
+    expect(result.stdout).toContain('Application password');
+    expect(result.exitCode).toBe(130);
   });
 });

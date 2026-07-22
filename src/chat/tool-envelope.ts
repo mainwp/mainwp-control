@@ -16,7 +16,13 @@ import type { Ability } from '../core/abilities-executor.js';
  * Parsed response types
  */
 export type ParsedResponse =
-  | { type: 'tool'; tool: string; input: Record<string, unknown>; id?: string }
+  | {
+      type: 'tool';
+      tool: string;
+      input: Record<string, unknown>;
+      id?: string;
+      thoughtSignature?: string;
+    }
   | { type: 'answer'; answer: string }
   | { type: 'error'; error: string; retryable: boolean };
 
@@ -43,6 +49,8 @@ export interface ParserOptions {
   validateToolExists?: boolean;
   /** Whether to validate input against schema */
   validateInput?: boolean;
+  /** Protocol-safe tool name to real ability name */
+  toolAliases?: ReadonlyMap<string, string>;
 }
 
 /**
@@ -53,9 +61,53 @@ const JSON_PATTERNS = [
   /```json\s*\n?([\s\S]*?)\n?```/,
   // Code block without language
   /```\s*\n?([\s\S]*?)\n?```/,
-  // Raw JSON object
-  /(\{[\s\S]*\})/,
 ];
+
+function extractFirstJsonObject(text: string): string | null {
+  for (let start = 0; start < text.length; start++) {
+    if (text[start] !== '{') {
+      continue;
+    }
+
+    let depth = 0;
+    let inString = false;
+    let escaped = false;
+
+    for (let index = start; index < text.length; index++) {
+      const character = text[index];
+
+      if (inString) {
+        if (escaped) {
+          escaped = false;
+        } else if (character === '\\') {
+          escaped = true;
+        } else if (character === '"') {
+          inString = false;
+        }
+        continue;
+      }
+
+      if (character === '"') {
+        inString = true;
+      } else if (character === '{') {
+        depth++;
+      } else if (character === '}') {
+        depth--;
+        if (depth === 0) {
+          const candidate = text.slice(start, index + 1);
+          try {
+            JSON.parse(candidate);
+            return candidate;
+          } catch {
+            break;
+          }
+        }
+      }
+    }
+  }
+
+  return null;
+}
 
 /**
  * Parse LLM response to extract tool call or answer
@@ -64,8 +116,32 @@ export function parseResponse(
   response: LLMResponse,
   options: ParserOptions = {}
 ): ParseResult {
+  if (
+    response.finishReason === 'length' ||
+    response.finishReason === 'content_filter'
+  ) {
+    return protocolError(
+      `Cannot process a response with finish reason "${response.finishReason}"`,
+      response.content
+    );
+  }
+
   // First, check for native function calling
   if (response.toolCalls && response.toolCalls.length > 0) {
+    if (response.finishReason !== 'tool_calls') {
+      return protocolError(
+        `Tool calls require finish reason "tool_calls", received "${response.finishReason}"`,
+        JSON.stringify(response.toolCalls)
+      );
+    }
+
+    if (response.toolCalls.length !== 1) {
+      return protocolError(
+        `Expected exactly one tool call, received ${response.toolCalls.length}`,
+        JSON.stringify(response.toolCalls)
+      );
+    }
+
     const firstToolCall = response.toolCalls[0];
     if (firstToolCall) {
       return parseNativeToolCall(firstToolCall, options);
@@ -83,7 +159,15 @@ function parseNativeToolCall(
   toolCall: ToolCall,
   options: ParserOptions
 ): ParseResult {
-  const validation = validateToolCall(toolCall.name, toolCall.arguments, options);
+  if (!isObjectInput(toolCall.arguments)) {
+    return protocolError(
+      `Tool input for "${toolCall.name}" must be a JSON object`,
+      JSON.stringify(toolCall)
+    );
+  }
+
+  const toolName = resolveToolName(toolCall.name, options);
+  const validation = validateToolCall(toolName, toolCall.arguments, options);
 
   if (validation) {
     return {
@@ -97,9 +181,12 @@ function parseNativeToolCall(
   return {
     response: {
       type: 'tool',
-      tool: toolCall.name,
+      tool: toolName,
       input: toolCall.arguments,
       id: toolCall.id,
+      ...(toolCall.thoughtSignature !== undefined
+        ? { thoughtSignature: toolCall.thoughtSignature }
+        : {}),
     },
     rawContent: JSON.stringify(toolCall),
     nativeFunctionCall: true,
@@ -129,10 +216,38 @@ function parseContentJson(
     }
   }
 
-  // If no pattern matched, try the whole content
+  // If no fence matched, find the first balanced, parseable JSON object.
   if (!jsonStr) {
-    jsonStr = trimmed;
     attempts++;
+    jsonStr = extractFirstJsonObject(trimmed);
+  }
+
+  // Preserve whole-response JSON parsing for non-object JSON values.
+  if (!jsonStr) {
+    try {
+      JSON.parse(trimmed);
+      jsonStr = trimmed;
+      attempts++;
+    } catch {
+      // Only content that LOOKS like an attempted envelope goes to the
+      // retryable protocol-error path: it leads with "{", or it carries an
+      // envelope key after prose (a truncated `Deleting: {"tool": ...` must
+      // retry, not pass as an answer). Prose that merely contains braces —
+      // "the config uses { key: value } format" — is an answer; the
+      // balanced-object scan above already extracted any real embedded JSON.
+      const looksLikeEnvelopeAttempt = /"(?:tool|answer)"\s*:/.test(trimmed);
+      if (!trimmed.startsWith('{') && !looksLikeEnvelopeAttempt) {
+        return {
+          response: { type: 'answer', answer: trimmed },
+          rawContent: content,
+          nativeFunctionCall: false,
+          attempts,
+        };
+      }
+
+      jsonStr = trimmed;
+      attempts++;
+    }
   }
 
   // Parse JSON
@@ -168,6 +283,19 @@ function parseContentJson(
 
   const obj = parsed as Record<string, unknown>;
 
+  if ('answer' in obj && 'tool' in obj) {
+    return {
+      response: {
+        type: 'error',
+        error: 'Response cannot contain both "answer" and "tool" properties',
+        retryable: true,
+      },
+      rawContent: content,
+      nativeFunctionCall: false,
+      attempts,
+    };
+  }
+
   // Check for answer format
   if ('answer' in obj && typeof obj['answer'] === 'string') {
     return {
@@ -180,11 +308,20 @@ function parseContentJson(
 
   // Check for tool format
   if ('tool' in obj && typeof obj['tool'] === 'string') {
-    const toolName = obj['tool'];
-    const input =
-      typeof obj['input'] === 'object' && obj['input'] !== null
-        ? (obj['input'] as Record<string, unknown>)
-        : {};
+    const toolName = resolveToolName(obj['tool'], options);
+    if (!isObjectInput(obj['input'])) {
+      return {
+        response: {
+          type: 'error',
+          error: `Tool input for "${toolName}" must be a JSON object`,
+          retryable: true,
+        },
+        rawContent: content,
+        nativeFunctionCall: false,
+        attempts,
+      };
+    }
+    const input = obj['input'];
 
     const validation = validateToolCall(toolName, input, options);
 
@@ -217,6 +354,23 @@ function parseContentJson(
     nativeFunctionCall: false,
     attempts,
   };
+}
+
+function protocolError(error: string, rawContent: string): ParseResult {
+  return {
+    response: { type: 'error', error, retryable: true },
+    rawContent,
+    nativeFunctionCall: true,
+    attempts: 1,
+  };
+}
+
+function isObjectInput(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function resolveToolName(name: string, options: ParserOptions): string {
+  return options.toolAliases?.get(name) ?? name;
 }
 
 /**
@@ -351,4 +505,3 @@ Or answer:
 }
 \`\`\``;
 }
-

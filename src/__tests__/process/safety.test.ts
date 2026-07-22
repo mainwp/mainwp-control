@@ -1,4 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach } from 'vitest';
+import { readFile } from 'node:fs/promises';
+import { join } from 'node:path';
 import { MockServer } from './fixtures/mock-server.js';
 import { runCLI } from './fixtures/cli-runner.js';
 import { ConfigDir } from './fixtures/config-dir.js';
@@ -171,8 +173,7 @@ describe('safety / destructive action handling', () => {
   // -------------------------------------------------------------------------
   // 3. --dry-run --confirm together → oclif rejects at flag parsing time
   //    oclif's exclusive flag validation fires before the command runs.
-  //    The FailedFlagValidationError lacks an exitCode property, so
-  //    BaseCommand.catch defaults to ExitCode.INTERNAL_ERROR (5).
+  //    Parse failures are user input errors → exit 1 (INPUT_ERROR).
   // -------------------------------------------------------------------------
   it('--dry-run and --confirm together are rejected as mutually exclusive', async () => {
     await createConfig();
@@ -189,8 +190,8 @@ describe('safety / destructive action handling', () => {
       },
     );
 
-    // Exit code is non-zero (oclif flag validation error)
-    expect(result.exitCode).not.toBe(0);
+    // User input error (oclif flag validation) maps to exit code 1
+    expect(result.exitCode).toBe(1);
 
     // Error output should mention the mutual exclusion
     const combined = result.stdout + result.stderr;
@@ -308,5 +309,252 @@ describe('safety / destructive action handling', () => {
     // No dry_run or confirm in the request
     expect(runReq.query).not.toHaveProperty('input[dry_run]');
     expect(runReq.query).not.toHaveProperty('input[confirm]');
+  });
+
+  // -------------------------------------------------------------------------
+  // 7. Preview failure blocks destructive execution (fail closed).
+  //    A dry_run that errors at the HTTP layer must abort the flow with
+  //    exit 4 and must never send a confirm request — even with --force.
+  // -------------------------------------------------------------------------
+  it('--confirm --force with HTTP-failing preview exits 4 and sends no confirm request', async () => {
+    await createConfig();
+
+    const runPath = '/wp-json/wp-abilities/v1/abilities/mainwp/delete-site-v1/run';
+    server.addRoute('POST', runPath, (_req, res) => {
+      const body = _req.body as Record<string, unknown> | undefined;
+      const input = body?.['input'] as Record<string, unknown> | undefined;
+      if (input?.['dry_run'] === true) {
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ code: 'internal_error', message: 'preview exploded' }));
+      } else {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify(abilityRunSuccess({ deleted: true })));
+      }
+    });
+
+    const result = await runCLI(
+      [
+        'abilities', 'run', 'delete-site-v1',
+        '--input', '{"site_id_or_domain":1}',
+        '--confirm', '--force', '--json',
+      ],
+      {
+        xdgConfigHome: config.xdgHome,
+        env: { MAINWP_APP_PASSWORD: 'test-pass' },
+      },
+    );
+
+    expect(result.exitCode).toBe(4);
+
+    // No confirm request may have reached the server
+    const confirmReq = server
+      .getRecordedRequests()
+      .filter((r) => r.path.includes('delete-site-v1/run'))
+      .find((r) => {
+        const body = r.body as Record<string, unknown> | undefined;
+        const input = body?.['input'] as Record<string, unknown> | undefined;
+        return input?.['confirm'] === true;
+      });
+    expect(confirmReq).toBeUndefined();
+
+    const envelope = result.json as Record<string, unknown>;
+    expect(envelope).toHaveProperty('success', false);
+    expect(String((envelope['error'] as Record<string, unknown>)?.['message'] ?? '')).toMatch(/preview/i);
+  });
+
+  // -------------------------------------------------------------------------
+  // 8. Preview returning success:false also fails closed (no confirm request)
+  // -------------------------------------------------------------------------
+  it('--confirm --force with unsuccessful preview result exits 4 and sends no confirm request', async () => {
+    await createConfig();
+
+    const runPath = '/wp-json/wp-abilities/v1/abilities/mainwp/delete-site-v1/run';
+    server.addRoute('POST', runPath, (_req, res) => {
+      const body = _req.body as Record<string, unknown> | undefined;
+      const input = body?.['input'] as Record<string, unknown> | undefined;
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      if (input?.['dry_run'] === true) {
+        res.end(JSON.stringify({ success: false, error: { code: 'preview_unavailable', message: 'cannot preview' } }));
+      } else {
+        res.end(JSON.stringify(abilityRunSuccess({ deleted: true })));
+      }
+    });
+
+    const result = await runCLI(
+      [
+        'abilities', 'run', 'delete-site-v1',
+        '--input', '{"site_id_or_domain":1}',
+        '--confirm', '--force', '--json',
+      ],
+      {
+        xdgConfigHome: config.xdgHome,
+        env: { MAINWP_APP_PASSWORD: 'test-pass' },
+      },
+    );
+
+    expect(result.exitCode).toBe(4);
+
+    const confirmReq = server
+      .getRecordedRequests()
+      .filter((r) => r.path.includes('delete-site-v1/run'))
+      .find((r) => {
+        const body = r.body as Record<string, unknown> | undefined;
+        const input = body?.['input'] as Record<string, unknown> | undefined;
+        return input?.['confirm'] === true;
+      });
+    expect(confirmReq).toBeUndefined();
+  });
+
+  // -------------------------------------------------------------------------
+  // 9. Successful preview is rendered to the operator before execution,
+  //    even with --force (which skips only the prompt, never the preview).
+  // -------------------------------------------------------------------------
+  it('--confirm --force renders the preview before the execution result (human mode)', async () => {
+    await createConfig();
+
+    const runPath = '/wp-json/wp-abilities/v1/abilities/mainwp/delete-site-v1/run';
+    server.addRoute('POST', runPath, (_req, res) => {
+      const body = _req.body as Record<string, unknown> | undefined;
+      const input = body?.['input'] as Record<string, unknown> | undefined;
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      if (input?.['dry_run'] === true) {
+        res.end(JSON.stringify(abilityDryRunResponse([{ site_id: 1, name: 'Test Site' }])));
+      } else {
+        res.end(JSON.stringify(abilityRunSuccess({ deleted: true })));
+      }
+    });
+
+    const result = await runCLI(
+      [
+        'abilities', 'run', 'delete-site-v1',
+        '--input', '{"site_id_or_domain":1}',
+        '--confirm', '--force',
+      ],
+      {
+        xdgConfigHome: config.xdgHome,
+        env: { MAINWP_APP_PASSWORD: 'test-pass' },
+      },
+    );
+
+    expect(result.exitCode).toBe(0);
+
+    const previewIdx = result.stdout.indexOf('Preview:');
+    const executedIdx = result.stdout.indexOf('Executed:');
+    expect(previewIdx).toBeGreaterThanOrEqual(0);
+    expect(executedIdx).toBeGreaterThan(previewIdx);
+  });
+
+  // -------------------------------------------------------------------------
+  // 10. In JSON mode the preview is included in the success envelope
+  // -------------------------------------------------------------------------
+  it('--confirm --force --json includes preview data in the success envelope', async () => {
+    await createConfig();
+
+    const runPath = '/wp-json/wp-abilities/v1/abilities/mainwp/delete-site-v1/run';
+    server.addRoute('POST', runPath, (_req, res) => {
+      const body = _req.body as Record<string, unknown> | undefined;
+      const input = body?.['input'] as Record<string, unknown> | undefined;
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      if (input?.['dry_run'] === true) {
+        res.end(JSON.stringify(abilityDryRunResponse([{ site_id: 1, name: 'Test Site' }])));
+      } else {
+        res.end(JSON.stringify(abilityRunSuccess({ deleted: true })));
+      }
+    });
+
+    const result = await runCLI(
+      [
+        'abilities', 'run', 'delete-site-v1',
+        '--input', '{"site_id_or_domain":1}',
+        '--confirm', '--force', '--json',
+      ],
+      {
+        xdgConfigHome: config.xdgHome,
+        env: { MAINWP_APP_PASSWORD: 'test-pass' },
+      },
+    );
+
+    expect(result.exitCode).toBe(0);
+
+    const envelope = result.json as Record<string, unknown>;
+    expect(envelope).toHaveProperty('success', true);
+    const data = envelope['data'] as Record<string, unknown>;
+    expect(data).toHaveProperty('preview');
+    const preview = data['preview'] as Record<string, unknown>;
+    expect(preview).toHaveProperty('summary');
+    expect(preview).toHaveProperty('affected');
+  });
+
+  // -------------------------------------------------------------------------
+  // 11. Transport failure AFTER the confirm call is dispatched is an unknown
+  //     outcome: OUTCOME_UNKNOWN in the envelope, exit 3, and BOTH audit
+  //     entries (dispatch-stage before the call, outcomeUnknown after) are
+  //     on disk even though no response ever arrived.
+  // -------------------------------------------------------------------------
+  it('--confirm --force with connection dropped mid-confirm exits 3 with OUTCOME_UNKNOWN and audits the dispatch', async () => {
+    await createConfig();
+
+    const runPath = '/wp-json/wp-abilities/v1/abilities/mainwp/delete-site-v1/run';
+    server.addRoute('POST', runPath, (_req, res) => {
+      const body = _req.body as Record<string, unknown> | undefined;
+      const input = body?.['input'] as Record<string, unknown> | undefined;
+      if (input?.['dry_run'] === true) {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify(abilityDryRunResponse([{ site_id: 1, name: 'Test Site' }])));
+      } else {
+        // Confirm call: the server got the request, then the connection dies
+        // before any response — the Dashboard may have executed the action.
+        res.socket?.destroy();
+      }
+    });
+
+    const result = await runCLI(
+      [
+        'abilities', 'run', 'delete-site-v1',
+        '--input', '{"site_id_or_domain":1}',
+        '--confirm', '--force', '--json',
+      ],
+      {
+        xdgConfigHome: config.xdgHome,
+        env: { MAINWP_APP_PASSWORD: 'test-pass' },
+      },
+    );
+
+    // NETWORK_ERROR exit class, but labeled as an unknown outcome
+    expect(result.exitCode).toBe(3);
+    const envelope = result.json as Record<string, unknown>;
+    expect(envelope).toHaveProperty('success', false);
+    const error = envelope['error'] as Record<string, unknown>;
+    expect(error['code']).toBe('OUTCOME_UNKNOWN');
+    expect(String(error['message'])).toContain('may or may not have executed');
+
+    // The confirm request really was dispatched
+    const confirmRequests = server
+      .getRecordedRequests()
+      .filter((r) => r.path.includes('delete-site-v1'))
+      .filter((r) => {
+        const body = r.body as Record<string, unknown> | undefined;
+        const input = body?.['input'] as Record<string, unknown> | undefined;
+        return input?.['dry_run'] !== true;
+      });
+    expect(confirmRequests.length).toBe(1);
+
+    // Audit trail: a dispatch-stage entry written before the confirm call,
+    // then an outcomeUnknown entry after the transport failure.
+    const auditRaw = await readFile(join(config.configPath, 'audit.log'), 'utf-8');
+    const entries = auditRaw
+      .trim()
+      .split('\n')
+      .map((line) => JSON.parse(line) as Record<string, unknown>);
+    const dispatchEntry = entries.find((e) => e['stage'] === 'dispatch');
+    expect(dispatchEntry).toBeDefined();
+    expect(dispatchEntry!['userDecision']).toBe('approved');
+    expect(dispatchEntry!['abilityName']).toContain('delete-site-v1');
+    const unknownEntry = entries.find(
+      (e) => (e['execution'] as Record<string, unknown> | undefined)?.['outcomeUnknown'] === true
+    );
+    expect(unknownEntry).toBeDefined();
+    expect(unknownEntry!['userDecision']).toBe('approved');
+    expect((unknownEntry!['execution'] as Record<string, unknown>)['success']).toBe(false);
   });
 });

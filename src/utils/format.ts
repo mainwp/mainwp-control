@@ -90,3 +90,66 @@ export function maskApiKey(apiKey: string): string {
     minLength: 10,
   });
 }
+
+/**
+ * Mask userinfo (username/password) embedded in a URL.
+ *
+ * SECURITY: Profiles saved before userinfo rejection was added may still carry
+ * `user:pass@` in the stored dashboard URL; every display path must mask it.
+ *
+ * Returns the input unchanged when it is not a parseable URL or has no
+ * userinfo. String replacement (not URL re-serialization) keeps the rest of
+ * the URL byte-for-byte identical — no trailing-slash normalization.
+ *
+ * @param url - The URL to mask
+ * @returns The URL with userinfo replaced by `***:***@`, the input unchanged
+ * when it has no userinfo, or `[URL_WITH_CREDENTIALS_REDACTED]` when userinfo
+ * was detected but could not be isolated in the raw string
+ *
+ * @example
+ * ```ts
+ * maskUrlUserinfo('https://admin:secret@example.com') // 'https://***:***@example.com'
+ * maskUrlUserinfo('https://example.com/path') // unchanged
+ * ```
+ */
+export function maskUrlUserinfo(url: string): string {
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return url;
+  }
+
+  if (!parsed.username && !parsed.password) {
+    return url;
+  }
+
+  // Greedy through the LAST @ in the authority: a password containing "@"
+  // must not leak its tail. `?`/`#`/`/` bound the authority section.
+  const masked = url.replace(/^([a-z][a-z0-9+.-]*:\/\/)[^/?#\s]*@/i, '$1***:***@');
+
+  // The parser saw userinfo the regex could not isolate: WHATWG parsing
+  // strips tab/newline and trims C0 controls before detecting credentials,
+  // so a raw string containing them slips past the whitespace-excluding
+  // regex. Fail closed rather than echo the credentials.
+  if (masked === url) {
+    return '[URL_WITH_CREDENTIALS_REDACTED]';
+  }
+
+  return masked;
+}
+
+/**
+ * Mask userinfo in any URLs embedded within arbitrary text.
+ *
+ * SECURITY: Error messages (e.g. fetch failures) can echo a full request URL
+ * including embedded credentials from a legacy profile.
+ *
+ * @param text - Text that may contain credentialed URLs
+ * @returns The text with each `scheme://user:pass@` replaced by `scheme://***:***@`
+ */
+export function maskUrlUserinfoInText(text: string): string {
+  // Greedy through the LAST @ before a path/query/fragment or whitespace, so
+  // passwords containing "@" mask fully instead of leaking after the first @.
+  return text.replace(/([a-z][a-z0-9+.-]*:\/\/)[^\s/?#]+@/gi, '$1***:***@');
+}

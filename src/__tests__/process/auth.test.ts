@@ -240,6 +240,42 @@ describe('login command', () => {
   });
 
   // -------------------------------------------------------------------------
+  // 4b. URL with embedded userinfo → rejected before any connection attempt
+  // -------------------------------------------------------------------------
+
+  it.each([
+    ['user and password', (base: string) => base.replace('://', '://user:pass@')],
+    ['user only', (base: string) => base.replace('://', '://user@')],
+  ])(
+    'login with embedded credentials in URL (%s) exits 2 without contacting the server',
+    async (_label, embed) => {
+      configDir = await ConfigDir.create({ profiles: [] });
+
+      const result = await runCLI(
+        [
+          'login',
+          '--url', embed(server.baseUrl),
+          '--username', 'admin',
+          '--password', 'test-pass',
+        ],
+        {
+          xdgConfigHome: configDir.xdgHome,
+          env: { MAINWP_APP_PASSWORD: 'test-pass' },
+        },
+      );
+
+      expect(result.exitCode).toBe(2);
+      expect(result.stderr).toContain('Embedded credentials');
+
+      // Rejected at intake: nothing may reach the server
+      expect(server.getRecordedRequests()).toHaveLength(0);
+
+      const profiles = await configDir.readProfiles();
+      expect(profiles.profiles).toHaveLength(0);
+    },
+  );
+
+  // -------------------------------------------------------------------------
   // 5. URL normalization: protocol-less URL gets https:// prefix
   // -------------------------------------------------------------------------
 

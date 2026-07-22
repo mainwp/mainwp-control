@@ -5,7 +5,7 @@
  * in both profile-store and settings save paths.
  */
 
-import { describe, it, expect, vi, afterEach } from 'vitest';
+import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
 
 // Mock fs.promises with all needed methods
 vi.mock('node:fs', () => ({
@@ -15,6 +15,7 @@ vi.mock('node:fs', () => ({
     rename: vi.fn(),
     unlink: vi.fn().mockResolvedValue(undefined),
     mkdir: vi.fn().mockResolvedValue(undefined),
+    open: vi.fn(),
   },
 }));
 
@@ -22,6 +23,18 @@ import { promises as fs } from 'node:fs';
 import { saveSettings, clearSettingsCache } from './settings.js';
 
 describe('Atomic write temp file cleanup', () => {
+  beforeEach(() => {
+    // atomicWriteFile writes through an exclusive fs.open handle; delegate
+    // the handle's writeFile to fs.writeFile as (path, content) so the
+    // existing call-shape assertions hold.
+    vi.mocked(fs.open).mockImplementation((tmpPath) => Promise.resolve({
+      writeFile: (content: unknown) =>
+        (fs.writeFile as unknown as (p: unknown, c: unknown) => Promise<void>)(tmpPath, content),
+      sync: () => Promise.resolve(),
+      close: () => Promise.resolve(),
+    } as unknown as import('node:fs').promises.FileHandle));
+  });
+
   afterEach(() => {
     clearSettingsCache();
     vi.restoreAllMocks();

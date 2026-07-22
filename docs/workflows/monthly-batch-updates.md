@@ -148,7 +148,7 @@ Before writing any scripts, it is important to understand how MainWP Control pre
 
 MainWP Control enforces this through four flags:
 
-- **`--dry-run`:** Asks MainWP to show you what *would* happen, without making any changes. Think of it as a preview. Your sites are not touched. You can run `--dry-run` as many times as you want with zero risk.
+- **`--dry-run`:** Asks MainWP to show you what *would* happen, without making any changes. Think of it as a preview. `--dry-run` makes no changes on any site, so you can repeat it freely while you refine your filters.
 
 - **`--confirm`:** Tells MainWP to go ahead and execute the operation for real. This is required for any operation that changes something (applying updates, deleting plugins, etc.). Without `--confirm`, the command will only show you what it would do.
 
@@ -166,6 +166,19 @@ The typical flow in any script is:
 4. Verify the result
 
 > **Note:** Some destructive abilities (like `delete-site-v1`) support `--dry-run` for a server-side preview. For updates, use `list-updates-v1` to preview what is pending before applying with `run-updates-v1`.
+
+---
+
+## Before You Automate
+
+Once you schedule `--confirm --force`, updates apply without anyone watching. Before you turn on either option below, make sure:
+
+- **Backups are current for every site in scope.** Use the MainWP Backups extension or your host's backup tool, and confirm a recent, restorable backup exists before the first automated run.
+- **You've run a canary first.** Run the workflow against one or two low-risk sites before widening it to your full network. `run-updates-v1` accepts a `site_ids_or_domains` input that limits its scope, so a canary run looks like `mainwpcontrol abilities run run-updates-v1 --input '{"site_ids_or_domains": [12, 34]}' --confirm --force --wait --json` with your low-risk site IDs (or domains). Only expand once a full cycle has run clean.
+- **You know your rollback path.** If an update breaks a site, you need a way back: restoring from backup, or rolling back the specific plugin or theme version. Confirm this actually works before you rely on it.
+- **The confirmed run lands inside a maintenance window you can monitor.** Even with `--wait`, something can go wrong. Schedule the `--confirm` run for a time when you, or someone, can check the result and react.
+
+Both Option A and Option B below assume these are in place.
 
 ---
 
@@ -290,7 +303,7 @@ Expected output:
 
 ### Step 6: Apply Updates
 
-When you are satisfied with the preview, apply the updates for real:
+When you are satisfied with the preview, apply the updates for real. The prerequisites above apply here: confirm backups are current and run against your canary sites before pointing this at your full network.
 
 ```bash
 mainwpcontrol abilities run run-updates-v1 --confirm --force --wait --json
@@ -353,7 +366,7 @@ If the number is not zero, some updates may have failed, or new updates appeared
 
 ### Complete Script
 
-Here is everything combined into a single script with error handling. Create a file called `monthly-updates.sh`:
+Here is everything combined into a single script with error handling. This is the script you'll schedule with cron, so make sure the [prerequisites above](#before-you-automate) are in place before you rely on it. Create a file called `monthly-updates.sh`:
 
 ```bash
 #!/bin/bash
@@ -554,6 +567,8 @@ jobs:
 - `$GITHUB_STEP_SUMMARY`: Another special file. Text written here (in Markdown format) appears as a summary on the workflow run page, making it easy to see results at a glance without digging through logs.
 
 #### Apply Step (Conditional)
+
+The prerequisites above apply here too: confirm backups are current and run this workflow against your canary sites before scheduling it against your full network.
 
 ```yaml
       - name: Apply updates

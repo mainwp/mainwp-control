@@ -299,6 +299,45 @@ describe('doctor command', () => {
   });
 
   // ---------------------------------------------------------------------------
+  // 4b. Human output strips escape sequences from check messages/details
+  // ---------------------------------------------------------------------------
+
+  it('doctor human output strips terminal escape sequences from config-derived text', async () => {
+    // A profile name with an embedded CSI clear-screen sequence, as a stand-in
+    // for any hostile/corrupted text reaching a check's message or details
+    // (profiles.json is user-editable on disk, so this needs no login-path bypass).
+    configDir = await ConfigDir.create({
+      profiles: [
+        {
+          name: 'evil\u001b[2Jpwn',
+          dashboardUrl: server.baseUrl,
+          username: 'admin',
+        },
+      ],
+      activeProfile: 'evil\u001b[2Jpwn',
+    });
+
+    const result = await runCLI(['doctor', '-v'], {
+      xdgConfigHome: configDir.xdgHome,
+      env: {
+        MAINWP_APP_PASSWORD: 'test-pass',
+        ANTHROPIC_API_KEY: '',
+        OPENAI_API_KEY: '',
+        GOOGLE_API_KEY: '',
+        OPENROUTER_API_KEY: '',
+        LOCAL_LLM_URL: '',
+        MAINWP_LLM_PROVIDER: '',
+      },
+    });
+
+    const combined = result.stdout + result.stderr;
+    // The escape sequence must not survive to the terminal...
+    expect(combined).not.toContain('\u001b[2J');
+    // ...but the surrounding profile-name text still renders (Active Profile check).
+    expect(combined).toContain('evilpwn');
+  });
+
+  // ---------------------------------------------------------------------------
   // 5. Doctor --json stability with env var fallback
   // ---------------------------------------------------------------------------
 
@@ -358,5 +397,40 @@ describe('doctor command', () => {
         'LLM Provider',
       ])
     );
+  });
+
+  it('masks userinfo from a legacy profile in JSON mode', async () => {
+    configDir = await ConfigDir.create({
+      profiles: [
+        {
+          name: 'legacy',
+          dashboardUrl: 'https://legacy:secret@dashboard.example.com',
+          username: 'admin',
+        },
+      ],
+      activeProfile: 'legacy',
+    });
+
+    const result = await runCLI(['doctor', '--json'], {
+      xdgConfigHome: configDir.xdgHome,
+      env: {
+        MAINWP_APP_PASSWORD: 'test-pass',
+        ANTHROPIC_API_KEY: '',
+        OPENAI_API_KEY: '',
+        GOOGLE_API_KEY: '',
+        OPENROUTER_API_KEY: '',
+        LOCAL_LLM_URL: '',
+        MAINWP_LLM_PROVIDER: '',
+      },
+    });
+
+    const envelope = result.json as {
+      data: { checks: Array<{ name: string; details?: string }> };
+    };
+    const activeProfile = envelope.data.checks.find(
+      (check) => check.name === 'Active Profile'
+    );
+    expect(activeProfile?.details).toBe('https://***:***@dashboard.example.com');
+    expect(result.stdout).not.toContain('legacy:secret');
   });
 });

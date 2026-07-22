@@ -8,9 +8,9 @@
 
 import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach } from 'vitest';
 import { MockServer } from './fixtures/mock-server.js';
-import { runCLI } from './fixtures/cli-runner.js';
+import { runCLI, runCLIWithSignal } from './fixtures/cli-runner.js';
 import { ConfigDir } from './fixtures/config-dir.js';
-import { abilityRunBatch, jobStatus } from './fixtures/api-responses.js';
+import { dashboardQueuedResponse, jobStatus } from './fixtures/api-responses.js';
 
 describe('batch job waiting', () => {
   const server = new MockServer();
@@ -60,7 +60,7 @@ describe('batch job waiting', () => {
     const cfg = await createConfig();
 
     // Register the ability run endpoint to return a batch job
-    server.setRunResponse('sync-sites-v1', abilityRunBatch('sync_123'));
+    server.setRunResponse('sync-sites-v1', dashboardQueuedResponse('sync_123'));
 
     // Register the batch status progression: running → completed
     server.setJobProgression('sync_123', [
@@ -109,7 +109,7 @@ describe('batch job waiting', () => {
   it('abilities run --wait with timeout exits 4 (BATCH_TIMEOUT)', async () => {
     const cfg = await createConfig();
 
-    server.setRunResponse('sync-sites-v1', abilityRunBatch('sync_123'));
+    server.setRunResponse('sync-sites-v1', dashboardQueuedResponse('sync_123'));
 
     // Job never completes: stays running forever (last status repeated)
     server.setJobProgression('sync_123', [
@@ -128,9 +128,40 @@ describe('batch job waiting', () => {
     // APIError with code BATCH_TIMEOUT maps to exit code 4
     expect(result.exitCode).toBe(4);
 
-    // stdout contains partial results + error envelope (two JSON objects)
-    // Verify that BATCH_TIMEOUT appears in the output
-    expect(result.stdout).toContain('BATCH_TIMEOUT');
+    // JSON mode emits exactly ONE document: an error envelope whose details
+    // carry the partial status (no preceding success envelope).
+    const envelope = JSON.parse(result.stdout) as Record<string, unknown>;
+    expect(envelope['success']).toBe(false);
+    const error = envelope['error'] as Record<string, unknown>;
+    expect(error['code']).toBe('BATCH_TIMEOUT');
+    const details = error['details'] as Record<string, unknown>;
+    expect(details).toHaveProperty('partialStatus');
+  });
+
+  it('abilities run --wait exits 4 when the batch is cancelled', async () => {
+    const cfg = await createConfig();
+
+    server.setRunResponse('sync-sites-v1', dashboardQueuedResponse('sync_123'));
+    server.setJobProgression('sync_123', [
+      jobStatus({ job_id: 'sync_123', status: 'cancelled', progress: 25, processed: 2, total: 10 }),
+    ]);
+
+    const result = await runCLI(
+      ['abilities', 'run', 'sync-sites-v1', '--wait', '--json'],
+      {
+        xdgConfigHome: cfg.xdgHome,
+        env: { MAINWP_APP_PASSWORD: 'test-pass' },
+        timeout: 15_000,
+      },
+    );
+
+    expect(result.exitCode).toBe(4);
+    const envelope = JSON.parse(result.stdout) as {
+      success: boolean;
+      error?: { code?: string };
+    };
+    expect(envelope.success).toBe(false);
+    expect(envelope.error?.code).toBe('BATCH_CANCELLED');
   });
 
   // ---------------------------------------------------------------------------
@@ -175,6 +206,99 @@ describe('batch job waiting', () => {
     expect(envelope.data.status).toBe('completed');
     expect(envelope.data.timedOut).toBe(false);
     expect(envelope.data.results).toBeDefined();
+  });
+
+  it('jobs watch honors settings-derived JSON without progress output', async () => {
+    configDir = await ConfigDir.create({
+      profiles: [{ name: 'test', dashboardUrl: server.baseUrl, username: 'admin' }],
+      activeProfile: 'test',
+      settings: { defaultJsonOutput: true },
+    });
+    server.setJobProgression('sync_123', [
+      jobStatus({ job_id: 'sync_123', status: 'running', progress: 50 }),
+      jobStatus({ job_id: 'sync_123', status: 'completed', progress: 100 }),
+    ]);
+
+    const result = await runCLI(
+      ['jobs', 'watch', 'sync_123', '--initial-delay', '100'],
+      {
+        xdgConfigHome: configDir.xdgHome,
+        env: { MAINWP_APP_PASSWORD: 'test-pass' },
+      },
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(() => JSON.parse(result.stdout)).not.toThrow();
+    expect((JSON.parse(result.stdout) as { success: boolean }).success).toBe(true);
+  });
+
+  it('jobs watch exits 4 when the job fails', async () => {
+    const cfg = await createConfig();
+    server.setJobProgression('sync_123', [
+      jobStatus({ job_id: 'sync_123', status: 'failed', errors: [{ message: 'failed' }] }),
+    ]);
+
+    const result = await runCLI(
+      ['jobs', 'watch', 'sync_123', '--json', '--initial-delay', '100'],
+      {
+        xdgConfigHome: cfg.xdgHome,
+        env: { MAINWP_APP_PASSWORD: 'test-pass' },
+      },
+    );
+
+    expect(result.exitCode).toBe(4);
+    expect(result.stdout).toContain('BATCH_FAILED');
+  });
+
+  // On Windows, child.kill('SIGINT') terminates the process without running
+  // signal handlers (no POSIX signals), so the cancellation contract these
+  // two tests pin cannot execute there. The contract itself is POSIX-only:
+  // exit 130 is the SIGINT convention.
+  it.skipIf(process.platform === 'win32')('jobs watch --json emits one envelope and exits 130 on SIGINT', async () => {
+    const cfg = await createConfig();
+    server.setJobProgression('sync_123', [
+      jobStatus({ job_id: 'sync_123', status: 'running', progress: 10 }),
+    ]);
+
+    const result = await runCLIWithSignal(
+      ['jobs', 'watch', 'sync_123', '--json', '--initial-delay', '100'],
+      {
+        xdgConfigHome: cfg.xdgHome,
+        env: { MAINWP_APP_PASSWORD: 'test-pass' },
+      },
+      'SIGINT',
+      // Deliver SIGINT only after the first status poll: the watch command
+      // has installed its handler by then, on any speed of runner.
+      server.waitForRequest('get-batch-job-status'),
+    );
+
+    expect(result.exitCode).toBe(130);
+    const envelope = JSON.parse(result.stdout) as {
+      success: boolean;
+      error?: { code?: string };
+    };
+    expect(envelope.success).toBe(false);
+    expect(envelope.error?.code).toBe('CANCELLED');
+  });
+
+  it.skipIf(process.platform === 'win32')('jobs watch reports SIGINT cancellation on stderr in human mode', async () => {
+    const cfg = await createConfig();
+    server.setJobProgression('sync_123', [
+      jobStatus({ job_id: 'sync_123', status: 'running', progress: 10 }),
+    ]);
+
+    const result = await runCLIWithSignal(
+      ['jobs', 'watch', 'sync_123', '--no-progress', '--initial-delay', '100'],
+      {
+        xdgConfigHome: cfg.xdgHome,
+        env: { MAINWP_APP_PASSWORD: 'test-pass' },
+      },
+      'SIGINT',
+      server.waitForRequest('get-batch-job-status'),
+    );
+
+    expect(result.exitCode).toBe(130);
+    expect(result.stderr).toMatch(/cancelled by signal/i);
   });
 
   // ---------------------------------------------------------------------------

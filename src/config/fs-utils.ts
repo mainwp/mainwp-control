@@ -5,6 +5,7 @@
  */
 
 import { promises as fs } from 'node:fs';
+import { randomBytes } from 'node:crypto';
 import { dirname } from 'node:path';
 
 /**
@@ -16,19 +17,29 @@ import { dirname } from 'node:path';
  */
 export async function atomicWriteFile(filePath: string, content: string): Promise<void> {
   const dir = dirname(filePath);
-  const tmpPath = `${filePath}.tmp`;
+  const tmpPath = `${filePath}.${randomBytes(12).toString('hex')}.tmp`;
 
   await fs.mkdir(dir, { recursive: true, mode: 0o700 });
 
-  await fs.writeFile(tmpPath, content, {
-    encoding: 'utf-8',
-    mode: 0o600,
-  });
-
+  let temporaryFileCreated = false;
   try {
+    // Exclusive create + explicit fsync before rename: after a crash the
+    // renamed file must contain the new content, not a zero-length shell.
+    // (Parent-directory fsync is deliberately omitted — it is not portable
+    // to Windows and the worst case there is the old file surviving whole.)
+    const handle = await fs.open(tmpPath, 'wx', 0o600);
+    temporaryFileCreated = true;
+    try {
+      await handle.writeFile(content, 'utf-8');
+      await handle.sync();
+    } finally {
+      await handle.close();
+    }
     await fs.rename(tmpPath, filePath);
   } catch (error) {
-    await fs.unlink(tmpPath).catch(() => {});
+    if (temporaryFileCreated) {
+      await fs.unlink(tmpPath).catch(() => {});
+    }
     throw error;
   }
 }

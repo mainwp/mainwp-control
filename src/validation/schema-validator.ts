@@ -6,7 +6,8 @@
  */
 
 import AjvModule, { type ErrorObject, type ValidateFunction } from 'ajv';
-import { SchemaValidationError } from '../utils/errors.js';
+import { APIError, SchemaValidationError } from '../utils/errors.js';
+import { sanitizeInputSchema } from './sanitize-schema.js';
 
 // Handle ESM default export
 const Ajv = AjvModule.default ?? AjvModule;
@@ -131,8 +132,22 @@ export class SchemaValidator {
       }
     }
 
-    // Compile schema
-    const compiled = this.ajv.compile(schema);
+    // Compile the normalized Dashboard schema. If AJV still rejects it, the
+    // server supplied an ability schema this client cannot safely repair.
+    let compiled: ValidateFunction;
+    try {
+      compiled = this.ajv.compile(sanitizeInputSchema(schema));
+    } catch (error) {
+      const schemaName = schemaId ? `"${schemaId}"` : '(unnamed)';
+      const cause = error instanceof Error ? error.message : String(error);
+      throw new APIError(
+        'ABILITY_SCHEMA_INVALID',
+        `Input schema for ability ${schemaName} is invalid`,
+        undefined,
+        { cause },
+        'The Dashboard served an input schema that could not be compiled'
+      );
+    }
 
     // Cache if ID provided
     if (schemaId) {

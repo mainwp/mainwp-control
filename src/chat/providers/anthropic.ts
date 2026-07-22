@@ -14,6 +14,7 @@ import {
   type StreamChunk,
   type ToolCall,
   registerProvider,
+  splitSystemMessage,
 } from './provider.js';
 import { makeProviderRequest } from './provider-fetch.js';
 import { readSSEStream } from './sse-reader.js';
@@ -83,15 +84,15 @@ interface AnthropicStreamEvent {
  * Available Anthropic models
  */
 const ANTHROPIC_MODELS = [
-  'claude-sonnet-4-20250514',
-  'claude-3-5-sonnet-20241022',
-  'claude-3-5-haiku-20241022',
-  'claude-3-opus-20240229',
-  'claude-3-sonnet-20240229',
-  'claude-3-haiku-20240307',
+  'claude-sonnet-4-6',
+  'claude-sonnet-4-5-20250929',
+  'claude-opus-4-8',
+  'claude-opus-4-7',
+  'claude-opus-4-6',
+  'claude-haiku-4-5-20251001',
 ] as const;
 
-const DEFAULT_MODEL = 'claude-sonnet-4-20250514';
+const DEFAULT_MODEL = 'claude-sonnet-4-6';
 const API_VERSION = '2023-06-01';
 
 /**
@@ -134,9 +135,7 @@ export class AnthropicProvider implements LLMProvider {
   async chat(messages: Message[], options?: ChatOptions): Promise<LLMResponse> {
     const model = options?.model ?? this.defaultModel;
 
-    // Extract system message
-    const systemMessage = messages.find((m) => m.role === 'system');
-    const chatMessages = messages.filter((m) => m.role !== 'system');
+    const { systemContent, chatMessages } = splitSystemMessage(messages);
 
     const requestBody: Record<string, unknown> = {
       model,
@@ -144,8 +143,8 @@ export class AnthropicProvider implements LLMProvider {
       max_tokens: options?.maxTokens ?? 4096,
     };
 
-    if (systemMessage) {
-      requestBody['system'] = systemMessage.content;
+    if (systemContent !== undefined) {
+      requestBody['system'] = systemContent;
     }
 
     if (options?.temperature !== undefined) {
@@ -160,11 +159,14 @@ export class AnthropicProvider implements LLMProvider {
       requestBody['tools'] = this.convertTools(options.tools);
     }
 
-    const response = await this.makeRequest<AnthropicResponse>(
-      '/v1/messages',
-      requestBody,
-      options?.signal
-    );
+    const response = await makeProviderRequest<AnthropicResponse>({
+      url: `${this.baseUrl}/v1/messages`,
+      headers: this.getHeaders(),
+      body: requestBody,
+      timeout: this.timeout,
+      signal: options?.signal,
+      providerName: 'Anthropic',
+    });
 
     return this.convertResponse(response);
   }
@@ -175,9 +177,7 @@ export class AnthropicProvider implements LLMProvider {
   ): AsyncGenerator<StreamChunk, void, undefined> {
     const model = options?.model ?? this.defaultModel;
 
-    // Extract system message
-    const systemMessage = messages.find((m) => m.role === 'system');
-    const chatMessages = messages.filter((m) => m.role !== 'system');
+    const { systemContent, chatMessages } = splitSystemMessage(messages);
 
     const requestBody: Record<string, unknown> = {
       model,
@@ -186,8 +186,8 @@ export class AnthropicProvider implements LLMProvider {
       stream: true,
     };
 
-    if (systemMessage) {
-      requestBody['system'] = systemMessage.content;
+    if (systemContent !== undefined) {
+      requestBody['system'] = systemContent;
     }
 
     if (options?.temperature !== undefined) {
@@ -234,19 +234,23 @@ export class AnthropicProvider implements LLMProvider {
 
         if (event.type === 'content_block_stop') {
           if (toolId && toolName) {
+            const accumulatedArgs = toolArgs || '{}';
+            let args: unknown = accumulatedArgs;
             try {
-              const args = JSON.parse(toolArgs || '{}') as Record<string, unknown>;
-              yield {
-                toolCall: {
-                  id: toolId,
-                  name: toolName,
-                  arguments: args,
-                },
-                done: false,
-              };
+              args = JSON.parse(accumulatedArgs) as unknown;
             } catch {
-              // Invalid JSON, skip
+              // Preserve the raw accumulated string. The shared tool envelope
+              // rejects non-object arguments as a protocol error without
+              // executing the proposed call.
             }
+            yield {
+              toolCall: {
+                id: toolId,
+                name: toolName,
+                arguments: args,
+              },
+              done: false,
+            };
             toolId = '';
             toolName = '';
             toolArgs = '';
@@ -258,7 +262,11 @@ export class AnthropicProvider implements LLMProvider {
           return;
         }
       } catch {
-        // Invalid JSON, skip line
+        // Invalid JSON, skip line — a systematically malformed stream would
+        // otherwise fail silently, so leave a trail when debugging
+        if (process.env['DEBUG']) {
+          console.debug('[Anthropic] Skipped malformed SSE chunk');
+        }
       }
     }
 
@@ -301,9 +309,21 @@ export class AnthropicProvider implements LLMProvider {
           });
         }
       } else {
+        const content: AnthropicContent[] = [];
+        if (msg.content) {
+          content.push({ type: 'text', text: msg.content });
+        }
+        for (const toolCall of msg.toolCalls ?? []) {
+          content.push({
+            type: 'tool_use',
+            id: toolCall.id,
+            name: toolCall.name,
+            input: toolCall.arguments,
+          });
+        }
         result.push({
           role: msg.role as 'user' | 'assistant',
-          content: msg.content,
+          content: content.length > 0 ? content : msg.content,
         });
       }
     }
@@ -387,24 +407,6 @@ export class AnthropicProvider implements LLMProvider {
       'x-api-key': this.apiKey,
       'anthropic-version': API_VERSION,
     };
-  }
-
-  /**
-   * Make API request
-   */
-  private async makeRequest<T>(
-    endpoint: string,
-    body: Record<string, unknown>,
-    signal?: AbortSignal
-  ): Promise<T> {
-    return makeProviderRequest<T>({
-      url: `${this.baseUrl}${endpoint}`,
-      headers: this.getHeaders(),
-      body,
-      timeout: this.timeout,
-      signal,
-      providerName: 'Anthropic',
-    });
   }
 
 }

@@ -524,7 +524,7 @@ An asterisk (`*`) means "every," so `* * * * *` means every minute of every hour
 
 Add this line to schedule the health check to run every day at 7:00 AM:
 
-```
+```cron
 0 7 * * * /full/path/to/mainwp-health-check.sh
 ```
 
@@ -536,13 +536,13 @@ realpath mainwp-health-check.sh
 
 For example, if the script is in your home directory, the line might be:
 
-```
+```cron
 0 7 * * * /Users/yourname/mainwp-health-check.sh
 ```
 
 **Note on PATH:** Cron runs in a minimal environment. It does not load your shell profile, so commands like `mainwpcontrol` or `jq` may not be found by their short names. If you encounter issues, add a `PATH` line at the top of your crontab:
 
-```
+```cron
 PATH=/usr/local/bin:/usr/bin:/bin:/opt/homebrew/bin
 0 7 * * * /full/path/to/mainwp-health-check.sh
 ```
@@ -649,11 +649,35 @@ If the doctor command reports authentication issues, run `mainwpcontrol login` a
 
 ### Authentication errors in cron
 
-Cron runs in a minimal environment and may not have access to your system keychain where MainWP Control stores credentials. If the health check works when you run it manually but fails from cron, you can set the credentials as environment variables directly in your crontab:
+Cron runs in a minimal environment and may not have access to your system keychain where MainWP Control stores credentials. If the health check works when you run it manually but fails from cron, store the Application Password in a restricted-permission env file and have cron source it before running the script.
 
-```
-MAINWP_APP_PASSWORD='your-app-password'
-0 7 * * * /full/path/to/mainwp-health-check.sh
+Don't put the password directly in the crontab. Crontab contents are easy to expose: `crontab -l` output ends up in shared logs, and system backups often capture the crontab file itself.
+
+Be aware of the trade-off: this file stores the Application Password in plain text on disk, protected only by its file permissions. That is inherent to unattended runs — cron cannot unlock your OS keychain. `MAINWP_APP_PASSWORD` is MainWP Control's supported environment fallback for exactly this situation; for interactive use, keep credentials in the keychain via `mainwpcontrol login`. If the password may have been exposed, revoke it in WordPress and issue a new one.
+
+Create the env file:
+
+```bash
+mkdir -p ~/.config/mainwpcontrol
+nano ~/.config/mainwpcontrol/cron.env
 ```
 
-Replace `your-app-password` with the Application Password from Step 1 (spaces removed). Environment variables set at the top of the crontab apply to all jobs below them.
+Add this line, using the Application Password from Step 1 (spaces removed):
+
+```bash
+export MAINWP_APP_PASSWORD='your-app-password'
+```
+
+Save the file, then restrict its permissions so only you can read it:
+
+```bash
+chmod 600 ~/.config/mainwpcontrol/cron.env
+```
+
+Update the crontab entry to source the file before running the script:
+
+```cron
+0 7 * * * . "$HOME/.config/mainwpcontrol/cron.env" && /full/path/to/mainwp-health-check.sh
+```
+
+The `. "$HOME/.config/mainwpcontrol/cron.env"` part loads the environment variable from the file, and `&&` runs the script only if that succeeds.

@@ -17,11 +17,16 @@ import {
   formatElapsed,
 } from '../../output/formatter.js';
 import { safeString } from '../../utils/terminal-sanitizer.js';
+import { APIError } from '../../utils/errors.js';
+import { errorOutput } from '../../output/json-envelope.js';
 import {
+  isTerminalStatus,
   type BatchManager,
   type JobStatus,
   type WatchResult,
 } from '../../core/batch-manager.js';
+
+export { isTerminalStatus };
 
 /** Progress bar width in characters */
 const PROGRESS_BAR_WIDTH = 30;
@@ -30,7 +35,7 @@ const PROGRESS_BAR_WIDTH = 30;
 const TERMINAL_LINE_WIDTH = 80;
 
 /** Maximum number of result items to preview */
-const RESULTS_PREVIEW_LIMIT = 5;
+export const RESULTS_PREVIEW_LIMIT = 5;
 
 export default class JobsWatch extends BaseCommand {
   static description = 'Monitor batch job status';
@@ -93,15 +98,19 @@ export default class JobsWatch extends BaseCommand {
 
     // Set up abort controller for graceful shutdown
     const controller = new AbortController();
-    const handleSignal = () => {
+    let signalExitCode: 130 | 143 | undefined;
+    const handleSignal = (exitCode: 130 | 143) => {
+      signalExitCode = exitCode;
       controller.abort();
-      if (!flags.json && !flags['no-progress']) {
+      if (!this.jsonOutput && !flags['no-progress']) {
         this.log('\nAborted by user.');
       }
     };
+    const handleSIGINT = () => handleSignal(130);
+    const handleSIGTERM = () => handleSignal(143);
 
-    process.on('SIGINT', handleSignal);
-    process.on('SIGTERM', handleSignal);
+    process.on('SIGINT', handleSIGINT);
+    process.on('SIGTERM', handleSIGTERM);
 
     try {
       // Watch the job
@@ -109,15 +118,62 @@ export default class JobsWatch extends BaseCommand {
         maxWait: flags.timeout * 1000,
         initialDelay: flags['initial-delay'],
         maxDelay: flags['max-delay'],
-        showProgress: !flags['no-progress'] && !flags.json,
+        showProgress: !flags['no-progress'] && !this.jsonOutput,
         signal: controller.signal,
       });
+
+      if (signalExitCode !== undefined) {
+        const error = new APIError(
+          'CANCELLED',
+          'Job watch cancelled by signal',
+          undefined,
+          { jobId: args.id }
+        );
+        if (this.jsonOutput) {
+          this.log(JSON.stringify(errorOutput(error), null, 2));
+        } else {
+          this.logToStderr(formatErrorText(error.message));
+        }
+        this.exit(signalExitCode);
+      }
+
+      // Non-success outcomes: human mode prints result details before the
+      // error; JSON mode must emit exactly ONE document, so only the error
+      // envelope is printed (status travels in its details).
+      const failedOutcome = result.timedOut
+        ? new APIError(
+            'BATCH_TIMEOUT',
+            `Batch job ${args.id} timed out`,
+            undefined,
+            { jobId: args.id, partialStatus: result.status }
+          )
+        : result.status.status === 'failed' ||
+            result.status.status === 'partial' ||
+            result.status.status === 'cancelled'
+          ? new APIError(
+              result.status.status === 'failed'
+                ? 'BATCH_FAILED'
+                : result.status.status === 'cancelled'
+                  ? 'BATCH_CANCELLED'
+                  : 'BATCH_PARTIAL',
+              `Batch job ${args.id} finished with status "${result.status.status}"`,
+              undefined,
+              { jobId: args.id, status: result.status }
+            )
+          : undefined;
+
+      if (failedOutcome) {
+        if (!this.jsonOutput) {
+          this.outputResult(args.id, result);
+        }
+        throw failedOutcome;
+      }
 
       // Output final result
       this.outputResult(args.id, result);
     } finally {
-      process.off('SIGINT', handleSignal);
-      process.off('SIGTERM', handleSignal);
+      process.off('SIGINT', handleSIGINT);
+      process.off('SIGTERM', handleSIGTERM);
     }
   }
 
@@ -203,20 +259,17 @@ export default class JobsWatch extends BaseCommand {
       return Math.round((status.processed / status.total) * 100);
     }
 
-    // Estimate based on status
-    switch (status.status) {
-      case 'pending':
-        return 0;
-      case 'running':
-        return 50;
-      case 'completed':
-        return 100;
-      case 'failed':
-      case 'partial':
-        return status.progress ?? 0;
-      default:
-        return 0;
+    if (status.status === 'completed') {
+      return 100;
     }
+
+    if (isTerminalStatus(status.status)) {
+      // failed or partial
+      return status.progress ?? 0;
+    }
+
+    // Estimate based on non-terminal status
+    return status.status === 'running' ? 50 : 0;
   }
 
   /**
@@ -266,14 +319,16 @@ export default class JobsWatch extends BaseCommand {
     // Header
     if (timedOut) {
       lines.push(formatWarning(`Job ${jobId} timed out after ${formatElapsed(elapsed)}`));
+    } else if (!isTerminalStatus(status.status)) {
+      lines.push(`Job ${jobId}: ${status.status}`);
     } else if (status.status === 'completed') {
       lines.push(formatSuccess(`Job ${jobId} completed`));
     } else if (status.status === 'failed') {
       lines.push(formatErrorText(`Job ${jobId} failed`));
-    } else if (status.status === 'partial') {
-      lines.push(formatWarning(`Job ${jobId} partially completed`));
+    } else if (status.status === 'cancelled') {
+      lines.push(formatWarning(`Job ${jobId} cancelled`));
     } else {
-      lines.push(`Job ${jobId}: ${status.status}`);
+      lines.push(formatWarning(`Job ${jobId} partially completed`));
     }
 
     lines.push('');

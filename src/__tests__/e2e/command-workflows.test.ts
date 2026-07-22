@@ -23,6 +23,8 @@ import {
   clearEnvVar,
   restoreEnvVars,
   STANDARD_ABILITIES,
+  createCommandHarness,
+  type CapturedOutput,
 } from './test-helpers.js';
 
 // ============================================================================
@@ -37,7 +39,11 @@ const mockProfileStoreList = vi.fn();
 const mockProfileStoreDelete = vi.fn();
 const mockProfileStoreSetActive = vi.fn();
 
-vi.mock('../../config/profile-store.js', () => ({
+vi.mock('../../config/profile-store.js', async (importOriginal) => ({
+  // Keep the real validateDashboardUrl: login calls it at intake, and these
+  // workflows should exercise the genuine validation behavior.
+  validateDashboardUrl: (await importOriginal<typeof import('../../config/profile-store.js')>())
+    .validateDashboardUrl,
   getProfileStore: vi.fn(() => ({
     get: mockProfileStoreGet,
     getActive: mockProfileStoreGetActive,
@@ -51,6 +57,7 @@ vi.mock('../../config/profile-store.js', () => ({
 
 // Mock keychain singleton
 const mockKeychainGet = vi.fn();
+const mockKeychainGetStored = vi.fn();
 const mockKeychainGetOrThrow = vi.fn();
 const mockKeychainSet = vi.fn();
 const mockKeychainDelete = vi.fn();
@@ -58,6 +65,7 @@ const mockKeychainDelete = vi.fn();
 vi.mock('../../config/keychain.js', () => ({
   getKeychain: vi.fn(() => ({
     get: mockKeychainGet,
+    getStored: mockKeychainGetStored,
     getOrThrow: mockKeychainGetOrThrow,
     set: mockKeychainSet,
     delete: mockKeychainDelete,
@@ -150,15 +158,6 @@ import ChatCommand from '../../commands/chat.js';
 // ============================================================================
 
 /**
- * Captured output from command execution
- */
-interface CapturedOutput {
-  stdout: string[];
-  stderr: string[];
-  exitCode?: number;
-}
-
-/**
  * Parse argv into flags and args
  *
  * Note: Boolean flags (those with default: false/true) don't consume the next argument.
@@ -226,52 +225,11 @@ function createCommandWithCapture<T extends Login | AbilitiesList | ChatCommand>
   argv: string[] = [],
   flagDefs: Record<string, { char?: string; default?: unknown }> = {}
 ): { command: T; output: CapturedOutput } {
-  const output: CapturedOutput = {
-    stdout: [],
-    stderr: [],
-  };
-
-  const mockConfig = {
-    root: '/mock/root',
-    bin: 'mainwpcontrol',
-    name: 'mainwpcontrol',
-    version: '1.0.0',
-    pjson: { name: 'mainwpcontrol', version: '1.0.0' },
-    dataDir: '/mock/data',
-    cacheDir: '/mock/cache',
-    configDir: '/mock/config',
-    findCommand: vi.fn(),
-    runCommand: vi.fn(),
-    runHook: vi.fn(),
-  };
-
-  const command = new CommandClass(argv, mockConfig as never);
+  const { command, output } = createCommandHarness(CommandClass, argv);
 
   // Mock parse to return our parsed argv
   const parsed = parseArgv(argv, flagDefs);
   command.parse = vi.fn().mockResolvedValue(parsed) as never;
-
-  // Capture log output
-  command.log = vi.fn((...args: unknown[]) => {
-    output.stdout.push(args.map(String).join(' '));
-  });
-
-  command.logToStderr = vi.fn((...args: unknown[]) => {
-    output.stderr.push(args.map(String).join(' '));
-  });
-
-  // Capture exit
-  command.exit = vi.fn((code?: number) => {
-    output.exitCode = code ?? 0;
-    throw new Error(`EXIT:${code ?? 0}`);
-  }) as never;
-
-  // Mock error to capture exit codes
-  command.error = vi.fn((message: string | Error, options?: { exit?: number }) => {
-    output.stderr.push(message instanceof Error ? message.message : message);
-    output.exitCode = options?.exit ?? 1;
-    throw new Error(`EXIT:${output.exitCode}`);
-  }) as never;
 
   return { command, output };
 }
@@ -349,9 +307,10 @@ describe('E2E: Command-Level Workflows', () => {
     mockProfileStoreSetActive.mockReset().mockResolvedValue(undefined);
 
     mockKeychainGet.mockReset();
+    mockKeychainGetStored.mockReset().mockResolvedValue({ status: 'not-found' });
     mockKeychainGetOrThrow.mockReset();
     mockKeychainSet.mockReset().mockResolvedValue({ stored: true, location: 'keychain' });
-    mockKeychainDelete.mockReset().mockResolvedValue(undefined);
+    mockKeychainDelete.mockReset().mockResolvedValue({ deleted: true });
 
     mockHttpGet.mockReset();
     mockHttpPost.mockReset();
@@ -399,7 +358,7 @@ describe('E2E: Command-Level Workflows', () => {
 
       // Verify profile was saved
       expect(mockProfileStoreSave).toHaveBeenCalled();
-      expect(mockKeychainSet).toHaveBeenCalledWith('test-profile', 'secret123');
+      expect(mockKeychainSet).toHaveBeenCalledWith('test-profile', 'secret123', 'https://dashboard.test');
     });
 
     it('outputs JSON envelope with --json flag', async () => {
@@ -454,7 +413,50 @@ describe('E2E: Command-Level Workflows', () => {
         '--name', 'keychain-test',
       ], LOGIN_FLAGS);
 
-      expect(mockKeychainSet).toHaveBeenCalledWith('keychain-test', 'mypassword');
+      expect(mockKeychainSet).toHaveBeenCalledWith('keychain-test', 'mypassword', 'https://dashboard.test');
+    });
+
+    it('restores an existing credential when profile persistence fails', async () => {
+      mockHttpGet.mockResolvedValueOnce(
+        createMockHttpResponse(200, { abilities: [] })
+      );
+      mockProfileStoreGet.mockResolvedValueOnce(createMockProfile({ name: 'existing' }));
+      mockKeychainGetStored.mockResolvedValueOnce({ status: 'found', password: 'old-password' });
+      mockProfileStoreSave.mockRejectedValueOnce(new Error('disk full'));
+
+      await runCommand(Login, [
+        '--url', 'https://dashboard.test',
+        '--username', 'admin',
+        '--password', 'new-password',
+        '--name', 'existing',
+      ], LOGIN_FLAGS);
+
+      expect(mockKeychainSet).toHaveBeenNthCalledWith(1, 'existing', 'new-password', 'https://dashboard.test');
+      expect(mockKeychainSet).toHaveBeenNthCalledWith(2, 'existing', 'old-password');
+      expect(mockProfileStoreSetActive).not.toHaveBeenCalled();
+    });
+
+    it('aborts before overwriting when the existing credential cannot be read', async () => {
+      mockHttpGet.mockResolvedValueOnce(
+        createMockHttpResponse(200, { abilities: [] })
+      );
+      mockProfileStoreGet.mockResolvedValueOnce(createMockProfile({ name: 'existing' }));
+      // A failed read is NOT "nothing stored": overwriting here and later
+      // rolling back would delete a credential that still exists.
+      mockKeychainGetStored.mockResolvedValueOnce({ status: 'error', error: 'keychain locked' });
+
+      const output = await runCommand(Login, [
+        '--url', 'https://dashboard.test',
+        '--username', 'admin',
+        '--password', 'new-password',
+        '--name', 'existing',
+      ], LOGIN_FLAGS);
+
+      expect(output.exitCode).toBe(1);
+      expect(mockKeychainSet).not.toHaveBeenCalled();
+      expect(mockKeychainDelete).not.toHaveBeenCalled();
+      expect(mockProfileStoreSave).not.toHaveBeenCalled();
+      expect(mockProfileStoreSetActive).not.toHaveBeenCalled();
     });
 
     it('handles authentication failure with error exit', async () => {
@@ -602,7 +604,7 @@ describe('E2E: Command-Level Workflows', () => {
     it('handles single message mode with readonly tool call', async () => {
       // LLM returns a tool call followed by answer
       mockProviderChat
-        .mockResolvedValueOnce(createMockLLMToolCallResponse('mainwp/list-sites-v1', {}))
+        .mockResolvedValueOnce(createMockLLMToolCallResponse('mainwp__list-sites-v1', {}))
         .mockResolvedValueOnce(createMockLLMAnswerResponse('Found 3 sites'));
 
       // Mock tool execution
@@ -621,7 +623,7 @@ describe('E2E: Command-Level Workflows', () => {
     it('shows destructive preview and requires approval in non-interactive mode', async () => {
       // LLM returns a destructive tool call
       mockProviderChat.mockResolvedValueOnce(
-        createMockLLMToolCallResponse('mainwp/delete-site-v1', { site_id: 123 })
+        createMockLLMToolCallResponse('mainwp__delete-site-v1', { site_id: 123 })
       );
 
       // Mock preview execution
@@ -639,7 +641,7 @@ describe('E2E: Command-Level Workflows', () => {
 
     it('outputs JSON for tool results with --json flag', { timeout: 10000 }, async () => {
       mockProviderChat
-        .mockResolvedValueOnce(createMockLLMToolCallResponse('mainwp/list-sites-v1', {}))
+        .mockResolvedValueOnce(createMockLLMToolCallResponse('mainwp__list-sites-v1', {}))
         .mockResolvedValueOnce(createMockLLMAnswerResponse('Done'));
 
       mockExecutorExecute.mockResolvedValueOnce({

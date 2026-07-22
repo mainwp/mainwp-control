@@ -18,6 +18,8 @@ import {
   createMockHttpResponse,
   restoreEnvVars,
   STANDARD_ABILITIES,
+  createCommandHarness,
+  type CapturedOutput,
 } from './test-helpers.js';
 
 // ============================================================================
@@ -112,53 +114,10 @@ import AbilitiesRun from '../../commands/abilities/run.js';
 // Test Utilities
 // ============================================================================
 
-interface CapturedOutput {
-  stdout: string[];
-  stderr: string[];
-  exitCode?: number;
-}
-
 function createRunCommand(
   argv: string[] = []
 ): { command: AbilitiesRun; output: CapturedOutput } {
-  const output: CapturedOutput = { stdout: [], stderr: [] };
-
-  const mockConfig = {
-    root: '/mock/root',
-    bin: 'mainwpcontrol',
-    name: 'mainwpcontrol',
-    version: '1.0.0',
-    pjson: { name: 'mainwpcontrol', version: '1.0.0' },
-    dataDir: '/mock/data',
-    cacheDir: '/mock/cache',
-    configDir: '/mock/config',
-    findCommand: vi.fn(),
-    runCommand: vi.fn(),
-    runHook: vi.fn(),
-  };
-
-  const command = new AbilitiesRun(argv, mockConfig as never);
-
-  command.log = vi.fn((...args: unknown[]) => {
-    output.stdout.push(args.map(String).join(' '));
-  });
-
-  command.logToStderr = vi.fn((...args: unknown[]) => {
-    output.stderr.push(args.map(String).join(' '));
-  });
-
-  command.exit = vi.fn((code?: number) => {
-    output.exitCode = code ?? 0;
-    throw new Error(`EXIT:${code ?? 0}`);
-  }) as never;
-
-  command.error = vi.fn((message: string | Error, options?: { exit?: number }) => {
-    output.stderr.push(message instanceof Error ? message.message : message);
-    output.exitCode = options?.exit ?? 1;
-    throw new Error(`EXIT:${output.exitCode}`);
-  }) as never;
-
-  return { command, output };
+  return createCommandHarness(AbilitiesRun, argv);
 }
 
 async function runAbilitiesRun(
@@ -309,11 +268,7 @@ describe('E2E: Exit Code Contract', () => {
       { name: 'list-sites-v1' }
     );
 
-    // ConfigError maps to exit code 2 (AUTH_ERROR)
-    expect(output.exitCode).toBeDefined();
-    // The exit code comes from the catch handler; in test setup it may be 1
-    // because command.catch is not fully wired. The important thing is it fails.
-    expect(output.exitCode).toBeGreaterThanOrEqual(1);
+    expect(output.exitCode).toBe(2);
   });
 
   // API error (exit code 4): API returns error response

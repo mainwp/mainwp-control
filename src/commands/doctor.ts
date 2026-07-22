@@ -20,8 +20,15 @@ import {
   resolveProviderSelection,
 } from '../chat/providers/provider.js';
 import { ExitCode } from '../utils/exit-codes.js';
-import { maskPassword, maskApiKey } from '../utils/format.js';
+import {
+  maskPassword,
+  maskApiKey,
+  maskUrlUserinfo,
+  maskUrlUserinfoInText,
+} from '../utils/format.js';
 import { color, colors } from '../utils/colors.js';
+import { formatDivider, formatStatusIcon, getStatusColor } from '../output/formatter.js';
+import { sanitizeSingleLine, stripControlChars } from '../utils/terminal-sanitizer.js';
 
 /**
  * Check result
@@ -204,7 +211,8 @@ export default class DoctorCommand extends BaseCommand {
         name: 'Active Profile',
         status: 'pass',
         message: `Active: ${activeProfile.name}`,
-        details: activeProfile.dashboardUrl,
+        // Mask userinfo from profiles stored before intake rejection existed
+        details: maskUrlUserinfo(activeProfile.dashboardUrl),
       };
     } catch (error) {
       return {
@@ -295,7 +303,8 @@ export default class DoctorCommand extends BaseCommand {
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
 
-      let details = message;
+      // Fetch errors can echo the full request URL, credentials included
+      let details = maskUrlUserinfoInText(message);
       if (message.includes('ECONNREFUSED')) {
         details = 'Connection refused. Is the Dashboard running?';
       } else if (message.includes('ENOTFOUND')) {
@@ -434,24 +443,27 @@ export default class DoctorCommand extends BaseCommand {
    */
   private displayReport(report: DoctorReport, verbose: boolean): void {
     this.log('\n  MainWP Control CLI - System Check\n');
-    this.log('  ' + '─'.repeat(40));
+    this.log(formatDivider());
 
     for (const check of report.checks) {
-      const icon = this.getStatusIcon(check.status);
-      const statusColor = this.getStatusColorCode(check.status);
+      const icon = formatStatusIcon(check.status);
+      const statusColor = getStatusColor(check.status);
 
+      // Sanitize at the display boundary: message/details can carry
+      // error-derived or config-derived text (the --json path gets the
+      // same treatment via the envelope's sanitizeForTerminal).
       this.log(`  ${icon} ${check.name}`);
-      this.log(`     ${color(check.message, statusColor)}`);
+      this.log(`     ${color(sanitizeSingleLine(check.message), statusColor)}`);
 
       if (verbose && check.details) {
-        const detailLines = check.details.split('\n');
+        const detailLines = stripControlChars(check.details).split('\n');
         for (const line of detailLines) {
           this.log(`     ${color(line, colors.gray)}`);
         }
       }
     }
 
-    this.log('  ' + '─'.repeat(40));
+    this.log(formatDivider());
 
     // Summary
     this.log(
@@ -468,31 +480,4 @@ export default class DoctorCommand extends BaseCommand {
     }
   }
 
-  /**
-   * Get status icon
-   */
-  private getStatusIcon(status: CheckResult['status']): string {
-    switch (status) {
-      case 'pass':
-        return color('✓', colors.green);
-      case 'warn':
-        return color('⚠', colors.yellow);
-      case 'fail':
-        return color('✗', colors.red);
-    }
-  }
-
-  /**
-   * Get status color code string
-   */
-  private getStatusColorCode(status: CheckResult['status']): string {
-    switch (status) {
-      case 'pass':
-        return colors.green;
-      case 'warn':
-        return colors.yellow;
-      case 'fail':
-        return colors.red;
-    }
-  }
 }

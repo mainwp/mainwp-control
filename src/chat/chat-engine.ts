@@ -18,6 +18,7 @@ import type {
   ChatOptions,
   ToolDefinition,
   StreamChunk,
+  ToolCall,
 } from './providers/provider.js';
 import {
   buildConfiguredPrompt,
@@ -39,8 +40,14 @@ import {
   type PreviewResult,
 } from '../core/safety-controller.js';
 import { abilityToTool } from './providers/provider.js';
+import { ContextWindow } from './context-window.js';
 import { logDestructiveActionSafe } from '../utils/audit-logger.js';
 import { getInputSanitizer } from '../validation/input-sanitizer.js';
+import { getSchemaValidator } from '../validation/schema-validator.js';
+import { SchemaValidationError } from '../utils/errors.js';
+import { stripControlChars } from '../utils/terminal-sanitizer.js';
+import { redactSensitiveKeys } from '../utils/redaction.js';
+import { executeAbilityWithPolicy } from '../core/execute-ability-with-policy.js';
 
 /**
  * Chat response types
@@ -54,7 +61,18 @@ export type ChatResponse =
       preview?: PreviewResult;
     }
   | { type: 'preview'; preview: PreviewResult; requiresApproval: boolean }
-  | { type: 'error'; error: string };
+  | {
+      type: 'error';
+      error: string;
+      /** Ability name, when the error occurred while handling a specific tool */
+      tool?: string;
+      /**
+       * Stable error code for callers that map chat errors to process
+       * outcomes (e.g. 'OUTCOME_UNKNOWN' for a confirm call that failed
+       * after dispatch).
+       */
+      code?: string;
+    };
 
 /**
  * Chat engine options
@@ -76,8 +94,6 @@ export interface ChatEngineOptions {
   promptConfig?: Partial<SystemPromptConfig>;
   /** Maximum messages to keep in context (excluding system prompt). undefined = no limit */
   maxContextMessages?: number;
-  /** Maximum estimated tokens in context. Reserved for future use. */
-  maxContextTokens?: number;
   /** Whether to use streaming responses (default: false) */
   stream?: boolean;
   /** Callback for streaming content chunks (called as content arrives) */
@@ -91,6 +107,8 @@ interface PendingPreview {
   ability: Ability;
   input: Record<string, unknown>;
   preview: PreviewResult;
+  toolCallId: string;
+  toolAlias: string;
 }
 
 /**
@@ -112,15 +130,21 @@ export class ChatEngine {
   private readonly model: string | undefined;
   private readonly temperature: number | undefined;
   private readonly promptConfig: SystemPromptConfig;
-  private readonly maxContextMessages: number | undefined;
+  private readonly contextWindow: ContextWindow;
   private readonly stream: boolean;
   private readonly onStreamChunk?: (content: string) => void;
 
   private messages: Message[] = [];
   private abilities: Ability[] = [];
   private tools: ToolDefinition[] = [];
+  private readonly toolAliases = new Map<string, string>();
+  private readonly abilityAliases = new Map<string, string>();
   private pendingPreview: PendingPreview | null = null;
   private initialized = false;
+  // Engine-lifetime counter for fallback tool-call IDs. A per-turn counter
+  // would repeat call_1, call_2, ... across turns while history is retained,
+  // producing duplicate IDs in the conversation sent to providers.
+  private fallbackToolCallId = 0;
 
   constructor(options: ChatEngineOptions) {
     this.provider = options.provider;
@@ -151,17 +175,11 @@ export class ChatEngine {
       options.promptConfig?.maxContextMessages ??
       defaultPromptConfig.maxContextMessages;
 
-    this.maxContextMessages = resolvedContextMessages;
+    this.contextWindow = new ContextWindow(resolvedContextMessages);
 
     // Sync the resolved value into promptConfig for system prompt generation
     if (resolvedContextMessages !== undefined) {
       mergedPromptConfig.maxContextMessages = resolvedContextMessages;
-    }
-
-    // Handle optional token limit (reserved for future use)
-    const contextTokens = options.maxContextTokens ?? options.promptConfig?.maxContextTokens;
-    if (contextTokens !== undefined) {
-      mergedPromptConfig.maxContextTokens = contextTokens;
     }
 
     this.promptConfig = mergedPromptConfig;
@@ -176,10 +194,20 @@ export class ChatEngine {
     // Load abilities
     this.abilities = await this.executor.listAbilities();
 
-    // Convert to tool definitions
-    this.tools = this.abilities.map((a) =>
-      abilityToTool(a.name, a.description, a.input_schema)
-    );
+    // Convert to protocol-safe tool definitions and keep a collision-checked
+    // reverse map so execution always uses the real ability name.
+    this.tools = this.abilities.map((ability) => {
+      const alias = ability.name.replaceAll('/', '__');
+      const existing = this.toolAliases.get(alias);
+      if (existing && existing !== ability.name) {
+        throw new Error(
+          `Tool alias collision: "${existing}" and "${ability.name}" both map to "${alias}"`
+        );
+      }
+      this.toolAliases.set(alias, ability.name);
+      this.abilityAliases.set(ability.name, alias);
+      return abilityToTool(alias, ability.description, ability.input_schema);
+    });
 
     // Build system prompt
     const systemPrompt = buildConfiguredPrompt(this.abilities, this.promptConfig);
@@ -190,10 +218,31 @@ export class ChatEngine {
     this.initialized = true;
   }
 
+  // Serializes sendMessage calls. History and pendingPreview are shared
+  // mutable state with no other concurrency protection; the readline REPL
+  // happens to serialize calls today, but programmatic callers may not.
+  private inFlight: Promise<void> = Promise.resolve();
+
   /**
    * Send a user message and process the response
+   *
+   * Concurrent calls are queued and run in call order; a rejected call does
+   * not block the calls queued behind it.
    */
   async sendMessage(userMessage: string): Promise<ChatResponse[]> {
+    const previous = this.inFlight;
+    let release!: () => void;
+    this.inFlight = new Promise((resolve) => (release = resolve));
+
+    await previous;
+    try {
+      return await this.sendMessageSerialized(userMessage);
+    } finally {
+      release();
+    }
+  }
+
+  private async sendMessageSerialized(userMessage: string): Promise<ChatResponse[]> {
     if (!this.initialized) {
       await this.initialize();
     }
@@ -220,6 +269,19 @@ export class ChatEngine {
   }
 
   /**
+   * Build the audit-log preview payload for a pending preview
+   */
+  private static previewAuditPayload(preview: PendingPreview): {
+    summary: string;
+    affectedCount: number;
+  } {
+    return {
+      summary: preview.preview.summary,
+      affectedCount: preview.preview.affected.length,
+    };
+  }
+
+  /**
    * Handle response to a pending preview
    */
   private async handlePreviewResponse(
@@ -238,6 +300,18 @@ export class ChatEngine {
     if (!approved) {
       // User declined
       this.messages.push({
+        role: 'tool',
+        content: JSON.stringify({
+          success: false,
+          error: {
+            code: 'USER_DECLINED',
+            message: 'The user declined the destructive action.',
+          },
+        }),
+        toolCallId: preview.toolCallId,
+        toolName: preview.toolAlias,
+      });
+      this.messages.push({
         role: 'user',
         content: userMessage,
       });
@@ -252,10 +326,7 @@ export class ChatEngine {
       // Log audit entry for declined action (fire-and-forget)
       await logDestructiveActionSafe({
         abilityName: preview.ability.name,
-        preview: {
-          summary: preview.preview.summary,
-          affectedCount: preview.preview.affected.length,
-        },
+        preview: ChatEngine.previewAuditPayload(preview),
         userDecision: 'declined',
         input: preview.input,
       });
@@ -271,17 +342,66 @@ export class ChatEngine {
       ];
     }
 
-    // User approved - execute with confirm
-    this.messages.push({
-      role: 'user',
-      content: 'User approved: yes',
+    // Record the approval BEFORE dispatching the confirm call, so a transport
+    // failure (or process death) mid-confirm still leaves durable evidence
+    // that an approved destructive action may have reached the Dashboard.
+    await logDestructiveActionSafe({
+      abilityName: preview.ability.name,
+      preview: ChatEngine.previewAuditPayload(preview),
+      userDecision: 'approved',
+      stage: 'dispatch',
+      input: preview.input,
     });
 
-    const result = await this.executor.execute(
-      preview.ability.name,
-      preview.input,
-      { confirm: true }
-    );
+    // User approved - execute with confirm. A throw here arrives after
+    // dispatch was initiated: the outcome is unknown. Fail closed — audit the
+    // uncertainty, keep history coherent, and tell the user to verify before
+    // retrying. Never auto-retry the confirm.
+    let result: ExecutionResult;
+    try {
+      result = await executeAbilityWithPolicy(
+        this.executor,
+        preview.ability,
+        preview.input,
+        { confirm: true }
+      );
+    } catch (error) {
+      const reason = getInputSanitizer().sanitizeErrorMessage(
+        error instanceof Error ? error.message : String(error)
+      );
+      await logDestructiveActionSafe({
+        abilityName: preview.ability.name,
+        preview: ChatEngine.previewAuditPayload(preview),
+        userDecision: 'approved',
+        execution: { success: false, error: reason, outcomeUnknown: true },
+        input: preview.input,
+      });
+      this.messages.push({
+        role: 'tool',
+        content: JSON.stringify({
+          success: false,
+          error: {
+            code: 'OUTCOME_UNKNOWN',
+            message:
+              'The confirm call failed after dispatch; the action may or may not have executed. Do not retry without verifying Dashboard state.',
+          },
+        }),
+        toolCallId: preview.toolCallId,
+        toolName: preview.toolAlias,
+      });
+      this.messages.push({ role: 'user', content: userMessage });
+      this.truncateHistory();
+      return [
+        {
+          type: 'error',
+          error:
+            `Confirm call for "${preview.ability.name}" failed after dispatch: ${reason}. ` +
+            'The Dashboard may or may not have executed the action — verify its state before retrying.',
+          tool: preview.ability.name,
+          code: 'OUTCOME_UNKNOWN',
+        },
+      ];
+    }
 
     // Log audit entry for approved and executed action (fire-and-forget)
     const executionAudit: { success: boolean; error?: string } = {
@@ -292,23 +412,26 @@ export class ChatEngine {
     }
     await logDestructiveActionSafe({
       abilityName: preview.ability.name,
-      preview: {
-        summary: preview.preview.summary,
-        affectedCount: preview.preview.affected.length,
-      },
+      preview: ChatEngine.previewAuditPayload(preview),
       userDecision: 'approved',
       execution: executionAudit,
       input: preview.input,
     });
 
-    // Add result to context
+    // Add result to context. PROVIDER BOUNDARY: only a key-redacted copy of
+    // the result enters the history sent to the LLM provider; the unredacted
+    // result still goes back to the local user below.
     const toolResultMsg = {
       role: 'tool' as const,
-      content: JSON.stringify(result),
-      toolCallId: `execute_${preview.ability.name}`,
-      toolName: preview.ability.name,
+      content: JSON.stringify(redactSensitiveKeys(result)),
+      toolCallId: preview.toolCallId,
+      toolName: preview.toolAlias,
     };
     this.messages.push(toolResultMsg);
+    this.messages.push({
+      role: 'user',
+      content: 'User approved: yes',
+    });
 
     // Truncate after preview resolution (safe boundary)
     this.truncateHistory();
@@ -361,6 +484,7 @@ export class ChatEngine {
       const parseResult = parseResponse(llmResponse, {
         abilities: this.abilities,
         validateToolExists: true,
+        toolAliases: this.toolAliases,
       });
 
       // Handle parse errors with retry
@@ -370,7 +494,9 @@ export class ChatEngine {
           // Add retry prompt
           this.messages.push({
             role: 'assistant',
-            content: llmResponse.content,
+            content:
+              llmResponse.content ||
+              'Invalid tool call omitted due to a protocol error.',
           });
           this.messages.push({
             role: 'user',
@@ -406,16 +532,32 @@ export class ChatEngine {
       const toolResponse = parseResult.response;
       toolCallCount++;
 
+      const toolCallId = toolResponse.id ?? `call_${++this.fallbackToolCallId}`;
+      const toolAlias =
+        this.abilityAliases.get(toolResponse.tool) ?? toolResponse.tool;
+
       // Add assistant message with tool call
       this.messages.push({
         role: 'assistant',
         content: llmResponse.content,
+        toolCalls: [
+          {
+            id: toolCallId,
+            name: toolAlias,
+            arguments: toolResponse.input,
+            ...(toolResponse.thoughtSignature !== undefined
+              ? { thoughtSignature: toolResponse.thoughtSignature }
+              : {}),
+          },
+        ],
       });
 
       // Execute tool
       const toolResult = await this.executeTool(
         toolResponse.tool,
-        toolResponse.input
+        toolResponse.input,
+        toolCallId,
+        toolAlias
       );
 
       if (toolResult.type === 'preview') {
@@ -426,18 +568,22 @@ export class ChatEngine {
 
       responses.push(toolResult);
 
-      // Add tool result to context
+      // Add tool result to context. PROVIDER BOUNDARY: ability output is
+      // Dashboard-controlled data leaving the machine for a third-party LLM
+      // provider — redact sensitive-looking keys before it enters history
+      // (AGENTS.md: "minimize and redact secrets/customer data"). The
+      // unredacted result was already returned to the local user above.
       if (toolResult.type === 'tool_result') {
         const resultContent =
           toolResult.result.success
-            ? JSON.stringify(toolResult.result.data)
-            : JSON.stringify(toolResult.result.error);
+            ? JSON.stringify(redactSensitiveKeys(toolResult.result.data))
+            : JSON.stringify(redactSensitiveKeys(toolResult.result.error));
 
         this.messages.push({
           role: 'tool',
           content: resultContent,
-          toolCallId: toolResponse.id ?? `call_${toolCallCount}`,
-          toolName: toolResponse.tool,
+          toolCallId,
+          toolName: toolAlias,
         });
 
         // Truncate between tool-call iterations to enforce context limit
@@ -448,8 +594,8 @@ export class ChatEngine {
         this.messages.push({
           role: 'tool',
           content: JSON.stringify({ error: toolResult.error }),
-          toolCallId: toolResponse.id ?? `call_${toolCallCount}`,
-          toolName: toolResponse.tool,
+          toolCallId,
+          toolName: toolAlias,
         });
         break; // Stop on error
       }
@@ -473,7 +619,9 @@ export class ChatEngine {
    */
   private async executeTool(
     toolName: string,
-    input: Record<string, unknown>
+    input: Record<string, unknown>,
+    toolCallId: string,
+    toolAlias: string
   ): Promise<ChatResponse> {
     // Find ability
     const ability = await this.executor.getAbility(toolName);
@@ -484,18 +632,62 @@ export class ChatEngine {
       };
     }
 
+    input = getInputSanitizer().sanitize(input);
+    if (ability.input_schema) {
+      try {
+        const validated = getSchemaValidator().validateOrThrow(
+          input,
+          ability.input_schema,
+          ability.name
+        );
+        input = validated.coerced ?? input;
+      } catch (error) {
+        if (error instanceof SchemaValidationError) {
+          const validationError: NonNullable<ExecutionResult['error']> = {
+            code: error.code,
+            message: error.message,
+            details: error.details,
+          };
+          if (error.hint) {
+            validationError.hint = error.hint;
+          }
+          return {
+            type: 'tool_result',
+            tool: ability.name,
+            result: {
+              success: false,
+              error: validationError,
+            },
+          };
+        }
+        // A throw here would leave the already-pushed assistant tool call
+        // dangling in history (no matching tool message), corrupting the next
+        // provider request. Surface it like the execution catch-all below.
+        return {
+          type: 'error',
+          error: error instanceof Error ? error.message : String(error),
+          tool: ability.name,
+        };
+      }
+    }
+
     // Check if destructive
     const classification = this.safetyController.classify(ability);
 
     if (classification.requiresSafetyFlow) {
       // SAFETY: Destructive actions always preview first
       // AI cannot skip this step
-      return this.executeWithPreview(ability, input);
+      return this.executeWithPreview(
+        ability,
+        input,
+        toolCallId,
+        toolAlias
+      );
     }
 
     // Safe to execute directly
     try {
-      const result = await this.executor.execute(ability.name, input);
+      const result = await executeAbilityWithPolicy(this.executor, ability, input);
       return {
         type: 'tool_result',
         tool: ability.name,
@@ -505,6 +697,7 @@ export class ChatEngine {
       return {
         type: 'error',
         error: error instanceof Error ? error.message : String(error),
+        tool: ability.name,
       };
     }
   }
@@ -514,12 +707,15 @@ export class ChatEngine {
    */
   private async executeWithPreview(
     ability: Ability,
-    input: Record<string, unknown>
+    input: Record<string, unknown>,
+    toolCallId: string,
+    toolAlias: string
   ): Promise<ChatResponse> {
     try {
       // Execute with dry_run
-      const previewResult = await this.executor.execute(
-        ability.name,
+      const previewResult = await executeAbilityWithPolicy(
+        this.executor,
+        ability,
         input,
         { dryRun: true }
       );
@@ -528,6 +724,7 @@ export class ChatEngine {
         return {
           type: 'error',
           error: previewResult.error?.message ?? 'Preview failed',
+          tool: ability.name,
         };
       }
 
@@ -539,7 +736,7 @@ export class ChatEngine {
       );
 
       // Store pending preview for approval
-      this.pendingPreview = { ability, input, preview };
+      this.pendingPreview = { ability, input, preview, toolCallId, toolAlias };
 
       return {
         type: 'preview',
@@ -550,6 +747,7 @@ export class ChatEngine {
       return {
         type: 'error',
         error: error instanceof Error ? error.message : String(error),
+        tool: ability.name,
       };
     }
   }
@@ -567,7 +765,7 @@ export class ChatEngine {
   ): Promise<LLMResponse> {
     let content = '';
     // Providers yield complete tool calls (not deltas), so we collect them directly
-    const toolCalls: Array<{ id: string; name: string; arguments: Record<string, unknown> }> = [];
+    const toolCalls: ToolCall[] = [];
 
     try {
       for await (const chunk of stream) {
@@ -586,7 +784,10 @@ export class ChatEngine {
           toolCalls.push({
             id: chunk.toolCall.id,
             name: chunk.toolCall.name,
-            arguments: chunk.toolCall.arguments ?? {},
+            arguments: chunk.toolCall.arguments,
+            ...(chunk.toolCall.thoughtSignature !== undefined
+              ? { thoughtSignature: chunk.toolCall.thoughtSignature }
+              : {}),
           });
         }
 
@@ -599,7 +800,9 @@ export class ChatEngine {
       // If streaming fails mid-response, return what we have so far
       if (content || toolCalls.length > 0) {
         console.error(
-          `[ChatEngine] Stream interrupted: ${error instanceof Error ? error.message : String(error)}`
+          `[ChatEngine] Stream interrupted: ${stripControlChars(
+            error instanceof Error ? error.message : String(error)
+          )}`
         );
         return {
           content,
@@ -610,6 +813,19 @@ export class ChatEngine {
       }
       // If no content accumulated, re-throw
       throw error;
+    }
+
+    // A stream that ended cleanly but delivered nothing is a failed response,
+    // not an empty answer: reporting finishReason 'stop' here would flow into
+    // the envelope parser's plain-text fallback and surface as a successful
+    // blank reply (exit 0 in one-shot mode).
+    if (!content && toolCalls.length === 0) {
+      return {
+        content: '',
+        toolCalls: undefined,
+        finishReason: 'error',
+        model: this.provider.getDefaultModel(),
+      };
     }
 
     // Return accumulated LLMResponse
@@ -638,13 +854,6 @@ export class ChatEngine {
   }
 
   /**
-   * Cancel pending preview
-   */
-  cancelPendingPreview(): void {
-    this.pendingPreview = null;
-  }
-
-  /**
    * Get conversation history (for debugging)
    */
   getHistory(): Message[] {
@@ -665,151 +874,16 @@ export class ChatEngine {
   }
 
   /**
-   * Get message count (excluding system prompt)
-   */
-  private getMessageCount(): number {
-    return this.messages.length - 1;
-  }
-
-  /**
-   * Estimate tokens for a set of messages using character count as a rough proxy.
-   * Uses character_count / 4 as a heuristic (common approximation for English text).
+   * Truncate message history via the context window.
    *
-   * NOTE: This is a rough estimate. Actual token counts from LLMResponse.usage
-   * are more accurate when available.
-   *
-   * @param messages - Messages to estimate tokens for
-   * @returns Estimated token count
-   */
-  private estimateTokens(messages: Message[]): number {
-    let totalChars = 0;
-    for (const msg of messages) {
-      if (typeof msg.content === 'string') {
-        totalChars += msg.content.length;
-      }
-    }
-    // Character count / 4 is a common heuristic for English text tokenization
-    return Math.ceil(totalChars / 4);
-  }
-
-  /**
-   * Check if context truncation should occur based on message count limits.
-   * Token-based limits are reserved for future implementation.
-   *
-   * @returns true if truncation should occur, false if:
-   *   - maxContextMessages is undefined (no limit)
-   *   - maxContextMessages is 0 (explicit unlimited)
-   *   - message count is within limit
-   */
-  private shouldTruncate(): boolean {
-    if (this.maxContextMessages === undefined || this.maxContextMessages === 0) {
-      return false; // No limit configured or explicitly unlimited
-    }
-    return this.getMessageCount() > this.maxContextMessages;
-  }
-
-  /**
-   * Find the index where truncation should start, respecting message boundaries.
-   * This ensures we keep complete user-assistant exchanges and tool call-result pairs.
-   *
-   * @returns Index in the messages array where truncation should start (exclusive of system prompt)
-   */
-  private findTruncationPoint(): number {
-    if (this.maxContextMessages === undefined || this.maxContextMessages <= 0) {
-      return 1; // Keep only system prompt
-    }
-
-    // Calculate how many messages to keep (plus 1 for system prompt)
-    const targetLength = this.maxContextMessages + 1;
-
-    if (this.messages.length <= targetLength) {
-      return this.messages.length; // No truncation needed
-    }
-
-    // Start from where we'd ideally cut
-    const idealTruncationIndex = this.messages.length - this.maxContextMessages;
-
-    // Ensure we don't cut the system prompt
-    let truncationIndex = Math.max(1, idealTruncationIndex);
-
-    // Walk forward to find a safe boundary (start of a user message)
-    // This ensures we don't split:
-    // - user message + assistant response
-    // - tool call + tool result
-    // - retry prompts from their original failed attempt
-    const maxSearchIndex = this.messages.length;
-    while (truncationIndex < maxSearchIndex) {
-      const msg = this.messages[truncationIndex];
-      // Safe to cut at the start of a user message
-      if (msg && msg.role === 'user') {
-        break;
-      }
-      truncationIndex++;
-    }
-
-    // Fallback: if no user boundary found, keep at least maxContextMessages
-    // This ensures we don't drop all messages when the limit is very small
-    if (truncationIndex >= this.messages.length) {
-      truncationIndex = Math.max(1, idealTruncationIndex);
-    }
-
-    return truncationIndex;
-  }
-
-  /**
-   * Truncate message history using a sliding window approach.
-   * Preserves:
-   * - System prompt (always first message)
-   * - Messages since pending preview (if any)
-   * - Most recent N messages where N = maxContextMessages
-   * - Complete message exchanges (user-assistant, tool call-result pairs)
+   * Safety: Never truncates while a preview is pending — this preserves
+   * context for the approval decision.
    */
   private truncateHistory(): void {
-    if (!this.shouldTruncate()) {
-      return;
-    }
-
-    // Safety: Never truncate if there's a pending preview
-    // This preserves context for the approval decision
     if (this.pendingPreview !== null) {
       return;
     }
-
-    const systemPrompt = this.messages[0];
-    if (!systemPrompt) {
-      return;
-    }
-
-    const truncationIndex = this.findTruncationPoint();
-    const messagesBefore = this.messages.length;
-
-    // Keep system prompt + messages from truncation point onwards
-    this.messages = [systemPrompt, ...this.messages.slice(truncationIndex)];
-
-    // Debug logging (only if significant truncation occurred)
-    const messagesRemoved = messagesBefore - this.messages.length;
-    if (messagesRemoved > 0 && process.env['DEBUG']) {
-      console.debug(
-        `[ChatEngine] Truncated ${messagesRemoved} messages (${messagesBefore - 1} -> ${this.messages.length - 1})`
-      );
-    }
-  }
-
-  /**
-   * Get context window statistics for monitoring.
-   *
-   * @returns Object with current message count, max limit, and estimated tokens
-   */
-  getContextStats(): {
-    messageCount: number;
-    maxMessages: number | undefined;
-    estimatedTokens: number;
-  } {
-    return {
-      messageCount: this.getMessageCount(),
-      maxMessages: this.maxContextMessages,
-      estimatedTokens: this.estimateTokens(this.messages),
-    };
+    this.messages = this.contextWindow.truncate(this.messages);
   }
 
   /**

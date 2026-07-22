@@ -18,7 +18,7 @@ import {
   formatHeading,
   formatKeyValue,
 } from '../../output/formatter.js';
-import { InputError, MutualExclusionError } from '../../utils/errors.js';
+import { InputError, MutualExclusionError, UnknownOutcomeError } from '../../utils/errors.js';
 import { getSafetyController, type PreviewResult } from '../../core/safety-controller.js';
 import { getSchemaValidator } from '../../validation/schema-validator.js';
 import { getInputSanitizer } from '../../validation/input-sanitizer.js';
@@ -26,6 +26,8 @@ import { promptForConfirmation, isInteractive } from '../../utils/prompt.js';
 import { logDestructiveActionSafe } from '../../utils/audit-logger.js';
 import type { WatchResult } from '../../core/batch-manager.js';
 import { APIError } from '../../utils/errors.js';
+import type { Ability } from '../../core/abilities-executor.js';
+import { executeAbilityWithPolicy } from '../../core/execute-ability-with-policy.js';
 
 export default class AbilitiesRun extends BaseCommand {
   static description = 'Execute an ability';
@@ -118,13 +120,33 @@ export default class AbilitiesRun extends BaseCommand {
     // Resolve input from --input, --input-file, or stdin
     const rawInput = await this.resolveInput(flags.input, flags['input-file']);
 
-    // Parse input JSON
-    let input: Record<string, unknown>;
+    // Parse input JSON. The raw input never goes into the error message: it
+    // can carry secrets (a password pasted into a malformed payload) that
+    // would otherwise land in stderr, CI logs, or the --json envelope.
+    let parsed: unknown;
     try {
-      input = JSON.parse(rawInput) as Record<string, unknown>;
-    } catch {
-      throw new InputError(`Invalid JSON input: ${rawInput}`);
+      parsed = JSON.parse(rawInput) as unknown;
+    } catch (error) {
+      const position = error instanceof Error
+        ? /at position (\d+)/.exec(error.message)?.[1]
+        : undefined;
+      throw new InputError(
+        `Invalid JSON input${position ? ` (parse error at position ${position})` : ''}`,
+        undefined,
+        'Check the JSON passed via --input, --input-file, or stdin. Use --input-file for complex payloads.'
+      );
     }
+
+    // Abilities take named parameters; an array or primitive would otherwise
+    // slip through to the Dashboard when the ability declares no schema.
+    if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      throw new InputError(
+        'Input JSON must be an object of ability parameters',
+        undefined,
+        'Pass a JSON object, e.g. --input \'{"site_id": 5}\'.'
+      );
+    }
+    let input: Record<string, unknown> = parsed as Record<string, unknown>;
 
     // Sanitize input
     input = inputSanitizer.sanitize(input);
@@ -169,11 +191,11 @@ export default class AbilitiesRun extends BaseCommand {
 
     if (dryRun || !shouldExecute) {
       // Preview mode — --dry-run always previews, regardless of ability classification
-      await this.executePreview(ability.name, input, dryRun);
+      await this.executePreview(ability, input);
     } else if (confirm && safetyController.requiresSafetyFlow(ability)) {
       // Destructive execution with confirmation
       await this.executeDestructive({
-        abilityName: ability.name,
+        ability,
         input,
         force: flags.force,
         wait: flags.wait,
@@ -182,7 +204,7 @@ export default class AbilitiesRun extends BaseCommand {
     } else {
       // Direct execution (read-only or non-destructive)
       await this.executeDirect({
-        abilityName: ability.name,
+        ability,
         input,
         wait: flags.wait,
         waitTimeout: flags['wait-timeout'],
@@ -194,21 +216,20 @@ export default class AbilitiesRun extends BaseCommand {
    * Execute preview (dry_run mode)
    */
   private async executePreview(
-    abilityName: string,
-    input: Record<string, unknown>,
-    _dryRun?: boolean
+    ability: Ability,
+    input: Record<string, unknown>
   ): Promise<void> {
     const executor = await this.getExecutor();
+    const abilityName = ability.name;
 
-    const result = await executor.execute(abilityName, input, { dryRun: true });
+    const result = await executeAbilityWithPolicy(executor, ability, input, { dryRun: true });
 
     if (!result.success) {
       throw new InputError(result.error?.message ?? 'Preview failed', result.error);
     }
 
     const safetyController = getSafetyController();
-    const ability = await executor.getAbility(abilityName);
-    const preview = safetyController.formatPreviewResult(ability!, input, result);
+    const preview = safetyController.formatPreviewResult(ability, input, result);
 
     this.output(
       {
@@ -225,32 +246,75 @@ export default class AbilitiesRun extends BaseCommand {
    * Execute destructive ability with confirmation
    */
   private async executeDestructive(opts: {
-    abilityName: string;
+    ability: Ability;
     input: Record<string, unknown>;
     force: boolean;
     wait?: boolean;
     waitTimeout?: number;
   }): Promise<void> {
-    const { abilityName, input, force, wait, waitTimeout } = opts;
+    const { ability, input, force, wait, waitTimeout } = opts;
+    const abilityName = ability.name;
     const executor = await this.getExecutor();
     const safetyController = getSafetyController();
 
-    // Get preview data first for audit logging (gracefully handle failures)
+    // Preview is mandatory and fail-closed (plan.md §2.1): a destructive
+    // execution must never proceed without a successful dry_run the operator
+    // has seen. --force skips the prompt below, never this preview.
     let preview: PreviewResult | undefined;
+    let previewFailure: unknown;
     try {
-      const ability = await executor.getAbility(abilityName);
-      const previewResult = await executor.execute(abilityName, input, { dryRun: true });
-      if (previewResult.success && ability) {
+      const previewResult = await executeAbilityWithPolicy(
+        executor,
+        ability,
+        input,
+        { dryRun: true }
+      );
+      if (previewResult.success) {
         preview = safetyController.formatPreviewResult(ability, input, previewResult);
+      } else {
+        previewFailure = previewResult.error ?? new Error('dry_run returned no result');
       }
-    } catch {
-      // Preview failure is non-fatal - continue without preview data in audit
+    } catch (error) {
+      previewFailure = error;
     }
 
-    // Helper to build preview metadata for audit entries (spread-friendly)
-    const previewMeta = preview
-      ? { preview: { summary: preview.summary, affectedCount: preview.affected.length } }
-      : {};
+    if (!preview) {
+      const reason = getInputSanitizer().sanitizeErrorMessage(
+        previewFailure instanceof Error
+          ? previewFailure.message
+          : ((previewFailure as { message?: string } | undefined)?.message ?? 'unknown error')
+      );
+      await logDestructiveActionSafe({
+        abilityName,
+        userDecision: 'declined',
+        execution: { success: false, error: `Preview failed: ${reason}` },
+        input,
+      });
+      // Only the sanitized reason goes into details: the raw previewFailure
+      // could carry an unsanitized upstream payload into the --json envelope
+      // (and an Error instance would serialize to {} anyway).
+      throw new APIError(
+        'PREVIEW_FAILED',
+        `Preview (dry_run) failed for "${abilityName}": ${reason}. Destructive execution refused.`,
+        undefined,
+        { reason }
+      );
+    }
+
+    // Show the preview before any approval decision. In JSON mode it goes to
+    // stderr so stdout stays a single clean envelope (preview data is also
+    // included in the final envelope below).
+    const previewText = this.formatPreviewOutput(preview);
+    if (this.jsonOutput) {
+      this.logToStderr(previewText);
+    } else if (!this.quietMode) {
+      this.log(previewText);
+    }
+
+    // Preview metadata for audit entries (spread-friendly)
+    const previewMeta = {
+      preview: { summary: preview.summary, affectedCount: preview.affected.length },
+    };
 
     // In non-interactive mode, require --force or fail
     if (!isInteractive() && !force) {
@@ -282,8 +346,48 @@ export default class AbilitiesRun extends BaseCommand {
       }
     }
 
-    // Execute with confirm
-    const result = await executor.execute(abilityName, input, { confirm: true });
+    // Record the approval BEFORE dispatching the confirm call. If the process
+    // dies or the transport fails mid-confirm, this entry is the only durable
+    // evidence that an approved destructive action may have reached the
+    // Dashboard.
+    await logDestructiveActionSafe({
+      abilityName,
+      ...previewMeta,
+      userDecision: 'approved',
+      stage: 'dispatch',
+      input,
+    });
+
+    // Execute with confirm. A throw here (timeout, connection reset, response
+    // parse failure) arrives AFTER dispatch was initiated: the outcome is
+    // unknown, not a plain network failure. Fail closed: audit the uncertainty
+    // and surface it as OUTCOME_UNKNOWN. Never auto-retry the confirm.
+    let result: Awaited<ReturnType<typeof executeAbilityWithPolicy>>;
+    try {
+      result = await executeAbilityWithPolicy(
+        executor,
+        ability,
+        input,
+        { confirm: true }
+      );
+    } catch (error) {
+      const reason = getInputSanitizer().sanitizeErrorMessage(
+        error instanceof Error ? error.message : String(error)
+      );
+      await logDestructiveActionSafe({
+        abilityName,
+        ...previewMeta,
+        userDecision: 'approved',
+        execution: { success: false, error: reason, outcomeUnknown: true },
+        input,
+      });
+      throw new UnknownOutcomeError(
+        `Confirm call for "${abilityName}" failed after dispatch: ${reason}. ` +
+          'The Dashboard may or may not have executed the action.',
+        { reason },
+        'Verify the Dashboard state (e.g. with a read-only ability) before retrying. Do not re-run with --confirm until you have confirmed the action did not complete.'
+      );
+    }
 
     // Build execution result for audit
     const executionResult: { success: boolean; error?: string } = {
@@ -323,8 +427,8 @@ export default class AbilitiesRun extends BaseCommand {
         {
           mode: 'batch',
           ability: abilityName,
-          jobId: result.jobId,
           ...result,
+          preview,
         },
         () => this.formatBatchOutput(abilityName, result.jobId!)
       );
@@ -336,6 +440,7 @@ export default class AbilitiesRun extends BaseCommand {
         mode: 'execute',
         ability: abilityName,
         ...result,
+        preview,
       },
       () => this.formatExecutionOutput(abilityName, result.data)
     );
@@ -345,14 +450,15 @@ export default class AbilitiesRun extends BaseCommand {
    * Execute directly (read-only or non-destructive)
    */
   private async executeDirect(opts: {
-    abilityName: string;
+    ability: Ability;
     input: Record<string, unknown>;
     wait?: boolean;
     waitTimeout?: number;
   }): Promise<void> {
-    const { abilityName, input, wait, waitTimeout } = opts;
+    const { ability, input, wait, waitTimeout } = opts;
+    const abilityName = ability.name;
     const executor = await this.getExecutor();
-    const result = await executor.execute(abilityName, input);
+    const result = await executeAbilityWithPolicy(executor, ability, input);
 
     if (!result.success) {
       throw new APIError(
@@ -375,7 +481,6 @@ export default class AbilitiesRun extends BaseCommand {
         {
           mode: 'batch',
           ability: abilityName,
-          jobId: result.jobId,
           ...result,
         },
         () => this.formatBatchOutput(abilityName, result.jobId!)
@@ -408,27 +513,24 @@ export default class AbilitiesRun extends BaseCommand {
     });
 
     if (watchResult.timedOut) {
-      // Output partial results and throw API error for exit code 4
-      this.output(
-        {
-          mode: 'batch',
-          ability: abilityName,
-          jobId,
-          timedOut: true,
-          ...watchResult.status,
-          elapsed_ms: watchResult.elapsed,
-        },
-        () => formatWarning(`Batch job ${jobId} timed out after ${timeoutSeconds}s (partial results returned)`)
-      );
+      // Human mode surfaces partial results before the error line. JSON mode
+      // must emit exactly ONE document, so the partial status travels in the
+      // error envelope's details instead of a preceding success envelope.
+      if (!this.jsonOutput) {
+        this.output(
+          {},
+          () => formatWarning(`Batch job ${jobId} timed out after ${timeoutSeconds}s (partial results returned)`)
+        );
+      }
       throw new APIError(
         'BATCH_TIMEOUT',
         `Batch job timed out after ${timeoutSeconds}s`,
         undefined,
-        { jobId, partialStatus: watchResult.status }
+        { jobId, partialStatus: watchResult.status, elapsed_ms: watchResult.elapsed }
       );
     }
 
-    // Job completed (or failed)
+    // Job reached a terminal status
     const data = {
       mode: 'batch',
       ability: abilityName,
@@ -437,6 +539,29 @@ export default class AbilitiesRun extends BaseCommand {
       ...watchResult.status,
       elapsed_ms: watchResult.elapsed,
     };
+
+    // Non-completed terminal statuses map to exit code 4. Human mode prints
+    // the result details first; JSON mode emits only the error envelope
+    // (single-document contract), carrying the status in details.
+    if (
+      watchResult.status.status === 'failed' ||
+      watchResult.status.status === 'partial' ||
+      watchResult.status.status === 'cancelled'
+    ) {
+      if (!this.jsonOutput) {
+        this.output(data, () => this.formatWatchResultOutput(abilityName, jobId, watchResult));
+      }
+      throw new APIError(
+        watchResult.status.status === 'failed'
+          ? 'BATCH_FAILED'
+          : watchResult.status.status === 'partial'
+            ? 'BATCH_PARTIAL'
+            : 'BATCH_CANCELLED',
+        `Batch job ${jobId} finished with status "${watchResult.status.status}"`,
+        undefined,
+        { jobId, status: watchResult.status, elapsed_ms: watchResult.elapsed }
+      );
+    }
 
     this.output(data, () => this.formatWatchResultOutput(abilityName, jobId, watchResult));
   }

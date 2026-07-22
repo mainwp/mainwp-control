@@ -9,6 +9,7 @@ import { join } from 'node:path';
 import { ConfigError } from '../utils/errors.js';
 import { getConfigDir } from './settings.js';
 import { atomicWriteFile } from './fs-utils.js';
+import { sanitizeSingleLine } from '../utils/terminal-sanitizer.js';
 
 /**
  * Profile data (credentials stored separately in keychain)
@@ -80,41 +81,67 @@ async function saveProfilesFile(data: ProfilesFile): Promise<void> {
 }
 
 /**
+ * Validate a Dashboard URL's format and protocol
+ *
+ * `rejectUserinfo` is set only on intake paths (login, save): legacy profiles
+ * already on disk with embedded credentials must keep loading so their
+ * URLs can be masked at display instead of bricking the config.
+ */
+export function validateDashboardUrl(
+  url: string,
+  options: { rejectUserinfo?: boolean } = {}
+): void {
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    // Never echo the malformed URL: it can embed credentials
+    // (https://user:pass@host) that would land in terminal output and logs.
+    throw new ConfigError(
+      'Invalid Dashboard URL format',
+      undefined,
+      'URL must include protocol (http:// or https://) and hostname'
+    );
+  }
+
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+    throw new ConfigError(
+      `Invalid URL protocol: ${parsed.protocol}. Must be http or https`,
+      undefined,
+      'Only HTTP and HTTPS protocols are supported'
+    );
+  }
+
+  // SECURITY: Reject rather than silently strip — the user should know
+  // their pasted URL carried credentials.
+  if (options.rejectUserinfo && (parsed.username || parsed.password)) {
+    throw new ConfigError(
+      'Embedded credentials in the dashboard URL are not supported',
+      undefined,
+      'Pass the username with --username and enter the password at the password prompt'
+    );
+  }
+
+  // HTTP warning is emitted at login time via formatWarning, not here
+}
+
+/**
  * Profile store class
  */
 export class ProfileStore {
   private data: ProfilesFile | null = null;
 
-  /**
-   * Validate a URL format and protocol
-   */
-  private validateUrl(url: string): void {
-    let parsed: URL;
-    try {
-      parsed = new URL(url);
-    } catch {
-      throw new ConfigError(
-        `Invalid Dashboard URL format: ${url}`,
-        undefined,
-        'URL must include protocol (http:// or https://) and hostname'
-      );
-    }
-
-    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
-      throw new ConfigError(
-        `Invalid URL protocol: ${parsed.protocol}. Must be http or https`,
-        undefined,
-        'Only HTTP and HTTPS protocols are supported'
-      );
-    }
-
-    // HTTP warning is emitted at login time via formatWarning, not here
+  private validateUrl(url: string, options: { rejectUserinfo?: boolean } = {}): void {
+    validateDashboardUrl(url, options);
   }
 
   /**
    * Validate a profile's required fields and URL format
    */
-  private validateProfile(profile: Profile): void {
+  private validateProfile(
+    profile: Profile,
+    options: { rejectUserinfo?: boolean } = {}
+  ): void {
     const validationHint = 'Run `mainwpcontrol login` to create a valid profile';
 
     if (!profile.name || profile.name.trim().length === 0) {
@@ -149,7 +176,21 @@ export class ProfileStore {
       );
     }
 
-    this.validateUrl(profile.dashboardUrl);
+    this.validateUrl(profile.dashboardUrl, options);
+
+    // SECURITY: a non-boolean skipSSLVerification (e.g. the string "false")
+    // is truthy and would silently disable TLS verification downstream.
+    // Fail closed: coerce to false and warn, mirroring readBooleanSetting()
+    // in settings.ts.
+    if (
+      profile.skipSSLVerification !== undefined &&
+      typeof profile.skipSSLVerification !== 'boolean'
+    ) {
+      console.error(
+        `Warning: Ignoring invalid skipSSLVerification for profile "${sanitizeSingleLine(profile.name)}"; expected a boolean. Falling back to false.`
+      );
+      profile.skipSSLVerification = false;
+    }
   }
 
   /**
@@ -175,6 +216,10 @@ export class ProfileStore {
       data.activeProfile &&
       !data.profiles.some((p) => p.name === data.activeProfile)
     ) {
+      console.error(
+        `Warning: Active profile "${sanitizeSingleLine(data.activeProfile)}" no longer exists. ` +
+        `Falling back to "${sanitizeSingleLine(data.profiles[0]?.name ?? 'none')}".`
+      );
       data.activeProfile = data.profiles[0]?.name;
     }
   }
@@ -255,8 +300,9 @@ export class ProfileStore {
    * Save a profile (create or update)
    */
   async save(profile: Profile): Promise<void> {
-    // Validate profile before saving
-    this.validateProfile(profile);
+    // Validate profile before saving; intake is the only place userinfo
+    // URLs are rejected outright (legacy stored profiles are masked instead)
+    this.validateProfile(profile, { rejectUserinfo: true });
 
     const data = await this.ensureLoaded();
 

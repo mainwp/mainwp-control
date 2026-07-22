@@ -93,17 +93,99 @@ describe('BatchManager', () => {
         ['completed', 'completed'],
         ['failed', 'failed'],
         ['partial', 'partial'],
-        ['unknown', 'pending'], // Defaults to pending
+        ['cancelled', 'cancelled'],
       ];
 
       for (const [input, expected] of statusMappings) {
+        const jobId = `job_${input}`;
         mockGet.mockResolvedValueOnce({
-          data: { job_id: 'job', status: input },
+          data: { job_id: jobId, status: input },
         });
 
-        const status = await manager.getJobStatus('job');
+        const status = await manager.getJobStatus(jobId);
         expect(status.status).toBe(expected);
       }
+    });
+
+    it('rejects unknown or missing status values', async () => {
+      mockGet
+        .mockResolvedValueOnce({ data: { job_id: 'job', status: 'mystery' } })
+        .mockResolvedValueOnce({ data: { job_id: 'job' } });
+
+      await expect(manager.getJobStatus('job')).rejects.toMatchObject({ code: 'INVALID_RESPONSE' });
+      await expect(manager.getJobStatus('job')).rejects.toMatchObject({ code: 'INVALID_RESPONSE' });
+    });
+
+    it('rejects a response for a different job id', async () => {
+      mockGet.mockResolvedValue({
+        data: { job_id: 'job_other', status: 'running' },
+      });
+
+      await expect(manager.getJobStatus('job_expected')).rejects.toMatchObject({
+        code: 'INVALID_RESPONSE',
+      });
+    });
+
+    it('rejects unsafe requested and response job ids', async () => {
+      await expect(manager.getJobStatus('bad\njob')).rejects.toMatchObject({
+        code: 'INVALID_RESPONSE',
+      });
+      expect(mockGet).not.toHaveBeenCalled();
+
+      mockGet.mockResolvedValue({
+        data: { job_id: 'bad\njob', status: 'running' },
+      });
+      await expect(manager.getJobStatus('job')).rejects.toMatchObject({
+        code: 'INVALID_RESPONSE',
+      });
+    });
+
+    it.each([
+      ['negative progress', { progress: -1 }],
+      ['progress above 100', { progress: 101 }],
+      ['non-finite progress', { progress: Number.NaN }],
+      ['negative total', { total: -1 }],
+      ['negative processed', { processed: -1 }],
+      ['processed above total', { processed: 2, total: 1 }],
+    ])('rejects invalid numeric status data: %s', async (_label, fields) => {
+      mockGet.mockResolvedValue({
+        data: { job_id: 'job', status: 'running', ...fields },
+      });
+
+      await expect(manager.getJobStatus('job')).rejects.toMatchObject({ code: 'INVALID_RESPONSE' });
+    });
+
+    it.each(['results', 'errors'])('rejects oversized %s arrays', async (field) => {
+      mockGet.mockResolvedValue({
+        data: {
+          job_id: 'job',
+          status: 'running',
+          [field]: Array.from({ length: 10_001 }, () => null),
+        },
+      });
+
+      await expect(manager.getJobStatus('job')).rejects.toMatchObject({ code: 'INVALID_RESPONSE' });
+    });
+
+    it.each(['results', 'errors'])('rejects non-array %s fields', async (field) => {
+      mockGet.mockResolvedValue({
+        data: {
+          job_id: 'job',
+          status: 'running',
+          [field]: 'invalid',
+        },
+      });
+
+      await expect(manager.getJobStatus('job')).rejects.toMatchObject({ code: 'INVALID_RESPONSE' });
+    });
+
+    it('rejects regression after a terminal status was observed', async () => {
+      mockGet
+        .mockResolvedValueOnce({ data: { job_id: 'job', status: 'completed' } })
+        .mockResolvedValueOnce({ data: { job_id: 'job', status: 'running' } });
+
+      await expect(manager.getJobStatus('job')).resolves.toMatchObject({ status: 'completed' });
+      await expect(manager.getJobStatus('job')).rejects.toMatchObject({ code: 'INVALID_RESPONSE' });
     });
 
     it('throws on invalid response', async () => {
@@ -122,6 +204,15 @@ describe('BatchManager', () => {
   });
 
   describe('watchJob', () => {
+    it('rejects an invalid job ID before polling or building a placeholder', async () => {
+      const generator = manager.watchJob('job\x1b[2Jmalicious');
+
+      await expect(generator.next()).rejects.toMatchObject({
+        code: 'INVALID_RESPONSE',
+      });
+      expect(mockGet).not.toHaveBeenCalled();
+    });
+
     it('yields status updates until completed', async () => {
       mockGet
         .mockResolvedValueOnce({

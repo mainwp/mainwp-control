@@ -180,39 +180,5 @@ describe('ExponentialBackoff', () => {
     });
   });
 
-  describe('getDelayForAttempt', () => {
-    it('returns 0 for attempt 0', () => {
-      const backoff = new ExponentialBackoff({
-        initialDelay: 1000,
-      });
-      expect(backoff.getDelayForAttempt(0)).toBe(0);
-    });
-
-    it('calculates correct delay for each attempt', () => {
-      const backoff = new ExponentialBackoff({
-        initialDelay: 1000,
-        maxDelay: 30000,
-        multiplier: 2,
-      });
-
-      expect(backoff.getDelayForAttempt(1)).toBe(1000);
-      expect(backoff.getDelayForAttempt(2)).toBe(2000);
-      expect(backoff.getDelayForAttempt(3)).toBe(4000);
-      expect(backoff.getDelayForAttempt(4)).toBe(8000);
-      expect(backoff.getDelayForAttempt(5)).toBe(16000);
-      expect(backoff.getDelayForAttempt(6)).toBe(30000); // Capped
-      expect(backoff.getDelayForAttempt(7)).toBe(30000); // Still capped
-    });
-
-    it('does not modify internal state', () => {
-      const backoff = new ExponentialBackoff({
-        initialDelay: 1000,
-      });
-
-      backoff.getDelayForAttempt(5);
-      expect(backoff.delay).toBe(1000);
-      expect(backoff.attempts).toBe(0);
-    });
-  });
 });
 

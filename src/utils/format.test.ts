@@ -3,7 +3,14 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { maskSecret, maskPassword, maskApiKey, type MaskOptions } from './format.js';
+import {
+  maskSecret,
+  maskPassword,
+  maskApiKey,
+  maskUrlUserinfo,
+  maskUrlUserinfoInText,
+  type MaskOptions,
+} from './format.js';
 
 describe('maskSecret', () => {
   describe('with default options', () => {
@@ -111,5 +118,85 @@ describe('maskApiKey', () => {
 
   it('masks Anthropic style API key', () => {
     expect(maskApiKey('sk-ant-api03-xxxxxxxxxxxxxx')).toBe('sk-ant...xxxx');
+  });
+});
+
+describe('maskUrlUserinfo', () => {
+  it('masks embedded username and password', () => {
+    expect(maskUrlUserinfo('https://admin:secret@dashboard.example.com/path')).toBe(
+      'https://***:***@dashboard.example.com/path'
+    );
+  });
+
+  it('masks a username when no password is present', () => {
+    expect(maskUrlUserinfo('https://admin@dashboard.example.com')).toBe(
+      'https://***:***@dashboard.example.com'
+    );
+  });
+
+  it('masks the full userinfo when the password contains "@"', () => {
+    expect(maskUrlUserinfo('https://admin:p@ssw@rd@dashboard.example.com/path')).toBe(
+      'https://***:***@dashboard.example.com/path'
+    );
+  });
+
+  it('does not consume past the query string when it contains "@"', () => {
+    expect(maskUrlUserinfo('https://admin:secret@dashboard.example.com?to=a@b')).toBe(
+      'https://***:***@dashboard.example.com?to=a@b'
+    );
+  });
+
+  it('returns URLs without userinfo unchanged', () => {
+    const url = 'https://dashboard.example.com/path?site=1';
+    expect(maskUrlUserinfo(url)).toBe(url);
+  });
+
+  it('returns invalid URL input unchanged', () => {
+    const url = 'not a valid URL';
+    expect(maskUrlUserinfo(url)).toBe(url);
+  });
+
+  it('fails closed when a newline in the userinfo defeats the masking regex', () => {
+    // new URL() strips \n before detecting credentials, but the raw string
+    // keeps it, so the whitespace-excluding replace cannot match.
+    const result = maskUrlUserinfo('https://admin:sec\nret@dashboard.example.com/path');
+    expect(result).toBe('[URL_WITH_CREDENTIALS_REDACTED]');
+    expect(result).not.toContain('sec');
+  });
+
+  it('fails closed when a tab in the userinfo defeats the masking regex', () => {
+    const result = maskUrlUserinfo('https://admin:sec\tret@dashboard.example.com');
+    expect(result).toBe('[URL_WITH_CREDENTIALS_REDACTED]');
+  });
+
+  it('fails closed when leading whitespace defeats the anchored regex', () => {
+    // Leading whitespace is trimmed by the parser but the regex is anchored,
+    // so the replace fails and the fail-closed path must catch it too.
+    const result = maskUrlUserinfo('  https://admin:secret@dashboard.example.com');
+    expect(result).toBe('[URL_WITH_CREDENTIALS_REDACTED]');
+    expect(result).not.toContain('secret');
+  });
+});
+
+describe('maskUrlUserinfoInText', () => {
+  it('masks credentialed URLs embedded in error messages', () => {
+    expect(
+      maskUrlUserinfoInText(
+        'Request cannot be constructed from a URL that includes credentials: https://legacy:secret@dashboard.example.com/wp-json/route?page=1'
+      )
+    ).toBe(
+      'Request cannot be constructed from a URL that includes credentials: https://***:***@dashboard.example.com/wp-json/route?page=1'
+    );
+  });
+
+  it('leaves text without credentialed URLs unchanged', () => {
+    const text = 'Connection refused for https://dashboard.example.com (mail admin@example.com)';
+    expect(maskUrlUserinfoInText(text)).toBe(text);
+  });
+
+  it('masks the full userinfo when the password contains "@"', () => {
+    expect(
+      maskUrlUserinfoInText('fetch failed: https://legacy:p@ss@dashboard.example.com/wp-json timed out')
+    ).toBe('fetch failed: https://***:***@dashboard.example.com/wp-json timed out');
   });
 });

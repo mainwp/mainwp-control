@@ -64,8 +64,13 @@ export function abilityDryRunResponse(
 /**
  * A batch-job-started result.
  */
-export function abilityRunBatch(jobId: string): Record<string, unknown> {
-  return { success: true, jobId };
+export function dashboardQueuedResponse(jobId: string): Record<string, unknown> {
+  return {
+    queued: true,
+    job_id: jobId,
+    status_url: `https://dashboard.test/wp-json/mainwp/v2/jobs/${jobId}`,
+    sites_queued: 10,
+  };
 }
 
 /**

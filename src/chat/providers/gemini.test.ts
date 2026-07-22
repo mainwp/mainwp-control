@@ -41,17 +41,20 @@ describe('C1: Gemini API key not in URL', () => {
   });
 
   it('sends API key via x-goog-api-key header in chatStream()', async () => {
+    const reader = {
+      read: vi.fn()
+        .mockResolvedValueOnce({
+          done: false,
+          value: new TextEncoder().encode(
+            'data: {"candidates":[{"content":{"parts":[{"text":"Hi"}],"role":"model"},"finishReason":"STOP"}]}\n\n'
+          ),
+        })
+        .mockResolvedValueOnce({ done: true, value: undefined }),
+      cancel: vi.fn().mockResolvedValue(undefined),
+      releaseLock: vi.fn(),
+    };
     const mockBody = {
-      getReader: () => ({
-        read: vi.fn()
-          .mockResolvedValueOnce({
-            done: false,
-            value: new TextEncoder().encode(
-              'data: {"candidates":[{"content":{"parts":[{"text":"Hi"}],"role":"model"},"finishReason":"STOP"}]}\n\n'
-            ),
-          })
-          .mockResolvedValueOnce({ done: true, value: undefined }),
-      }),
+      getReader: () => reader,
     };
 
     mockFetch.mockResolvedValueOnce({

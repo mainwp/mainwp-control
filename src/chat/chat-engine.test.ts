@@ -16,6 +16,11 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { ChatEngine, createChatEngine, type ChatResponse } from './chat-engine.js';
 import type { LLMProvider, LLMResponse, Message, ToolDefinition, ChatOptions } from './providers/provider.js';
 import type { Ability, ExecutionResult, ExecutionOptions } from '../core/abilities-executor.js';
+import { logDestructiveActionSafe } from '../utils/audit-logger.js';
+
+vi.mock('../utils/audit-logger.js', () => ({
+  logDestructiveActionSafe: vi.fn().mockResolvedValue(undefined),
+}));
 
 // ============================================================================
 // Test Fixtures
@@ -76,6 +81,18 @@ const READONLY_DESTRUCTIVE_ABILITY = createTestAbility('special-v1', {
 });
 const ABILITY_WITHOUT_ANNOTATIONS = createAbilityWithoutAnnotations('legacy-ability-v1');
 const UPDATE_ABILITY = createTestAbility('update-site-v1', { destructive: false });
+const NAMESPACED_ABILITY = createTestAbility(
+  'mainwp/list-sites-v1',
+  { readonly: true },
+  {
+    type: 'object',
+    properties: {
+      page: { type: 'integer' },
+    },
+    required: ['page'],
+    additionalProperties: false,
+  }
+);
 
 // Standard LLM responses
 function createToolCallResponse(toolName: string, input: Record<string, unknown>): LLMResponse {
@@ -105,7 +122,7 @@ function createAnswerResponse(answer: string): LLMResponse {
 
 function createInvalidJsonResponse(): LLMResponse {
   return {
-    content: 'This is not valid JSON { broken',
+    content: '{"type": "tool_call", "tool": broken',
     finishReason: 'stop',
     model: 'test-model',
   };
@@ -325,6 +342,266 @@ describe('ChatEngine', () => {
 
       expect(mockExecutor.listAbilities).toHaveBeenCalledTimes(1);
     });
+
+    it('declares namespaced abilities with protocol-safe aliases', async () => {
+      const mockProvider = createMockProvider([createAnswerResponse('Done')]);
+      const { engine } = createTestEngine({
+        provider: mockProvider,
+        abilities: [NAMESPACED_ABILITY],
+      });
+
+      await engine.sendMessage('List sites');
+
+      const options = vi.mocked(mockProvider.chat).mock.calls[0]?.[1];
+      expect(options?.tools).toEqual([
+        expect.objectContaining({ name: 'mainwp__list-sites-v1' }),
+      ]);
+      expect(options?.tools?.[0]?.name).not.toContain('/');
+    });
+
+    it('rejects colliding protocol-safe aliases', async () => {
+      const { engine } = createTestEngine({
+        abilities: [
+          createTestAbility('mainwp/list-sites-v1', { readonly: true }),
+          createTestAbility('mainwp__list-sites-v1', { readonly: true }),
+        ],
+      });
+
+      await expect(engine.initialize()).rejects.toThrow('Tool alias collision');
+    });
+  });
+
+  describe('Protocol-strict tool calls', () => {
+    it('resolves a native wire alias before ability lookup and execution', async () => {
+      const mockProvider = createMockProvider([
+        createNativeToolCallResponse('mainwp__list-sites-v1', { page: 1 }, 'call_alias'),
+        createAnswerResponse('Done'),
+      ]);
+      const { engine, mockExecutor } = createTestEngine({
+        provider: mockProvider,
+        abilities: [NAMESPACED_ABILITY],
+      });
+
+      await engine.sendMessage('List sites');
+
+      expect(mockExecutor.getAbility).toHaveBeenCalledWith('mainwp/list-sites-v1');
+      expect(mockExecutor.execute).toHaveBeenCalledWith('mainwp/list-sites-v1', { page: 1 });
+    });
+
+    it.each([
+      {
+        name: 'invalid native argument JSON',
+        response: {
+          content: '',
+          toolCalls: [{
+            id: 'call_bad_json',
+            name: 'mainwp__list-sites-v1',
+            arguments: '{bad json' as unknown as Record<string, unknown>,
+          }],
+          finishReason: 'tool_calls' as const,
+          model: 'test-model',
+        },
+      },
+      {
+        name: 'non-object envelope input',
+        response: {
+          content: JSON.stringify({ tool: 'mainwp/list-sites-v1', input: 'not-an-object' }),
+          finishReason: 'stop' as const,
+          model: 'test-model',
+        },
+      },
+      {
+        name: 'multiple native tool calls',
+        response: {
+          content: '',
+          toolCalls: [
+            { id: 'call_1', name: 'mainwp__list-sites-v1', arguments: { page: 1 } },
+            { id: 'call_2', name: 'mainwp__list-sites-v1', arguments: { page: 2 } },
+          ],
+          finishReason: 'tool_calls' as const,
+          model: 'test-model',
+        },
+      },
+      {
+        name: 'answer and tool in one envelope',
+        response: {
+          content: JSON.stringify({
+            answer: 'Done',
+            tool: 'mainwp/list-sites-v1',
+            input: { page: 1 },
+          }),
+          finishReason: 'stop' as const,
+          model: 'test-model',
+        },
+      },
+      {
+        name: 'length finish reason with a tool call',
+        response: {
+          content: '',
+          toolCalls: [
+            { id: 'call_length', name: 'mainwp__list-sites-v1', arguments: { page: 1 } },
+          ],
+          finishReason: 'length' as const,
+          model: 'test-model',
+        },
+      },
+      {
+        name: 'content-filter finish reason with a tool call',
+        response: {
+          content: '',
+          toolCalls: [
+            { id: 'call_filter', name: 'mainwp__list-sites-v1', arguments: { page: 1 } },
+          ],
+          finishReason: 'content_filter' as const,
+          model: 'test-model',
+        },
+      },
+      {
+        name: 'length finish reason with a content tool envelope',
+        response: {
+          content: JSON.stringify({
+            tool: 'mainwp/list-sites-v1',
+            input: { page: 1 },
+          }),
+          finishReason: 'length' as const,
+          model: 'test-model',
+        },
+      },
+      {
+        name: 'content-filter finish reason with a content tool envelope',
+        response: {
+          content: JSON.stringify({
+            tool: 'mainwp/list-sites-v1',
+            input: { page: 1 },
+          }),
+          finishReason: 'content_filter' as const,
+          model: 'test-model',
+        },
+      },
+    ])('never executes $name', async ({ response }) => {
+      const { engine, mockExecutor } = createTestEngine({
+        provider: createMockProvider([response]),
+        abilities: [NAMESPACED_ABILITY],
+        maxParseRetries: 0,
+      });
+
+      const responses = await engine.sendMessage('List sites');
+
+      expect(responses[0]?.type).toBe('error');
+      expect(mockExecutor.execute).not.toHaveBeenCalled();
+    });
+
+    it('returns schema-invalid input to the model as a tool error without executing', async () => {
+      const mockProvider = createMockProvider([
+        createNativeToolCallResponse(
+          'mainwp__list-sites-v1',
+          { page: 'not-an-integer' },
+          'call_schema'
+        ),
+        createAnswerResponse('Please provide a numeric page.'),
+      ]);
+      const { engine, mockExecutor } = createTestEngine({
+        provider: mockProvider,
+        abilities: [NAMESPACED_ABILITY],
+      });
+
+      const responses = await engine.sendMessage('List page nope');
+
+      expect(mockExecutor.execute).not.toHaveBeenCalled();
+      expect(responses.at(-1)).toEqual({
+        type: 'message',
+        content: 'Please provide a numeric page.',
+      });
+      const secondMessages = vi.mocked(mockProvider.chat).mock.calls[1]?.[0];
+      const validationResult = secondMessages?.find(
+        (message) => message.role === 'tool' && message.toolCallId === 'call_schema'
+      );
+      expect(validationResult).toMatchObject({
+        role: 'tool',
+        toolCallId: 'call_schema',
+        toolName: 'mainwp__list-sites-v1',
+      });
+      expect(validationResult?.content).toContain('SCHEMA_VALIDATION_ERROR');
+    });
+
+    it('executes with the coerced AJV input', async () => {
+      const mockProvider = createMockProvider([
+        createNativeToolCallResponse(
+          'mainwp__list-sites-v1',
+          { page: '2' },
+          'call_coerced'
+        ),
+        createAnswerResponse('Done'),
+      ]);
+      const { engine, mockExecutor } = createTestEngine({
+        provider: mockProvider,
+        abilities: [NAMESPACED_ABILITY],
+      });
+
+      await engine.sendMessage('List page 2');
+
+      expect(mockExecutor.execute).toHaveBeenCalledWith(
+        'mainwp/list-sites-v1',
+        { page: 2 }
+      );
+    });
+
+    it('preserves native assistant tool calls in history', async () => {
+      const mockProvider = createMockProvider([
+        createNativeToolCallResponse('mainwp__list-sites-v1', { page: 1 }, 'call_original'),
+        createAnswerResponse('Done'),
+      ]);
+      const { engine } = createTestEngine({
+        provider: mockProvider,
+        abilities: [NAMESPACED_ABILITY],
+      });
+
+      await engine.sendMessage('List sites');
+
+      expect(engine.getHistory().find((message) => message.role === 'assistant')).toMatchObject({
+        toolCalls: [
+          {
+            id: 'call_original',
+            name: 'mainwp__list-sites-v1',
+            arguments: { page: 1 },
+          },
+        ],
+      });
+    });
+
+    it('preserves the original native call id through destructive approval', async () => {
+      const namespacedDelete = createTestAbility(
+        'mainwp/delete-site-v1',
+        { destructive: true },
+        DESTRUCTIVE_ABILITY.input_schema
+      );
+      const mockProvider = createMockProvider([
+        createNativeToolCallResponse(
+          'mainwp__delete-site-v1',
+          { site_id: 123 },
+          'call_delete_original'
+        ),
+      ]);
+      const { engine } = createTestEngine({
+        provider: mockProvider,
+        abilities: [namespacedDelete],
+        executeHandler: (_name, _input, options) =>
+          options?.dryRun
+            ? createPreviewResult([{ id: 123 }])
+            : createSuccessResult({ deleted: true }),
+      });
+
+      await engine.sendMessage('Delete site 123');
+      await engine.sendMessage('yes');
+
+      const history = engine.getHistory();
+      expect(history.find((message) => message.role === 'assistant')?.toolCalls?.[0]?.id)
+        .toBe('call_delete_original');
+      expect(history.find((message) => message.role === 'tool')).toMatchObject({
+        toolCallId: 'call_delete_original',
+        toolName: 'mainwp__delete-site-v1',
+      });
+    });
   });
 
   // ==========================================================================
@@ -482,6 +759,33 @@ describe('ChatEngine', () => {
         { site_id: 123 },
         { dryRun: true }
       );
+    });
+
+    it('names the ability when the mandatory preview fails', async () => {
+      const mockProvider = createMockProvider([
+        createToolCallResponse('delete-site-v1', { site_id: 123 }),
+        createAnswerResponse('Could not preview'),
+      ]);
+
+      const { engine } = createTestEngine({
+        provider: mockProvider,
+        abilities: [DESTRUCTIVE_ABILITY],
+        executeHandler: (_name, _input, options) => {
+          if (options?.dryRun) {
+            return createErrorResult('NOT_FOUND', 'Resource not found');
+          }
+          return createSuccessResult({ deleted: true });
+        },
+      });
+
+      const responses = await engine.sendMessage('Delete site 123');
+
+      const errorResponse = responses.find((response) => response.type === 'error');
+      expect(errorResponse).toMatchObject({
+        type: 'error',
+        tool: 'delete-site-v1',
+        error: 'Resource not found',
+      });
     });
 
     it('returns preview response type for destructive action', async () => {
@@ -663,6 +967,22 @@ describe('ChatEngine', () => {
         { confirm: true }
       );
       expect(responses[0]!.type).toBe('tool_result');
+
+      // Audit is written twice: once at dispatch (before the confirm call, so
+      // a mid-confirm failure still leaves durable evidence) and once with
+      // the execution outcome.
+      expect(logDestructiveActionSafe).toHaveBeenCalledTimes(2);
+      expect(logDestructiveActionSafe).toHaveBeenNthCalledWith(
+        1,
+        expect.objectContaining({ stage: 'dispatch', userDecision: 'approved' })
+      );
+      expect(logDestructiveActionSafe).toHaveBeenNthCalledWith(
+        2,
+        expect.objectContaining({
+          userDecision: 'approved',
+          execution: expect.objectContaining({ success: true }),
+        })
+      );
     });
 
     it('approves with "y"', async () => {
@@ -807,6 +1127,113 @@ describe('ChatEngine', () => {
       expect(calls).toHaveLength(2);
       expect(calls[0]![2]).toEqual({ dryRun: true });
       expect(calls[1]![2]).toEqual({ confirm: true });
+    });
+  });
+
+  // ==========================================================================
+  // Golden Test: Confirm Failure Leaves Unknown Outcome
+  // ==========================================================================
+
+  describe('Golden Test: Confirm Failure Leaves Unknown Outcome', () => {
+    it('reports an unknown-outcome error and preserves history when the confirm call rejects after dispatch', async () => {
+      const mockProvider = createMockProvider([
+        createNativeToolCallResponse('delete-site-v1', { site_id: 123 }, 'call_confirm_fail'),
+      ]);
+
+      const { engine, mockExecutor } = createTestEngine({
+        provider: mockProvider,
+        abilities: [DESTRUCTIVE_ABILITY],
+        executeHandler: (_name, _input, options) => {
+          if (options?.dryRun) {
+            return createPreviewResult([{ id: 123 }]);
+          }
+          return createErrorResult('UNEXPECTED', 'Unexpected call');
+        },
+      });
+
+      await engine.sendMessage('Delete site 123');
+      expect(engine.hasPendingPreview()).toBe(true);
+
+      mockExecutor.execute.mockRejectedValueOnce(new Error('Request timed out'));
+
+      const responses = await engine.sendMessage('yes');
+
+      // A single error response, never a rejected sendMessage — the caller
+      // must not have to catch this.
+      expect(responses).toHaveLength(1);
+      expect(responses[0]!.type).toBe('error');
+      if (responses[0]!.type === 'error') {
+        expect(responses[0]!.error).toContain('delete-site-v1');
+        expect(responses[0]!.error).toContain('verify');
+        // Callers map this stable code to the OUTCOME_UNKNOWN process exit —
+        // it must never be downgraded to a generic chat error.
+        expect(responses[0]!.code).toBe('OUTCOME_UNKNOWN');
+      }
+
+      // Dispatch is audited before the failure is known, then the failure
+      // itself is audited as an unknown outcome.
+      const auditCalls = vi.mocked(logDestructiveActionSafe).mock.calls;
+      expect(auditCalls).toHaveLength(2);
+      expect(auditCalls[0]![0]).toEqual(
+        expect.objectContaining({ stage: 'dispatch', userDecision: 'approved' })
+      );
+      expect(auditCalls[1]![0]).toEqual(
+        expect.objectContaining({
+          userDecision: 'approved',
+          execution: expect.objectContaining({ success: false, outcomeUnknown: true }),
+        })
+      );
+
+      // History stays coherent: the pending tool call got a matching tool
+      // message rather than being left dangling.
+      const history = engine.getHistory();
+      const toolMessage = history.find(
+        (m) => m.role === 'tool' && m.toolCallId === 'call_confirm_fail'
+      );
+      expect(toolMessage).toBeDefined();
+      expect(toolMessage!.content).toContain('OUTCOME_UNKNOWN');
+    });
+  });
+
+  // ==========================================================================
+  // Golden Test: Provider-Bound Redaction
+  // ==========================================================================
+
+  describe('Golden Test: Provider-Bound Redaction', () => {
+    it('redacts sensitive keys in provider-bound history but returns raw values to the local caller', async () => {
+      const mockProvider = createMockProvider([
+        createToolCallResponse('list-sites-v1', {}),
+        createAnswerResponse('Done'),
+      ]);
+
+      const sensitiveData = {
+        site: 'a.com',
+        appPassword: 'hunter2',
+        nested: { api_key: 'k' },
+      };
+
+      const { engine } = createTestEngine({
+        provider: mockProvider,
+        abilities: [READONLY_ABILITY],
+        executeHandler: () => createSuccessResult(sensitiveData),
+      });
+
+      const responses = await engine.sendMessage('List sites');
+
+      const toolResult = responses.find((r) => r.type === 'tool_result');
+      expect(toolResult).toBeDefined();
+      if (toolResult?.type === 'tool_result') {
+        expect(toolResult.result.data).toEqual(sensitiveData);
+      }
+
+      const history = engine.getHistory();
+      const toolMessage = history.find((m) => m.role === 'tool');
+      expect(toolMessage).toBeDefined();
+      expect(JSON.parse(toolMessage!.content)).toEqual({
+        site: 'a.com',
+        appPassword: '[REDACTED]',
+        nested: { api_key: '[REDACTED]' },
+      });
     });
   });
 
@@ -1339,21 +1766,54 @@ describe('ChatEngine', () => {
       expect(engine.hasPendingPreview()).toBe(false);
     });
 
-    it('hasPendingPreview returns false after cancelPendingPreview', async () => {
+    it.each(['no', 'cancel'])('records a complete decline for "%s"', async (reply) => {
       const mockProvider = createMockProvider([
-        createToolCallResponse('delete-site-v1', { site_id: 1 }),
+        createNativeToolCallResponse('delete-site-v1', { site_id: 1 }, 'call_decline'),
       ]);
 
-      const { engine } = createTestEngine({
+      const { engine, mockExecutor } = createTestEngine({
         provider: mockProvider,
         abilities: [DESTRUCTIVE_ABILITY],
         executeHandler: () => createPreviewResult([{ id: 1 }]),
       });
 
       await engine.sendMessage('Delete site');
-      engine.cancelPendingPreview();
+      mockExecutor.execute.mockClear();
+      await engine.sendMessage(reply);
 
       expect(engine.hasPendingPreview()).toBe(false);
+      expect(mockExecutor.execute).not.toHaveBeenCalled();
+      expect(logDestructiveActionSafe).toHaveBeenCalledWith(
+        expect.objectContaining({
+          abilityName: 'delete-site-v1',
+          userDecision: 'declined',
+        })
+      );
+
+      const history = engine.getHistory();
+      const declineResult = history.find(
+        (message) => message.role === 'tool' && message.toolCallId === 'call_decline'
+      );
+      expect(declineResult).toMatchObject({
+        role: 'tool',
+        toolCallId: 'call_decline',
+        toolName: 'delete-site-v1',
+      });
+      expect(JSON.parse(declineResult!.content)).toMatchObject({
+        success: false,
+        error: { code: 'USER_DECLINED' },
+      });
+
+      const unansweredToolCalls = history
+        .filter((message) => message.role === 'assistant')
+        .flatMap((message) => message.toolCalls ?? [])
+        .filter(
+          (toolCall) =>
+            !history.some(
+              (message) => message.role === 'tool' && message.toolCallId === toolCall.id
+            )
+        );
+      expect(unansweredToolCalls).toEqual([]);
     });
 
     it('getPendingPreview returns null initially', async () => {
@@ -1383,26 +1843,6 @@ describe('ChatEngine', () => {
       expect(preview!.affected).toHaveLength(1);
       expect(preview!.requiresApproval).toBe(true);
       expect(preview!.summary).toBeDefined();
-    });
-
-    it('cancelPendingPreview clears state', async () => {
-      const mockProvider = createMockProvider([
-        createToolCallResponse('delete-site-v1', { site_id: 1 }),
-        createAnswerResponse('OK, cancelled'),
-      ]);
-
-      const { engine } = createTestEngine({
-        provider: mockProvider,
-        abilities: [DESTRUCTIVE_ABILITY],
-        executeHandler: () => createPreviewResult([{ id: 1 }]),
-      });
-
-      await engine.sendMessage('Delete site');
-      expect(engine.hasPendingPreview()).toBe(true);
-
-      engine.cancelPendingPreview();
-      expect(engine.hasPendingPreview()).toBe(false);
-      expect(engine.getPendingPreview()).toBeNull();
     });
 
     it('clearHistory also clears pending preview', async () => {
@@ -1808,7 +2248,7 @@ describe('ChatEngine', () => {
   // ==========================================================================
 
   describe('Edge Cases and Boundary Conditions', () => {
-    it('handles ability without annotations (defaults to safe)', async () => {
+    it('handles ability without annotations as destructive', async () => {
       const mockProvider = createMockProvider([
         createToolCallResponse('legacy-ability-v1', {}),
         createAnswerResponse('Done'),
@@ -1822,9 +2262,12 @@ describe('ChatEngine', () => {
 
       await engine.sendMessage('Run legacy');
 
-      // Should execute directly (no preview)
-      expect(mockExecutor.execute).toHaveBeenCalledWith('legacy-ability-v1', {});
-      expect(engine.hasPendingPreview()).toBe(false);
+      expect(mockExecutor.execute).toHaveBeenCalledWith(
+        'legacy-ability-v1',
+        {},
+        { dryRun: true },
+      );
+      expect(engine.hasPendingPreview()).toBe(true);
     });
 
     it('handles LLM returning answer immediately', async () => {
@@ -2296,16 +2739,52 @@ describe('ChatEngine', () => {
         // History should be managed
         const history = engine.getHistory();
         expect(history[0]!.role).toBe('system');
+
+        // Pairing integrity: truncation must never orphan a tool result from
+        // its preceding assistant tool call — providers reject orphaned
+        // tool results on the next call (regression test for the unsafe
+        // mid-tool-loop truncation fallback)
+        for (let i = 1; i < history.length; i++) {
+          if (history[i]!.role === 'tool') {
+            expect(history[i - 1]!.role).toBe('assistant');
+          }
+        }
+        // A truncation cut is only safe immediately before a user message,
+        // so the first non-system message is never a dangling tool result
+        expect(history[1]!.role).not.toBe('tool');
       });
 
-      it('should handle empty messages array gracefully', async () => {
+      it('should keep pairing integrity across the next turn after a mid-tool-loop overflow', async () => {
+        const mockProvider = createMockProvider([
+          createToolCallResponse('list-sites-v1', { page: 1 }),
+          createToolCallResponse('list-sites-v1', { page: 2 }),
+          createAnswerResponse('Found all sites'),
+          createAnswerResponse('Done'),
+        ]);
+
         const { engine } = createEngineWithContext({
-          maxContextMessages: 5,
+          provider: mockProvider,
+          maxContextMessages: 4,
+          executeHandler: () => createSuccessResult({ sites: [] }),
         });
 
-        // Before initialization, getContextStats should work
-        const stats = engine.getContextStats();
-        expect(stats.messageCount).toBe(-1); // No messages yet
+        // First turn overflows the window mid tool-loop (truncation is
+        // deferred until a safe boundary exists)
+        await engine.sendMessage('List all sites');
+        // Next user turn provides the safe boundary and the window catches up
+        await engine.sendMessage('Thanks');
+
+        const history = engine.getHistory();
+        expect(history[0]!.role).toBe('system');
+        // After a cut, the window is bounded again (system + max + current exchange)
+        expect(history.length).toBeLessThanOrEqual(6);
+        // And the cut landed on a user boundary, not inside a tool exchange
+        expect(history[1]!.role).toBe('user');
+        for (let i = 1; i < history.length; i++) {
+          if (history[i]!.role === 'tool') {
+            expect(history[i - 1]!.role).toBe('assistant');
+          }
+        }
       });
     });
 
@@ -2389,6 +2868,9 @@ describe('ChatEngine', () => {
     });
 
     describe('Configuration Tests', () => {
+      // The resolved maxContextMessages is observable through the system
+      // prompt's context-window constraint line (the stats accessor it was
+      // previously asserted through was speculative plumbing and is gone)
       it('should use provided maxContextMessages option', async () => {
         const { engine } = createEngineWithContext({
           maxContextMessages: 10,
@@ -2396,8 +2878,8 @@ describe('ChatEngine', () => {
 
         await engine.initialize();
 
-        const stats = engine.getContextStats();
-        expect(stats.maxMessages).toBe(10);
+        const systemPrompt = engine.getHistory()[0]?.content as string;
+        expect(systemPrompt).toContain('Context window: 10 messages');
       });
 
       it('should apply default limit (20) when not specified', async () => {
@@ -2413,8 +2895,8 @@ describe('ChatEngine', () => {
 
         await engine.initialize();
 
-        const stats = engine.getContextStats();
-        expect(stats.maxMessages).toBe(20);
+        const systemPrompt = engine.getHistory()[0]?.content as string;
+        expect(systemPrompt).toContain('Context window: 20 messages');
       });
 
       it('should apply default limit when undefined is passed (use 0 to disable)', async () => {
@@ -2426,19 +2908,8 @@ describe('ChatEngine', () => {
 
         await engine.initialize();
 
-        const stats = engine.getContextStats();
-        expect(stats.maxMessages).toBe(20);
-      });
-
-      it('should disable truncation when 0 is passed', async () => {
-        const { engine } = createEngineWithContext({
-          maxContextMessages: 0,
-        });
-
-        await engine.initialize();
-
-        const stats = engine.getContextStats();
-        expect(stats.maxMessages).toBe(0);
+        const systemPrompt = engine.getHistory()[0]?.content as string;
+        expect(systemPrompt).toContain('Context window: 20 messages');
       });
 
       it('should not include context constraint in system prompt when 0 is passed', async () => {
@@ -2467,54 +2938,6 @@ describe('ChatEngine', () => {
       });
     });
 
-    describe('Context Stats', () => {
-      it('should return correct message count', async () => {
-        const mockProvider = createMockProvider([
-          createAnswerResponse('Response 1'),
-          createAnswerResponse('Response 2'),
-        ]);
-
-        const { engine } = createEngineWithContext({
-          provider: mockProvider,
-          maxContextMessages: 20,
-        });
-
-        await engine.sendMessage('Message 1');
-        await engine.sendMessage('Message 2');
-
-        const stats = engine.getContextStats();
-        // 2 user + 2 assistant = 4 messages (excluding system prompt)
-        expect(stats.messageCount).toBe(4);
-      });
-
-      it('should return correct max messages value', async () => {
-        const { engine } = createEngineWithContext({
-          maxContextMessages: 15,
-        });
-
-        await engine.initialize();
-
-        const stats = engine.getContextStats();
-        expect(stats.maxMessages).toBe(15);
-      });
-
-      it('should estimate tokens based on character count', async () => {
-        const mockProvider = createMockProvider([
-          createAnswerResponse('This is a response with some text content'),
-        ]);
-
-        const { engine } = createEngineWithContext({
-          provider: mockProvider,
-          maxContextMessages: 20,
-        });
-
-        await engine.sendMessage('Hello world');
-
-        const stats = engine.getContextStats();
-        // Should have some estimated tokens
-        expect(stats.estimatedTokens).toBeGreaterThan(0);
-      });
-    });
   });
 
   // ==========================================================================
@@ -2544,7 +2967,7 @@ describe('ChatEngine', () => {
               arguments: { truncated: true },
             },
           };
-          throw new Error('Stream interrupted');
+          throw new Error('\x1b]0;Injected\x07Stream interrupted');
         }),
         isConfigured: () => true,
         getModels: () => ['test-model'],
@@ -2562,6 +2985,7 @@ describe('ChatEngine', () => {
 
       await engine.initialize();
 
+      const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
       const responses = await engine.sendMessage('list sites');
 
       // Should return an error response, not execute the partial tool call
@@ -2573,6 +2997,181 @@ describe('ChatEngine', () => {
 
       // Executor should NOT have been called with partial tool call
       expect(mockExecutor.execute).not.toHaveBeenCalled();
+      expect(consoleError).toHaveBeenCalledWith(expect.not.stringContaining('\x1b'));
+    });
+
+    it('treats a stream that yields nothing as an error, not an empty success', async () => {
+      const emptyStreamProvider: LLMProvider = {
+        name: 'mock-streaming-provider',
+        capabilities: {
+          functionCalling: true,
+          streaming: true,
+          systemMessages: true,
+          vision: false,
+          maxContextLength: 4096,
+        },
+        chat: vi.fn(),
+        chatStream: vi.fn(async function* () {
+          // Ends cleanly without yielding any content or tool calls
+        }),
+        isConfigured: () => true,
+        getModels: () => ['test-model'],
+        getDefaultModel: () => 'test-model',
+      };
+
+      const abilities = [READONLY_ABILITY];
+      const mockExecutor = createMockExecutor(abilities);
+
+      const engine = createChatEngine({
+        provider: emptyStreamProvider,
+        executor: mockExecutor as never,
+        stream: true,
+      });
+
+      await engine.initialize();
+
+      const responses = await engine.sendMessage('list sites');
+
+      expect(responses).toHaveLength(1);
+      expect(responses[0]!.type).toBe('error');
+      if (responses[0]!.type === 'error') {
+        expect(responses[0]!.error).toContain('interrupted');
+      }
+      expect(mockExecutor.execute).not.toHaveBeenCalled();
+    });
+
+    it('still succeeds when the stream yields content before done', async () => {
+      const contentStreamProvider: LLMProvider = {
+        name: 'mock-streaming-provider',
+        capabilities: {
+          functionCalling: true,
+          streaming: true,
+          systemMessages: true,
+          vision: false,
+          maxContextLength: 4096,
+        },
+        chat: vi.fn(),
+        chatStream: vi.fn(async function* () {
+          yield { content: JSON.stringify({ answer: 'Hi there' }) };
+          yield { done: true };
+        }),
+        isConfigured: () => true,
+        getModels: () => ['test-model'],
+        getDefaultModel: () => 'test-model',
+      };
+
+      const abilities = [READONLY_ABILITY];
+      const mockExecutor = createMockExecutor(abilities);
+
+      const engine = createChatEngine({
+        provider: contentStreamProvider,
+        executor: mockExecutor as never,
+        stream: true,
+      });
+
+      await engine.initialize();
+
+      const responses = await engine.sendMessage('hello');
+
+      expect(responses).toEqual([{ type: 'message', content: 'Hi there' }]);
+    });
+  });
+
+  // ==========================================================================
+  // sendMessage Re-entrancy
+  // ==========================================================================
+
+  describe('sendMessage Re-entrancy', () => {
+    it('serializes concurrent sendMessage calls in call order', async () => {
+      let releaseFirst!: () => void;
+      const firstGate = new Promise<void>((resolve) => (releaseFirst = resolve));
+
+      const responses = [createAnswerResponse('first answer'), createAnswerResponse('second answer')];
+      let callIndex = 0;
+      const gatedProvider: LLMProvider = {
+        name: 'mock-provider',
+        capabilities: {
+          functionCalling: true,
+          streaming: false,
+          systemMessages: true,
+          vision: false,
+          maxContextLength: 4096,
+        },
+        chat: vi.fn(async (): Promise<LLMResponse> => {
+          const index = callIndex++;
+          if (index === 0) {
+            await firstGate;
+          }
+          return responses[index]!;
+        }),
+        isConfigured: () => true,
+        getModels: () => ['test-model'],
+        getDefaultModel: () => 'test-model',
+      };
+
+      const { engine } = createTestEngine({ provider: gatedProvider });
+      await engine.initialize();
+
+      // Fire both without awaiting the first
+      const first = engine.sendMessage('first question');
+      const second = engine.sendMessage('second question');
+
+      // While the first call is blocked in the provider, the second must be
+      // queued: no second provider call, no second user message in history
+      await new Promise((resolve) => setImmediate(resolve));
+      expect(gatedProvider.chat).toHaveBeenCalledTimes(1);
+      expect(
+        engine.getHistory().filter((m) => m.role === 'user')
+      ).toHaveLength(1);
+
+      releaseFirst();
+      const [firstResponses, secondResponses] = await Promise.all([first, second]);
+
+      expect(firstResponses[0]).toEqual({ type: 'message', content: 'first answer' });
+      expect(secondResponses[0]).toEqual({ type: 'message', content: 'second answer' });
+
+      // History interleaves strictly: user1, assistant1, user2, assistant2
+      const conversation = engine
+        .getHistory()
+        .filter((m) => m.role === 'user' || m.role === 'assistant')
+        .map((m) => m.role);
+      expect(conversation).toEqual(['user', 'assistant', 'user', 'assistant']);
+    });
+
+    it('runs a queued call even when the previous call rejects', async () => {
+      let callIndex = 0;
+      const flakyProvider: LLMProvider = {
+        name: 'mock-provider',
+        capabilities: {
+          functionCalling: true,
+          streaming: false,
+          systemMessages: true,
+          vision: false,
+          maxContextLength: 4096,
+        },
+        chat: vi.fn(async (): Promise<LLMResponse> => {
+          if (callIndex++ === 0) {
+            throw new Error('provider exploded');
+          }
+          return createAnswerResponse('recovered');
+        }),
+        isConfigured: () => true,
+        getModels: () => ['test-model'],
+        getDefaultModel: () => 'test-model',
+      };
+
+      const { engine } = createTestEngine({ provider: flakyProvider });
+      await engine.initialize();
+
+      const first = engine.sendMessage('first question');
+      const second = engine.sendMessage('second question');
+
+      // The first call rejects (provider errors propagate to the caller);
+      // the rejection must not poison the queue for the second call
+      await expect(first).rejects.toThrow('provider exploded');
+      const secondResponses = await second;
+
+      expect(secondResponses[0]).toEqual({ type: 'message', content: 'recovered' });
     });
   });
 });

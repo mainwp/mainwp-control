@@ -10,6 +10,8 @@
  */
 
 import { AuthError } from '../utils/errors.js';
+import { sanitizeErrorMessage } from '../utils/error-sanitizer.js';
+import { sanitizeSingleLine } from '../utils/terminal-sanitizer.js';
 
 /**
  * Service name for keychain entries
@@ -26,6 +28,21 @@ const ENV_VAR = 'MAINWP_APP_PASSWORD';
  * dialog, this prevents the CLI from hanging indefinitely.
  */
 const KEYTAR_TIMEOUT_MS = 5_000;
+const MAX_KEYCHAIN_ERROR_LENGTH = 500;
+
+/**
+ * Keytar is native code and can reject with non-Error values; a blind
+ * `(error as Error).message` throws on null/undefined and turns a
+ * warn-and-continue path into a crash.
+ */
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function sanitizeKeychainError(error: unknown): string {
+  return sanitizeErrorMessage(sanitizeSingleLine(errorMessage(error)))
+    .slice(0, MAX_KEYCHAIN_ERROR_LENGTH);
+}
 
 function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
   return new Promise((resolve, reject) => {
@@ -88,6 +105,63 @@ async function loadKeytar(): Promise<typeof import('keytar') | null> {
 }
 
 /**
+ * Canonical Dashboard identity used to bind a stored credential to the
+ * destination it was saved for: scheme + host(:port) + normalized base path.
+ * Profile names are user-facing selectors, not an authorization boundary
+ * (AGENTS.md) — this is the boundary.
+ */
+export function canonicalDashboardIdentity(dashboardUrl: string): string {
+  const parsed = new URL(dashboardUrl);
+  const path = parsed.pathname.replace(/\/+$/, '');
+  return `${parsed.protocol}//${parsed.host}${path}`;
+}
+
+/**
+ * Stored credential envelope (format v1). Legacy entries are the bare
+ * application password; new entries bind the password to the Dashboard
+ * identity they were saved for, so editing profiles.json cannot silently
+ * redirect a stored credential to a different host.
+ */
+interface StoredCredentialV1 {
+  v: 1;
+  password: string;
+  identity: string;
+}
+
+function encodeCredential(password: string, dashboardUrl: string): string {
+  const envelope: StoredCredentialV1 = {
+    v: 1,
+    password,
+    identity: canonicalDashboardIdentity(dashboardUrl),
+  };
+  return JSON.stringify(envelope);
+}
+
+/**
+ * Decode a stored keychain payload. WordPress application passwords never
+ * start with "{", so a JSON-looking payload that fails to parse as a v1
+ * envelope is treated as a legacy bare password rather than rejected.
+ */
+function decodeCredential(raw: string): { password: string; identity?: string } {
+  if (raw.startsWith('{')) {
+    try {
+      const parsed = JSON.parse(raw) as Partial<StoredCredentialV1>;
+      if (
+        parsed !== null &&
+        parsed.v === 1 &&
+        typeof parsed.password === 'string' &&
+        typeof parsed.identity === 'string'
+      ) {
+        return { password: parsed.password, identity: parsed.identity };
+      }
+    } catch {
+      // Fall through: treat as legacy raw secret
+    }
+  }
+  return { password: raw };
+}
+
+/**
  * Result of a credential storage operation
  */
 export interface KeychainSetResult {
@@ -98,6 +172,23 @@ export interface KeychainSetResult {
   /** Error message if storage failed */
   error?: string;
 }
+
+export interface KeychainDeleteResult {
+  deleted: boolean;
+  /** True when no credential existed to delete — the goal state already holds. */
+  notFound?: boolean;
+  error?: string;
+}
+
+/**
+ * Result of a persisted-only credential read. Distinguishes "nothing stored"
+ * from "could not read" — callers making destructive decisions (rollback,
+ * overwrite) must not treat a failed read as an empty keychain.
+ */
+export type KeychainReadResult =
+  | { status: 'found'; password: string }
+  | { status: 'not-found' }
+  | { status: 'error'; error: string };
 
 /**
  * Keychain class
@@ -112,23 +203,33 @@ export class Keychain {
   }
 
   /**
-   * Store a credential
+   * Store a credential.
+   *
+   * When `dashboardUrl` is provided the password is stored bound to that
+   * Dashboard's canonical identity; retrieval with an expected URL then
+   * refuses to release the credential to a different destination. Omit
+   * `dashboardUrl` only to restore a previously read raw payload verbatim
+   * (rollback).
    *
    * @returns Result indicating whether storage succeeded and where credentials are stored
    */
-  async set(profileName: string, password: string): Promise<KeychainSetResult> {
+  async set(
+    profileName: string,
+    password: string,
+    dashboardUrl?: string
+  ): Promise<KeychainSetResult> {
     const kt = await loadKeytar();
+    const payload = dashboardUrl ? encodeCredential(password, dashboardUrl) : password;
 
     if (kt) {
       try {
-        await withTimeout(kt.setPassword(SERVICE_NAME, profileName, password), KEYTAR_TIMEOUT_MS);
+        await withTimeout(kt.setPassword(SERVICE_NAME, profileName, payload), KEYTAR_TIMEOUT_MS);
         return { stored: true, location: 'keychain' };
       } catch (error) {
-        const errorMessage = (error as Error).message;
         return {
           stored: false,
           location: 'none',
-          error: errorMessage,
+          error: sanitizeKeychainError(error),
         };
       }
     }
@@ -141,21 +242,70 @@ export class Keychain {
   }
 
   /**
-   * Retrieve a credential
+   * Read the persisted keychain credential only — no MAINWP_APP_PASSWORD
+   * fallback (the env var must never masquerade as a stored credential).
+   *
+   * An unavailable keytar reads as not-found: nothing can be stored or
+   * deleted through it either, so no overwrite/rollback hazard exists.
    */
-  async get(profileName: string): Promise<string | undefined> {
-    // First try keytar
+  async getStored(profileName: string): Promise<KeychainReadResult> {
     const kt = await loadKeytar();
 
-    if (kt) {
-      try {
-        const password = await withTimeout(kt.getPassword(SERVICE_NAME, profileName), KEYTAR_TIMEOUT_MS);
-        if (password) {
-          return password;
+    if (!kt) {
+      return { status: 'not-found' };
+    }
+
+    try {
+      const password = await withTimeout(kt.getPassword(SERVICE_NAME, profileName), KEYTAR_TIMEOUT_MS);
+      return password ? { status: 'found', password } : { status: 'not-found' };
+    } catch (error) {
+      return { status: 'error', error: sanitizeKeychainError(error) };
+    }
+  }
+
+  /**
+   * Retrieve a credential for authentication: keytar first, then the
+   * MAINWP_APP_PASSWORD environment variable. Keytar read errors fall
+   * through to the env var.
+   *
+   * When `expectedDashboardUrl` is provided and the stored credential is
+   * identity-bound, a mismatch throws instead of releasing the password —
+   * a hand-edited profiles.json must not redirect a stored credential to a
+   * different host. Legacy (unbound) entries are refused for authenticated
+   * use when an expected URL is provided; a one-time `login` re-binds them.
+   * Without an expected URL they still read, for display paths. The env var
+   * is per-invocation operator input and is not identity-checked.
+   */
+  async get(
+    profileName: string,
+    expectedDashboardUrl?: string
+  ): Promise<string | undefined> {
+    const stored = await this.getStored(profileName);
+    if (stored.status === 'found') {
+      const decoded = decodeCredential(stored.password);
+      if (expectedDashboardUrl && decoded.identity) {
+        const expected = canonicalDashboardIdentity(expectedDashboardUrl);
+        if (decoded.identity !== expected) {
+          throw new AuthError(
+            `The stored credential for profile "${profileName}" was saved for ${decoded.identity}, but the profile now points to ${expected}. Refusing to send it.`,
+            undefined,
+            'The profile URL changed after login. Run `mainwpcontrol login` to re-authenticate against the new URL.'
+          );
         }
-      } catch {
-        // Keytar failed, fall through to env var
       }
+      if (expectedDashboardUrl && !decoded.identity) {
+        // Legacy unbound entry: refuse authenticated use. Binding it to the
+        // profile's current URL would just bless whatever the file says at
+        // first use — an unknown password cannot be safely bound without
+        // independently proving the destination. A one-time re-login binds
+        // it with the user seeing and providing the URL.
+        throw new AuthError(
+          `The stored credential for profile "${profileName}" predates credential-identity binding and cannot be safely used.`,
+          undefined,
+          'One-time upgrade: run `mainwpcontrol login` to re-authenticate and bind the credential to your Dashboard URL.'
+        );
+      }
+      return decoded.password;
     }
 
     // Fallback to environment variable
@@ -170,25 +320,37 @@ export class Keychain {
   /**
    * Delete a credential
    */
-  async delete(profileName: string): Promise<void> {
+  async delete(profileName: string): Promise<KeychainDeleteResult> {
     const kt = await loadKeytar();
 
     if (kt) {
       try {
-        await withTimeout(kt.deletePassword(SERVICE_NAME, profileName), KEYTAR_TIMEOUT_MS);
+        const deleted = await withTimeout(
+          kt.deletePassword(SERVICE_NAME, profileName),
+          KEYTAR_TIMEOUT_MS,
+        );
+        return deleted
+          ? { deleted: true }
+          : { deleted: false, notFound: true, error: 'No matching keychain credential was found' };
       } catch (error) {
-        if (process.stderr.isTTY) {
-          console.error(`Warning: Failed to remove credentials from keychain: ${(error as Error).message}`);
-        }
+        return {
+          deleted: false,
+          error: sanitizeKeychainError(error),
+        };
       }
     }
+
+    return {
+      deleted: false,
+      error: 'Keychain (keytar) is not available',
+    };
   }
 
   /**
    * Get credential or throw
    */
-  async getOrThrow(profileName: string): Promise<string> {
-    const password = await this.get(profileName);
+  async getOrThrow(profileName: string, expectedDashboardUrl?: string): Promise<string> {
+    const password = await this.get(profileName, expectedDashboardUrl);
 
     if (!password) {
       throw new AuthError(

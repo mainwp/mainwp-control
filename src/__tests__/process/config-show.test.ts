@@ -28,6 +28,50 @@ describe('config show command', () => {
     }
   });
 
+  it('keeps provider warnings and configuration paths on one safe line', async () => {
+    configDir = await ConfigDir.create();
+    const unsafeConfigHome = `${configDir.xdgHome}/\x1b[31mconfig\r\ninjected-path`;
+
+    const result = await runCLI(['config', 'show'], {
+      xdgConfigHome: unsafeConfigHome,
+      env: {
+        MAINWP_LLM_PROVIDER: '\x1b[31minvalid\r\ninjected-provider',
+      },
+    });
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).not.toContain('\x1b');
+    expect(result.stdout).not.toContain('\ninjected-provider');
+    expect(result.stdout).not.toContain('\ninjected-path');
+    expect(result.stdout).toContain('invalid injected-provider');
+    expect(result.stdout).toContain('config injected-path');
+  });
+
+  it('keeps profile-derived fields on one safe line (hostile profiles.json)', async () => {
+    configDir = await ConfigDir.create({
+      profiles: [
+        {
+          name: 'evil\r\nInjected Profile: fake',
+          dashboardUrl: `${server.baseUrl}/\x1b[2Jclear`,
+          username: 'admin\r\nPassword: hunter2',
+        },
+      ],
+      activeProfile: 'evil\r\nInjected Profile: fake',
+    });
+
+    const result = await runCLI(['config', 'show'], {
+      xdgConfigHome: configDir.xdgHome,
+    });
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).not.toContain('\x1b');
+    expect(result.stdout).not.toContain('\nInjected Profile');
+    expect(result.stdout).not.toContain('\nPassword: hunter2');
+    // Values survive, flattened to one line
+    expect(result.stdout).toContain('evil Injected Profile: fake');
+    expect(result.stdout).toContain('admin Password: hunter2');
+  });
+
   it('reports effective settings and provider resolution in JSON mode', async () => {
     configDir = await ConfigDir.create({
       profiles: [
@@ -94,5 +138,31 @@ describe('config show command', () => {
     expect(envelope.data.effectiveSettings.chatContextMessages).toBe(50);
     expect(envelope.data.effectiveSettings.skipSSLVerification).toBe(true);
     expect(envelope.data.effectiveSettings.allowInsecureHttp).toBe(true);
+  });
+
+  it('masks userinfo from a legacy profile in JSON mode', async () => {
+    configDir = await ConfigDir.create({
+      profiles: [
+        {
+          name: 'legacy',
+          dashboardUrl: 'https://legacy:secret@dashboard.example.com',
+          username: 'admin',
+        },
+      ],
+      activeProfile: 'legacy',
+    });
+
+    const result = await runCLI(['config', 'show', '--json'], {
+      xdgConfigHome: configDir.xdgHome,
+    });
+
+    expect(result.exitCode).toBe(0);
+    const envelope = result.json as {
+      data: { profile: { dashboardUrl: string } };
+    };
+    expect(envelope.data.profile.dashboardUrl).toBe(
+      'https://***:***@dashboard.example.com'
+    );
+    expect(result.stdout).not.toContain('legacy:secret');
   });
 });

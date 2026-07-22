@@ -7,6 +7,7 @@
 
 import { describe, it, expect, vi } from 'vitest';
 import { stripControlChars } from '../utils/terminal-sanitizer.js';
+import { formatResponse } from './chat.js';
 
 // We test the sanitization integration by verifying the functions
 // used in chat.ts correctly handle malicious content. The actual
@@ -81,6 +82,37 @@ describe('Chat Output Sanitization', () => {
       // JSON.stringify escapes ESC as \u001b
       expect(jsonOutput).not.toContain('\x1b');
       expect(jsonOutput).toContain('\\u001b');
+    });
+  });
+
+  describe('formatResponse error rendering', () => {
+    it('prefixes the ability name when an error carries tool', () => {
+      const rendered = formatResponse({
+        type: 'error',
+        error: 'Resource not found',
+        tool: 'mainwp/delete-site-v1',
+      });
+
+      expect(rendered).toBe('[mainwp/delete-site-v1] Error: Resource not found');
+    });
+
+    it('renders engine-level errors without a tool prefix', () => {
+      const rendered = formatResponse({
+        type: 'error',
+        error: 'Provider unavailable',
+      });
+
+      expect(rendered).toBe('Error: Provider unavailable');
+    });
+
+    it('sanitizes the tool name in the error prefix', () => {
+      const rendered = formatResponse({
+        type: 'error',
+        error: 'boom',
+        tool: 'delete\x1b[10C(hidden)',
+      });
+
+      expect(rendered).toBe('[delete(hidden)] Error: boom');
     });
   });
 

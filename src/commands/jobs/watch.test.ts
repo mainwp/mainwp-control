@@ -5,7 +5,8 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 // Mock modules before importing
-vi.mock('../../core/batch-manager.js', () => ({
+vi.mock('../../core/batch-manager.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../core/batch-manager.js')>()),
   createBatchManager: vi.fn(),
 }));
 
@@ -13,6 +14,37 @@ vi.mock('../../core/batch-manager.js', () => ({
 import { createBatchManager } from '../../core/batch-manager.js';
 import type { JobStatus, WatchResult, WatchOptions } from '../../core/batch-manager.js';
 import { formatProgressBar, formatElapsed } from '../../output/formatter.js';
+import { successOutput } from '../../output/json-envelope.js';
+// Import the real helpers from watch.ts instead of re-implementing them —
+// see chat.test.ts for the same pattern.
+import JobsWatch, { isTerminalStatus, RESULTS_PREVIEW_LIMIT } from './watch.js';
+
+/**
+ * Create a JobsWatch instance with a mocked oclif Config and captured log
+ * output, so we can drive its real private outputResult()/formatHumanOutput()
+ * methods instead of duplicating their logic in assertions.
+ */
+function createWatchCommand(): { command: JobsWatch; log: ReturnType<typeof vi.fn> } {
+  const mockConfig = {
+    root: '/mock/root',
+    bin: 'mainwpcontrol',
+    name: 'mainwpcontrol',
+    version: '1.0.0',
+    pjson: { name: 'mainwpcontrol', version: '1.0.0' },
+    dataDir: '/mock/data',
+    cacheDir: '/mock/cache',
+    configDir: '/mock/config',
+    findCommand: vi.fn(),
+    runCommand: vi.fn(),
+    runHook: vi.fn(),
+  };
+
+  const command = new JobsWatch([], mockConfig as never);
+  const log = vi.fn();
+  command.log = log;
+
+  return { command, log };
+}
 
 describe('jobs watch command', () => {
   let mockWatchJob: ReturnType<typeof vi.fn>;
@@ -54,17 +86,13 @@ describe('jobs watch command', () => {
 
   describe('status display', () => {
     it('identifies terminal statuses correctly', () => {
-      const isTerminalStatus = (status: string): boolean => {
-        return status === 'completed' || status === 'failed' || status === 'partial';
-      };
-
       expect(isTerminalStatus('completed')).toBe(true);
       expect(isTerminalStatus('failed')).toBe(true);
       expect(isTerminalStatus('partial')).toBe(true);
+      expect(isTerminalStatus('cancelled')).toBe(true);
       expect(isTerminalStatus('pending')).toBe(false);
       expect(isTerminalStatus('running')).toBe(false);
     });
-
   });
 
   describe('generator consumption', () => {
@@ -102,7 +130,10 @@ describe('jobs watch command', () => {
   });
 
   describe('JSON output', () => {
-    it('structures JSON output correctly', () => {
+    it('outputs the real success envelope via outputResult()', () => {
+      const { command, log } = createWatchCommand();
+      (command as any).jsonOutput = true;
+
       const result: WatchResult = {
         status: {
           id: 'job_123',
@@ -116,23 +147,19 @@ describe('jobs watch command', () => {
         elapsed: 5000,
       };
 
-      // JSON output structure
-      const jsonOutput = {
-        job_id: result.status.id,
-        status: result.status.status,
-        progress: result.status.progress,
-        total: result.status.total,
-        processed: result.status.processed,
-        results: result.status.results,
-        errors: result.status.errors,
-        timed_out: result.timedOut,
-        elapsed_ms: result.elapsed,
-      };
+      (command as any).outputResult('job_123', result);
 
-      expect(jsonOutput.job_id).toBe('job_123');
-      expect(jsonOutput.status).toBe('completed');
-      expect(jsonOutput.timed_out).toBe(false);
-      expect(jsonOutput.elapsed_ms).toBe(5000);
+      expect(log).toHaveBeenCalledTimes(1);
+      const parsed = JSON.parse(log.mock.calls[0]![0] as string);
+
+      expect(parsed).toEqual(
+        successOutput({
+          job_id: 'job_123',
+          ...result.status,
+          timedOut: false,
+          elapsed_ms: 5000,
+        })
+      );
     });
   });
 
@@ -158,22 +185,50 @@ describe('jobs watch command', () => {
   });
 
   describe('results preview', () => {
-    it('limits results preview to 5 items', () => {
-      const RESULTS_PREVIEW_LIMIT = 5;
-      const results = Array.from({ length: 10 }, (_, i) => ({ id: i }));
-      const preview = results.slice(0, RESULTS_PREVIEW_LIMIT);
+    it('limits results preview to RESULTS_PREVIEW_LIMIT via the real formatHumanOutput path', () => {
+      const { command, log } = createWatchCommand();
 
-      expect(preview).toHaveLength(5);
-      expect(results.length - preview.length).toBe(5); // "and 5 more..."
+      const results = Array.from({ length: RESULTS_PREVIEW_LIMIT + 5 }, (_, i) => ({
+        id: i,
+        name: `site-${i}`,
+      }));
+      const result: WatchResult = {
+        status: { id: 'job_123', status: 'completed', results },
+        timedOut: false,
+        elapsed: 5000,
+      };
+
+      (command as any).outputResult('job_123', result);
+
+      const output = log.mock.calls[0]![0] as string;
+
+      for (const item of results.slice(0, RESULTS_PREVIEW_LIMIT)) {
+        expect(output).toContain(`- ${item.name}`);
+      }
+      expect(output).toContain(`... and ${results.length - RESULTS_PREVIEW_LIMIT} more`);
+
+      const excludedItem = results[results.length - 1]!;
+      expect(output).not.toContain(`- ${excludedItem.name}`);
     });
 
-    it('shows all results when under limit', () => {
-      const RESULTS_PREVIEW_LIMIT = 5;
-      const results = [{ id: 1 }, { id: 2 }, { id: 3 }];
-      const preview = results.slice(0, RESULTS_PREVIEW_LIMIT);
+    it('shows all results when under the limit', () => {
+      const { command, log } = createWatchCommand();
 
-      expect(preview).toHaveLength(3);
-      expect(preview).toEqual(results);
+      const results = [{ id: 1, name: 'site-1' }, { id: 2, name: 'site-2' }];
+      const result: WatchResult = {
+        status: { id: 'job_123', status: 'completed', results },
+        timedOut: false,
+        elapsed: 5000,
+      };
+
+      (command as any).outputResult('job_123', result);
+
+      const output = log.mock.calls[0]![0] as string;
+
+      for (const item of results) {
+        expect(output).toContain(`- ${item.name}`);
+      }
+      expect(output).not.toContain('more');
     });
   });
 });

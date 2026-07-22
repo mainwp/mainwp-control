@@ -12,7 +12,7 @@ A CLI for managing your MainWP Dashboard from the terminal. List sites, push upd
 
 > **On Windows?** Use [Git Bash](https://gitforwindows.org/) and every example below works without changes. For scheduled workflows (cron), see [WSL](https://learn.microsoft.com/en-us/windows/wsl/install).
 
-You need Node.js 20+ and a MainWP Dashboard (v6+) with an [Application Password](https://make.wordpress.org/core/2020/11/05/application-passwords-integration-guide/).
+You need Node.js 20.18.1+ and a MainWP Dashboard (v6+) with an [Application Password](https://make.wordpress.org/core/2020/11/05/application-passwords-integration-guide/).
 
 ```bash
 npm install -g @mainwp/control
@@ -70,7 +70,7 @@ mainwpcontrol abilities run list-updates-v1 --json
 mainwpcontrol abilities run get-site-v1 --input '{"site_id_or_domain": 1}' --json
 ```
 
-> **Windows?** This works as-is in [Git Bash](https://gitforwindows.org/). In PowerShell, escape the inner quotes: `'{\"site_id_or_domain\": 1}'`. Or skip quoting entirely with `--input-file` ([details](docs/workflows/input-from-file.md)).
+> **Windows?** This works as-is in [Git Bash](https://gitforwindows.org/). In PowerShell, use `--input-file` instead of inline JSON: how PowerShell passes quoted arguments to native commands varies by version ([details](docs/workflows/input-from-file.md)).
 
 **Preview a destructive action before running it:**
 
@@ -136,7 +136,7 @@ A terminal is where you type commands instead of clicking buttons. You'll see it
 
 **How to open it:**
 - **macOS**: Open **Terminal** (search in Spotlight, or look in Applications > Utilities)
-- **Windows**: Open **Git Bash** (installed with [Git for Windows](https://gitforwindows.org/)). If you don't have it, PowerShell works too — see the [quoting notes](#json-quoting-on-the-command-line) below.
+- **Windows**: Open **Git Bash** (installed with [Git for Windows](https://gitforwindows.org/)). If you don't have it, PowerShell works too; see the [quoting notes](#json-quoting-on-the-command-line) below.
 - **Linux**: Open your distribution's **Terminal** app (usually in the applications menu)
 
 ### What does `npm install -g` do?
@@ -178,14 +178,11 @@ When you pass JSON with `--input`, quoting depends on your shell:
 ```bash
 # macOS / Linux / Git Bash on Windows
 mainwpcontrol abilities run get-site-v1 --input '{"site_id_or_domain": 1}' --json
-
-# Windows PowerShell
-mainwpcontrol abilities run get-site-v1 --input '{\"site_id_or_domain\": 1}' --json
 ```
 
 **Git Bash on Windows** (comes with [Git for Windows](https://gitforwindows.org/)) handles quoting the same way macOS and Linux do. If you use Git Bash, all the examples in this documentation work without changes.
 
-PowerShell strips the inner double quotes unless you escape them with backslashes. If this gets annoying, put your parameters in a file and use `--input-file`:
+**Windows PowerShell** quoting of inline JSON is unreliable: whether backslash-escaped quotes inside a single-quoted string reach the command intact depends on your PowerShell version. Don't fight it, put your parameters in a file and use `--input-file`:
 
 ```bash
 mainwpcontrol abilities run get-site-v1 --input-file params.json --json
@@ -219,10 +216,7 @@ mainwpcontrol abilities run list-sites-v1 --json
 # Run with input parameters
 mainwpcontrol abilities run get-site-v1 --input '{"site_id_or_domain": 1}' --json
 
-# Windows PowerShell: escape inner quotes (Git Bash doesn't need this)
-mainwpcontrol abilities run get-site-v1 --input '{\"site_id_or_domain\": 1}' --json
-
-# Or use a file (works everywhere)
+# Or use a file (works everywhere, and is the reliable option on Windows PowerShell)
 mainwpcontrol abilities run get-site-v1 --input-file params.json --json
 ```
 
@@ -277,7 +271,7 @@ See [Chat Mode Configuration](#chat-mode-configuration) for all supported provid
 
 ### Global Flags
 
-These flags work on every command.
+These flags work on every `mainwpcontrol` command except the built-in `help` and `autocomplete` commands.
 
 | Flag | Description |
 |------|-------------|
@@ -477,6 +471,7 @@ Step-by-step guides for common automation patterns:
 | 3 | Network error | Retry or check connectivity |
 | 4 | API error | Check ability parameters |
 | 5 | Internal error | Report bug |
+| 130 | Interrupted (SIGINT) | Ctrl-C during a prompt or `jobs watch`; standard Unix 128+SIGINT convention, outside the 0-5 contract |
 
 ### Environment Variables
 
@@ -606,7 +601,7 @@ GPL-3.0-or-later
 
 ## Requirements
 
-- Node.js 20 LTS or later
+- Node.js 20.18.1 or later
 - MainWP Dashboard 6+ with Abilities API
 - WordPress Application Password
 

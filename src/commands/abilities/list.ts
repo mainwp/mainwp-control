@@ -8,7 +8,7 @@ import { Flags } from '@oclif/core';
 import { BaseCommand, commonFlags } from '../../lib/base-command.js';
 import { formatTable, formatHeading } from '../../output/formatter.js';
 import { color, colors } from '../../utils/colors.js';
-import { stripControlChars } from '../../utils/terminal-sanitizer.js';
+import { sanitizeSingleLine } from '../../utils/terminal-sanitizer.js';
 import type { Ability } from '../../core/abilities-executor.js';
 
 /**
@@ -154,7 +154,7 @@ export default class AbilitiesList extends BaseCommand {
           for (let j = 0; j < catAbilities.length; j++) {
             lines.push(tableLines[j + 2] ?? '');
             const ability = catAbilities[j]!;
-            const safeName = stripControlChars(ability.name);
+            const safeName = sanitizeSingleLine(ability.name);
             const shortName = safeName.split('/').pop() ?? safeName;
             const hint = buildUsageHint(shortName, ability);
             lines.push(color(`    ${hint}`, colors.dim));

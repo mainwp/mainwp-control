@@ -25,7 +25,7 @@ import {
   STANDARD_ABILITIES,
   abilityRunSuccess,
   abilityDryRunResponse,
-  abilityRunBatch,
+  dashboardQueuedResponse,
   jobStatus,
 } from './fixtures/api-responses.js';
 
@@ -252,7 +252,7 @@ describe('Scenario: Batch Update', () => {
 
   it('step 2: --confirm --force --wait executes and waits for job completion', async () => {
     // The run-updates-v1 --confirm returns a batch job
-    server.setRunResponse('run-updates-v1', abilityRunBatch(BATCH_JOB_ID));
+    server.setRunResponse('run-updates-v1', dashboardQueuedResponse(BATCH_JOB_ID));
 
     // Set up job status progression: pending → running → completed
     server.setJobProgression(BATCH_JOB_ID, [
@@ -332,7 +332,7 @@ describe('Scenario: Batch Update', () => {
     // Step 2: reset routes and set up for confirm+wait
     server.reset();
     server.setAbilities(STANDARD_ABILITIES);
-    server.setRunResponse('run-updates-v1', abilityRunBatch(BATCH_JOB_ID));
+    server.setRunResponse('run-updates-v1', dashboardQueuedResponse(BATCH_JOB_ID));
     server.setJobProgression(BATCH_JOB_ID, [
       jobStatus({ job_id: BATCH_JOB_ID, status: 'pending', progress: 0, processed: 0, total: 2 }),
       jobStatus({ job_id: BATCH_JOB_ID, status: 'completed', progress: 100, processed: 2, total: 2, results: [{ ok: true }] }),

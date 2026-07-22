@@ -49,6 +49,13 @@ const ESCAPE_PATTERNS = {
 const C0_UNSAFE = /[\x00-\x08\x0b\x0c\x0e-\x1f]/g;
 
 /**
+ * Unicode bidirectional and isolate controls (U+202A–U+202E, U+2066–U+2069).
+ * Hostile names could otherwise visually reorder terminal output and spoof
+ * copy-pasteable commands. job-id validation rejects the same range.
+ */
+const BIDI_CONTROLS = /[‪-‮⁦-⁩]/g;
+
+/**
  * Strip all ANSI escape sequences and control characters from a string.
  *
  * This is the core sanitization function that removes:
@@ -80,12 +87,32 @@ export function stripControlChars(str: string): string {
   // Remove control characters
   result = result.replace(ESCAPE_PATTERNS.c1, '');
   result = result.replace(C0_UNSAFE, '');
+  result = result.replace(BIDI_CONTROLS, '');
 
   // Remove any remaining bare ESC characters
   result = result.replace(/\x1b/g, '');
 
   return result;
 }
+
+/**
+ * Sanitize untrusted text for a single terminal output line.
+ *
+ * Removes terminal control sequences, then replaces any run of line-breaking
+ * or horizontal-tab characters with one space to prevent line injection.
+ */
+export function sanitizeSingleLine(str: string): string {
+  return stripControlChars(str).replace(/[\r\n\t]+/g, ' ');
+}
+
+/**
+ * Sanitized values can originate from hostile API responses: the traversal
+ * is depth-bounded so deep nesting cannot overflow the stack, and the
+ * current ancestor path is tracked so cycles terminate. Tracking the path
+ * (not all visited objects) keeps legitimately shared references intact —
+ * command envelopes do reuse objects across fields.
+ */
+const MAX_SANITIZE_DEPTH = 64;
 
 /**
  * Recursively sanitize a value for safe terminal output.
@@ -96,10 +123,21 @@ export function stripControlChars(str: string): string {
  * - Objects: recursively sanitizes each value
  * - Other types: converted to string and sanitized
  *
+ * Cyclic or deeper-than-bound structures are replaced with '[TRUNCATED]'
+ * rather than overflowing the stack.
+ *
  * @param value - The value to sanitize
  * @returns A sanitized copy of the value (original is not modified)
  */
 export function sanitizeForTerminal(value: unknown): unknown {
+  return sanitizeForTerminalBounded(value, 0, new WeakSet());
+}
+
+function sanitizeForTerminalBounded(
+  value: unknown,
+  depth: number,
+  path: WeakSet<object>
+): unknown {
   if (value === null || value === undefined) {
     return value;
   }
@@ -112,18 +150,29 @@ export function sanitizeForTerminal(value: unknown): unknown {
     return value;
   }
 
-  if (Array.isArray(value)) {
-    return value.map((item) => sanitizeForTerminal(item));
-  }
-
   if (typeof value === 'object') {
-    const sanitized: Record<string, unknown> = {};
-    for (const [key, val] of Object.entries(value)) {
-      // Sanitize both keys and values
-      const sanitizedKey = stripControlChars(key);
-      sanitized[sanitizedKey] = sanitizeForTerminal(val);
+    if (path.has(value) || depth >= MAX_SANITIZE_DEPTH) {
+      return '[TRUNCATED]';
     }
-    return sanitized;
+    path.add(value);
+
+    let result: unknown;
+    if (Array.isArray(value)) {
+      result = value.map((item) => sanitizeForTerminalBounded(item, depth + 1, path));
+    } else {
+      // Null prototype so a hostile "__proto__" key lands as an ordinary
+      // data property instead of rewriting the accumulator's prototype.
+      const sanitized: Record<string, unknown> = Object.create(null) as Record<string, unknown>;
+      for (const [key, val] of Object.entries(value)) {
+        // Sanitize both keys and values
+        const sanitizedKey = stripControlChars(key);
+        sanitized[sanitizedKey] = sanitizeForTerminalBounded(val, depth + 1, path);
+      }
+      result = sanitized;
+    }
+
+    path.delete(value);
+    return result;
   }
 
   // For other types (functions, symbols, etc.), convert to string and sanitize

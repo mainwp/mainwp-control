@@ -8,6 +8,8 @@
 import { HttpClient, type HttpClientConfig, createHttpClient } from './http-client.js';
 import { APIError, InputError } from '../utils/errors.js';
 import { getInputSanitizer } from '../validation/input-sanitizer.js';
+import { isKnownDestructiveName } from './safety-controller.js';
+import { validateJobId } from './job-id.js';
 
 /**
  * Ability annotation metadata
@@ -64,6 +66,13 @@ export interface ExecutionResult<T = unknown> {
  */
 type AbilitiesListResponse = Ability[];
 
+const MAX_DISCOVERY_PAGES = 20;
+// Deliberately case-SENSITIVE: the Dashboard registers lowercase names, and
+// the destructive-name override (DESTRUCTIVE_NAME_PATTERNS) matches lowercase.
+// A case-variant like "Mainwp/Delete-Site-V1" is refused at discovery rather
+// than normalized, so it can never evade classification or alias a cache key.
+const ABILITY_NAME_PATTERN = /^[a-z0-9][a-z0-9._-]*\/[a-z0-9][a-z0-9._-]*-v[1-9]\d*$/;
+
 /**
  * Abilities Executor class
  */
@@ -73,6 +82,8 @@ export class AbilitiesExecutor {
   private abilitiesCache: Map<string, Ability> | null = null;
   private cacheExpiry = 0;
   private readonly cacheTTL = 5 * 60 * 1000; // 5 minutes
+  /** In-flight cache fill, shared by concurrent callers to avoid a fetch stampede. */
+  private cacheFillPromise: Promise<void> | null = null;
 
   constructor(config: HttpClientConfig) {
     this.httpClient = createHttpClient(config);
@@ -122,8 +133,9 @@ export class AbilitiesExecutor {
       );
     }
 
-    // Build the request body
-    const body = this.buildRequestBody(input, options);
+    // Merge execution options into user input — the single place control
+    // flags are applied. Both request paths below format this same output.
+    const params = this.buildEffectiveParams(input, options);
 
     // Determine HTTP method based on annotations
     const method = this.getHttpMethod(ability, options);
@@ -140,17 +152,20 @@ export class AbilitiesExecutor {
 
       if (method === 'GET') {
         // For GET requests, nest input under input[key] (WordPress REST style).
-        // Control flags (dry_run, confirm) stay top-level.
-        const queryString = this.buildGetQueryString(input, options);
+        const queryString = this.buildGetQueryString(params);
         const url = queryString ? `${endpoint}?${queryString}` : endpoint;
         response = await this.httpClient.get<ExecutionResult<T>>(url, requestOptions);
       } else if (method === 'DELETE') {
-        const queryString = this.buildGetQueryString(input, options);
+        const queryString = this.buildGetQueryString(params);
         const url = queryString ? `${endpoint}?${queryString}` : endpoint;
         response = await this.httpClient.delete<ExecutionResult<T>>(url, requestOptions);
       } else {
         // POST with JSON body
-        response = await this.httpClient.post<ExecutionResult<T>>(endpoint, body, requestOptions);
+        response = await this.httpClient.post<ExecutionResult<T>>(
+          endpoint,
+          { input: params },
+          requestOptions
+        );
       }
 
       return this.normalizeResponse(response.data);
@@ -191,14 +206,32 @@ export class AbilitiesExecutor {
   }
 
   /**
-   * Ensure abilities cache is populated
+   * Ensure abilities cache is populated.
+   * Concurrent callers share one in-flight fetch instead of each starting
+   * their own paginated fetch (plausible in chat's tool-calling loop).
    */
   private async ensureCache(): Promise<void> {
     if (this.abilitiesCache && Date.now() < this.cacheExpiry) {
       return;
     }
 
-    this.abilitiesCache = new Map();
+    if (this.cacheFillPromise) {
+      return this.cacheFillPromise;
+    }
+
+    this.cacheFillPromise = this.fillCache().finally(() => {
+      this.cacheFillPromise = null;
+    });
+
+    return this.cacheFillPromise;
+  }
+
+  /**
+   * Fetch all ability pages and populate the cache.
+   */
+  private async fillCache(): Promise<void> {
+    const cache = new Map<string, Ability>();
+    const aliasOwners = new Map<string, string | null>();
 
     // Fetch all pages — API returns Ability[] with WP pagination headers.
     let page = 1;
@@ -209,28 +242,64 @@ export class AbilitiesExecutor {
         `${this.baseEndpoint}/abilities?per_page=100&page=${page}`
       );
 
-      const abilities = Array.isArray(response.data)
+      const abilities: unknown[] = Array.isArray(response.data)
         ? response.data
-        : (response.data as Record<string, unknown>)['abilities'] as Ability[] ?? [];
+        : this.asRecord(response.data)?.['abilities'] instanceof Array
+          ? this.asRecord(response.data)?.['abilities'] as unknown[]
+          : [];
 
-      for (const ability of abilities) {
-        this.abilitiesCache.set(ability.name, ability);
+      for (const entry of abilities) {
+        if (!this.isPlainObject(entry) ||
+          typeof entry['name'] !== 'string' ||
+          !ABILITY_NAME_PATTERN.test(entry['name'])) {
+          console.error('Warning: Discovery skipped an invalid ability entry.');
+          continue;
+        }
+
+        const ability = entry as unknown as Ability;
+        if (cache.has(ability.name)) {
+          console.error(`Warning: Discovery ignored duplicate ability "${ability.name}".`);
+          continue;
+        }
+        cache.set(ability.name, ability);
 
         const shortName = this.getShortName(ability.name);
         if (shortName !== ability.name) {
-          this.abilitiesCache.set(shortName, ability);
+          const existingOwner = aliasOwners.get(shortName);
+          if (existingOwner === undefined) {
+            aliasOwners.set(shortName, ability.name);
+            cache.set(shortName, ability);
+          } else if (existingOwner !== null) {
+            aliasOwners.set(shortName, null);
+            cache.delete(shortName);
+            console.error(
+              `Warning: Discovery removed ambiguous short alias "${shortName}". Use full ability names.`
+            );
+          }
         }
       }
 
       // Read WP pagination header for total pages
       const wpTotalPages = response.headers?.get?.('x-wp-totalpages');
-      if (wpTotalPages) {
-        totalPages = parseInt(wpTotalPages, 10) || 1;
+      if (page === 1 && wpTotalPages) {
+        const declaredPages = Number.parseInt(wpTotalPages, 10);
+        if (Number.isInteger(declaredPages) && declaredPages > 0) {
+          if (declaredPages > MAX_DISCOVERY_PAGES) {
+            throw new APIError(
+              'INVALID_RESPONSE',
+              `Discovery declared ${declaredPages} pages, exceeding the ${MAX_DISCOVERY_PAGES}-page limit.`
+            );
+          }
+          totalPages = declaredPages;
+        } else {
+          console.error('Warning: Discovery returned an invalid pagination header.');
+        }
       }
 
       page++;
     } while (page <= totalPages);
 
+    this.abilitiesCache = cache;
     this.cacheExpiry = Date.now() + this.cacheTTL;
   }
 
@@ -251,17 +320,32 @@ export class AbilitiesExecutor {
   }
 
   /**
-   * Build request body with execution options.
-   * The WP Abilities API expects: { input: { ...userInput, dry_run?, confirm? } }
+   * Merge execution options into user input, producing the final param set.
+   * Both the POST body and the GET/DELETE query-string path format this same
+   * output — this is the single place dry_run/confirm/user_confirmed are applied.
+   *
+   * SECURITY: strips any dry_run/confirm/user_confirmed present in user/LLM
+   * input before applying the ones from `options`. These control flags are
+   * set exclusively by execution options (CLI flags or the safety flow) —
+   * preserve this strip exactly, do not weaken it.
    */
-  private buildRequestBody(
+  private buildEffectiveParams(
     input: Record<string, unknown>,
     options?: ExecutionOptions
   ): Record<string, unknown> {
+    // INVARIANT: dry_run and confirm are mutually exclusive. Callers enforce
+    // this upstream (SafetyController.validateExecutionFlags, oclif exclusive
+    // flags); assert here too so no code path can emit a request carrying both.
+    if (options?.dryRun && options?.confirm) {
+      throw new InputError(
+        'dry_run and confirm cannot both be set',
+        undefined,
+        'This is an internal error — preview and execute are separate steps.'
+      );
+    }
+
     const merged = { ...input };
 
-    // SECURITY: Strip control flags from user/LLM-provided input.
-    // These are set exclusively from execution options (CLI flags or safety flow).
     delete merged['dry_run'];
     delete merged['confirm'];
     delete merged['user_confirmed'];
@@ -275,7 +359,7 @@ export class AbilitiesExecutor {
       merged['user_confirmed'] = true;
     }
 
-    return { input: merged };
+    return merged;
   }
 
   /**
@@ -286,14 +370,31 @@ export class AbilitiesExecutor {
     _options?: ExecutionOptions
   ): 'GET' | 'POST' | 'DELETE' {
     const annotations = ability.meta?.annotations;
+    const annotationsAreValid =
+      typeof annotations?.readonly === 'boolean' &&
+      typeof annotations.destructive === 'boolean' &&
+      typeof annotations.idempotent === 'boolean';
 
-    // If readonly, use GET
-    if (annotations?.readonly) {
+    // Resolve destructiveness the same way SafetyController does — annotations
+    // OR a known-destructive name — so transport never disagrees with policy.
+    // A name-destructive ability must never go out as GET (readonly transport),
+    // even if a hostile/buggy server marks it readonly.
+    // Strict === true matches SafetyController.validateAnnotations(): a
+    // non-boolean annotation value (e.g. readonly: "true" from a buggy or
+    // hostile server) must not be treated as set.
+    const annotatedDestructive = annotationsAreValid && annotations.destructive;
+    const destructive = annotatedDestructive || isKnownDestructiveName(ability.name);
+
+    // Read-only (and not name-destructive) → GET
+    if (annotationsAreValid && annotations.readonly && !destructive) {
       return 'GET';
     }
 
-    // If destructive and idempotent, use DELETE
-    if (annotations?.destructive && annotations?.idempotent) {
+    // Destructive and idempotent → DELETE. Only when the annotations
+    // themselves say destructive: if destructiveness came from the name
+    // override, the annotations are already distrusted, so `idempotent`
+    // from the same source must not pick the method — fall through to POST.
+    if (annotatedDestructive && annotations.idempotent) {
       return 'DELETE';
     }
 
@@ -303,21 +404,16 @@ export class AbilitiesExecutor {
 
   /**
    * Build query string for GET/DELETE requests with WordPress-style nesting.
-   * User input goes under input[key]=value; control flags stay top-level.
+   * `params` is already the merged output of buildEffectiveParams(), so
+   * dry_run/confirm/user_confirmed (if present) are formatted the same as
+   * any other param — no separate control-flag handling needed here.
    */
-  private buildGetQueryString(
-    input: Record<string, unknown>,
-    options?: ExecutionOptions,
-  ): string {
+  private buildGetQueryString(params: Record<string, unknown>): string {
     const parts: string[] = [];
 
-    // SECURITY: Control flags managed exclusively by execution options
-    const controlFlags = ['dry_run', 'confirm', 'user_confirmed'];
-
     // All params go under input[key] — the API treats input as a single object.
-    for (const [key, value] of Object.entries(input)) {
+    for (const [key, value] of Object.entries(params)) {
       if (value === undefined || value === null) continue;
-      if (controlFlags.includes(key)) continue;
       const ek = encodeURIComponent(key);
 
       if (Array.isArray(value)) {
@@ -332,12 +428,6 @@ export class AbilitiesExecutor {
       }
     }
 
-    if (options?.dryRun) parts.push('input[dry_run]=true');
-    if (options?.confirm) {
-      parts.push('input[confirm]=true');
-      parts.push('input[user_confirmed]=true');
-    }
-
     return parts.join('&');
   }
 
@@ -346,21 +436,47 @@ export class AbilitiesExecutor {
    * Normalize API response to ExecutionResult
    */
   private normalizeResponse<T>(data: unknown): ExecutionResult<T> {
+    const record = this.asRecord(data);
+    const wrappedData = this.asRecord(record?.['data']);
+    const queuedEnvelope = record?.['queued'] === true ? record : wrappedData;
+    const queuedJobId = queuedEnvelope?.['queued'] === true
+      ? validateJobId(queuedEnvelope['job_id'])
+      : undefined;
+
     // If already in expected format, return as-is
     if (
-      typeof data === 'object' &&
-      data !== null &&
-      'success' in data &&
-      typeof (data as Record<string, unknown>)['success'] === 'boolean'
+      record &&
+      typeof record['success'] === 'boolean'
     ) {
-      return data as ExecutionResult<T>;
+      return {
+        ...(data as ExecutionResult<T>),
+        ...(queuedJobId ? { jobId: queuedJobId } : {}),
+      };
     }
 
     // Wrap raw data in success response
     return {
       success: true,
       data: data as T,
+      ...(queuedJobId ? { jobId: queuedJobId } : {}),
     };
+  }
+
+  private asRecord(value: unknown): Record<string, unknown> | undefined {
+    if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+      return undefined;
+    }
+
+    return value as Record<string, unknown>;
+  }
+
+  private isPlainObject(value: unknown): value is Record<string, unknown> {
+    if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+      return false;
+    }
+
+    const prototype = Object.getPrototypeOf(value);
+    return prototype === Object.prototype || prototype === null;
   }
 
   /**

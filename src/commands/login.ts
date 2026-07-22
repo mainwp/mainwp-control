@@ -6,12 +6,14 @@
 
 import { Flags } from '@oclif/core';
 import { BaseCommand, commonFlags } from '../lib/base-command.js';
-import { getProfileStore, type Profile } from '../config/profile-store.js';
+import { getProfileStore, validateDashboardUrl, type Profile } from '../config/profile-store.js';
 import { getKeychain } from '../config/keychain.js';
 import { createHttpClient } from '../core/http-client.js';
 import { formatSuccess, formatWarning, formatInfo } from '../output/formatter.js';
 import { AuthError, InputError } from '../utils/errors.js';
 import { promptForInput, promptForPassword, isInteractive } from '../utils/prompt.js';
+import { sanitizeSingleLine } from '../utils/terminal-sanitizer.js';
+import { maskUrlUserinfo } from '../utils/format.js';
 
 export default class Login extends BaseCommand {
   static description = 'Authenticate with a MainWP Dashboard';
@@ -101,6 +103,11 @@ export default class Login extends BaseCommand {
     }
     normalizedUrl = normalizedUrl.replace(/\/+$/, '');
 
+    // Reject malformed URLs (embedded credentials included) before the
+    // connection test — undici otherwise fails first with an opaque
+    // NetworkError and the user never sees the real reason.
+    validateDashboardUrl(normalizedUrl, { rejectUserinfo: true });
+
     // Generate profile name from URL if not provided
     const profileName = flags.name ?? new URL(normalizedUrl).hostname;
 
@@ -162,11 +169,48 @@ export default class Login extends BaseCommand {
     };
 
     const profileStore = getProfileStore();
-    await profileStore.save(profile);
-
-    // Store password in keychain
     const keychain = getKeychain();
-    const keychainResult = await keychain.set(profileName, password);
+    const previousProfile = await profileStore.get(profileName);
+    // Rollback must restore only what the keychain actually held (the
+    // MAINWP_APP_PASSWORD env fallback must never be persisted), and an
+    // unreadable keychain must abort before the credential is overwritten:
+    // treating a failed read as "nothing stored" would make a later profile-
+    // save failure "roll back" by deleting a credential that still exists.
+    let previousCredential: string | undefined;
+    if (previousProfile) {
+      const stored = await keychain.getStored(profileName);
+      if (stored.status === 'error') {
+        throw new AuthError(
+          `Cannot read the existing keychain credential for profile "${profileName}": ${stored.error}`,
+          undefined,
+          'Unlock the system keychain and retry. The stored credential was left untouched.'
+        );
+      }
+      previousCredential = stored.status === 'found' ? stored.password : undefined;
+    }
+    // Attempt credential storage before publishing the profile. A thrown
+    // keychain failure cannot leave a profile that was only half-created.
+    // Supported keychain-unavailable environments still receive the existing
+    // explicit warning and MAINWP_APP_PASSWORD fallback behavior below.
+    const keychainResult = await keychain.set(profileName, password, normalizedUrl);
+    try {
+      await profileStore.save(profile);
+    } catch (error) {
+      if (keychainResult.stored) {
+        const rollbackResult = previousCredential
+          ? await keychain.set(profileName, previousCredential)
+          : await keychain.delete(profileName);
+        const rollbackSucceeded = 'stored' in rollbackResult
+          ? rollbackResult.stored
+          : rollbackResult.deleted;
+        if (!rollbackSucceeded) {
+          this.logToStderr(formatWarning(
+            'Profile save failed and the keychain credential rollback also failed.'
+          ));
+        }
+      }
+      throw error;
+    }
 
     // Set as active
     await profileStore.setActive(profileName);
@@ -175,15 +219,16 @@ export default class Login extends BaseCommand {
     this.output(
       {
         profile: profileName,
-        url: normalizedUrl,
+        // Defense in depth: intake rejection should make masking a no-op here
+        url: maskUrlUserinfo(normalizedUrl),
         username,
         credentialStorage: keychainResult.location,
       },
       () => {
         const lines = [
-          formatSuccess(`Logged in as ${username}`),
-          `  Profile: ${profileName}`,
-          `  Dashboard: ${normalizedUrl}`,
+          formatSuccess(`Logged in as ${sanitizeSingleLine(username)}`),
+          `  Profile: ${sanitizeSingleLine(profileName)}`,
+          `  Dashboard: ${sanitizeSingleLine(maskUrlUserinfo(normalizedUrl))}`,
         ];
 
         if (keychainResult.stored) {
@@ -192,7 +237,7 @@ export default class Login extends BaseCommand {
           lines.push('');
           lines.push(formatWarning('Credentials NOT saved to keychain.'));
           if (keychainResult.error) {
-            lines.push(`  Reason: ${keychainResult.error}`);
+            lines.push(`  Reason: ${sanitizeSingleLine(keychainResult.error)}`);
           }
           lines.push(
             '  Future commands must continue receiving MAINWP_APP_PASSWORD because plaintext credentials are not stored locally.'

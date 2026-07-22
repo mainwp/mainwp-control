@@ -8,6 +8,7 @@
 import { createRequire } from 'node:module';
 import { Agent } from 'undici';
 import { NetworkError, TLSError, APIError, AuthError } from '../utils/errors.js';
+import { redactSensitiveKeys } from '../utils/redaction.js';
 
 const require = createRequire(import.meta.url);
 const { version: PKG_VERSION } = require('../../package.json') as { version: string };
@@ -190,17 +191,22 @@ export class HttpClient {
 
       const response = await fetch(url, fetchOptions);
 
-      clearTimeout(timeoutId);
-
       // SECURITY: Handle redirects manually - only follow same-origin
       if (this.isRedirect(response.status)) {
+        clearTimeout(timeoutId);
         return this.handleRedirect<T>(response, method, body, options, redirectCount);
       }
 
-      // Check response size via Content-Length header (pre-read guard)
+      // Check response size via Content-Length header (pre-read guard).
+      // REPORT-ONLY: this trusts the server-reported Content-Length; a server
+      // that lies about it still gets fully buffered by the post-read check
+      // below. Acceptable here since the only server we talk to is the
+      // trusted Dashboard the operator configured, not an arbitrary origin.
       const contentLength = response.headers.get('content-length');
       const parsedContentLength = contentLength ? parseInt(contentLength, 10) : NaN;
       if (!isNaN(parsedContentLength) && parsedContentLength > this.maxResponseSize) {
+        controller.abort();
+        void response.body?.cancel().catch(() => {});
         throw new NetworkError(
           `Response too large: ${parsedContentLength} bytes`,
           undefined,
@@ -208,31 +214,44 @@ export class HttpClient {
         );
       }
 
-      // Parse response
-      const text = await response.text();
-
-      // Post-read body length check (only when Content-Length was absent or unparseable)
-      if (isNaN(parsedContentLength) && text.length > this.maxResponseSize) {
-        throw new NetworkError(
-          `Response too large: ${text.length} bytes`,
-          undefined,
-          'Response is too large. Check the Dashboard logs or try a simpler query'
-        );
-      }
+      const text = await this.readResponseBody(response, controller, effectiveSignal);
 
       let data: T;
-      try {
-        // SECURITY: Strip __proto__ and constructor keys to prevent prototype
-        // pollution from untrusted API responses
-        data = text ? (JSON.parse(text, (key, value) => {
-          if (key === '__proto__' || key === 'constructor') {
-            return undefined;
-          }
-          return value;
-        }) as T) : ({} as T);
-      } catch {
-        // If not JSON, wrap as string
-        data = text as unknown as T;
+      if (response.ok) {
+        const contentType = response.headers.get('content-type')?.toLowerCase() ?? '';
+        const mediaType = contentType.split(';', 1)[0]?.trim() ?? '';
+        if (mediaType !== 'application/json' && !mediaType.endsWith('+json')) {
+          throw new APIError(
+            'INVALID_RESPONSE',
+            'Dashboard returned a successful response without a JSON content type',
+            response.status
+          );
+        }
+        if (text.trim().length === 0) {
+          throw new APIError(
+            'INVALID_RESPONSE',
+            'Dashboard returned an empty successful response',
+            response.status
+          );
+        }
+
+        try {
+          data = this.parseJson<T>(text);
+        } catch {
+          throw new APIError(
+            'INVALID_RESPONSE',
+            'Dashboard returned malformed JSON in a successful response',
+            response.status
+          );
+        }
+      } else {
+        try {
+          data = text ? this.parseJson<T>(text) : ({} as T);
+        } catch {
+          // Preserve existing non-2xx behavior: raw bodies are sanitized by
+          // handleHttpError before they are exposed through a typed error.
+          data = text as unknown as T;
+        }
       }
 
       // Handle HTTP errors
@@ -247,9 +266,100 @@ export class HttpClient {
         data,
       };
     } catch (error) {
+      // Distinguish caller cancellation from our own timeout: AbortSignal.any()
+      // erases which signal fired, so check the caller's signal directly.
+      throw this.normalizeError(error, options?.signal?.aborted === true);
+    } finally {
       clearTimeout(timeoutId);
-      throw this.normalizeError(error);
     }
+  }
+
+  private async readResponseBody(
+    response: Response,
+    controller: AbortController,
+    signal: AbortSignal
+  ): Promise<string> {
+    if (!response.body) {
+      const text = await response.text();
+      const byteLength = Buffer.byteLength(text, 'utf8');
+      if (byteLength > this.maxResponseSize) {
+        controller.abort();
+        throw this.responseTooLarge(byteLength);
+      }
+      return text;
+    }
+
+    const reader = response.body.getReader();
+    const chunks: Uint8Array[] = [];
+    let totalBytes = 0;
+
+    try {
+      while (true) {
+        const { done, value } = await this.readChunk(reader, signal);
+        if (done) break;
+        if (!value) continue;
+
+        totalBytes += value.byteLength;
+        if (totalBytes > this.maxResponseSize) {
+          controller.abort();
+          await reader.cancel().catch(() => {});
+          throw this.responseTooLarge(totalBytes);
+        }
+        chunks.push(value);
+      }
+    } catch (error) {
+      void reader.cancel().catch(() => {});
+      throw error;
+    } finally {
+      reader.releaseLock();
+    }
+
+    return Buffer.concat(chunks.map((chunk) => Buffer.from(chunk)), totalBytes).toString('utf8');
+  }
+
+  private readChunk(
+    reader: ReadableStreamDefaultReader<Uint8Array>,
+    signal: AbortSignal
+  ): Promise<{ done: boolean; value?: Uint8Array }> {
+    if (signal.aborted) {
+      return Promise.reject(new DOMException('The operation was aborted', 'AbortError'));
+    }
+
+    return new Promise((resolve, reject) => {
+      const onAbort = (): void => {
+        reject(new DOMException('The operation was aborted', 'AbortError'));
+      };
+      signal.addEventListener('abort', onAbort, { once: true });
+      reader.read().then(
+        (result) => {
+          signal.removeEventListener('abort', onAbort);
+          resolve(result);
+        },
+        (error: unknown) => {
+          signal.removeEventListener('abort', onAbort);
+          reject(error);
+        }
+      );
+    });
+  }
+
+  private responseTooLarge(byteLength: number): NetworkError {
+    return new NetworkError(
+      `Response too large: ${byteLength} bytes`,
+      undefined,
+      'Response is too large. Check the Dashboard logs or try a simpler query'
+    );
+  }
+
+  private parseJson<T>(text: string): T {
+    // SECURITY: Strip __proto__ and constructor keys to prevent prototype
+    // pollution from untrusted API responses.
+    return JSON.parse(text, (key, value) => {
+      if (key === '__proto__' || key === 'constructor') {
+        return undefined;
+      }
+      return value;
+    }) as T;
   }
 
   /**
@@ -272,6 +382,9 @@ export class HttpClient {
     options: RequestOptions | undefined,
     redirectCount: number
   ): Promise<HttpResponse<T>> {
+    // The redirect response's body is never read; release the connection
+    // before following (or refusing) the redirect.
+    void response.body?.cancel().catch(() => {});
     if (redirectCount >= HttpClient.MAX_REDIRECTS) {
       throw new NetworkError(
         'Too many redirects',
@@ -425,12 +538,15 @@ export class HttpClient {
   /**
    * Normalize errors to MainWPCTLError types
    */
-  private normalizeError(error: unknown): Error {
+  private normalizeError(error: unknown, cancelled = false): Error {
     if (!(error instanceof Error)) {
       return new NetworkError(String(error));
     }
 
     if (error.name === 'AbortError') {
+      if (cancelled) {
+        return new NetworkError('Request cancelled');
+      }
       return new NetworkError(
         'Request timed out',
         undefined,
@@ -470,27 +586,7 @@ export class HttpClient {
    * Sanitize error data to prevent credential leaks
    */
   private sanitizeErrorData(data: unknown): unknown {
-    if (typeof data !== 'object' || data === null) return data;
-    if (Array.isArray(data)) return data.map(item => this.sanitizeErrorData(item));
-
-    const sanitized: Record<string, unknown> = {};
-    // Substring matching catches camelCase, snake_case, and header variants
-    // (e.g., accessToken, private_key, set-cookie, refreshToken)
-    const sensitiveSubstrings = [
-      'password', 'token', 'secret', 'authorization', 'cookie',
-      'apikey', 'api_key', 'bearer', 'credential', 'private_key',
-      'signing_key',
-    ];
-
-    for (const [key, value] of Object.entries(data)) {
-      const keyLower = key.toLowerCase();
-      if (sensitiveSubstrings.some(s => keyLower.includes(s))) {
-        sanitized[key] = '[REDACTED]';
-      } else {
-        sanitized[key] = this.sanitizeErrorData(value);
-      }
-    }
-    return sanitized;
+    return redactSensitiveKeys(data);
   }
 }
 

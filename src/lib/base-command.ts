@@ -18,10 +18,12 @@ import {
 } from '../config/settings.js';
 import { createAbilitiesExecutor, type AbilitiesExecutor } from '../core/abilities-executor.js';
 import { createBatchManager, type BatchManager } from '../core/batch-manager.js';
-import { isMainWPCTLError, ConfigError } from '../utils/errors.js';
+import type { HttpClientConfig } from '../core/http-client.js';
+import { isMainWPCTLError, ConfigError, InputError } from '../utils/errors.js';
 import { successOutput, errorOutput } from '../output/json-envelope.js';
 import { ExitCode } from '../utils/exit-codes.js';
 import { formatError, formatWarning } from '../output/formatter.js';
+import { isSensitiveKey } from '../utils/redaction.js';
 
 /**
  * Common flags available to all commands
@@ -110,6 +112,12 @@ export abstract class BaseCommand extends Command {
   private batchManagerInstance: BatchManager | undefined;
 
   /**
+   * Cached HTTP client config, so the keychain is only looked up once per
+   * process even if a command uses both getExecutor() and getBatchManager().
+   */
+  private clientConfig: HttpClientConfig | undefined;
+
+  /**
    * Whether this command needs a profile to be loaded.
    * Override to return false for commands like `login` that don't need a profile.
    */
@@ -122,6 +130,11 @@ export abstract class BaseCommand extends Command {
    * Call this at the start of each command's run() method.
    */
   protected async initCommon(flags: CommonFlags): Promise<void> {
+    // Provisional, before anything that can throw: a settings-load failure
+    // must still honor an explicit --json so catch() emits the envelope on
+    // stdout instead of prose-only stderr.
+    this.jsonOutput = flags.json ?? false;
+
     // Load and validate settings
     this.rawSettings = await loadSettings();
     const resolved = resolveSettings(this.rawSettings);
@@ -182,11 +195,13 @@ export abstract class BaseCommand extends Command {
   }
 
   /**
-   * Get the AbilitiesExecutor instance
+   * Build (and cache) the HTTP client config for the current profile.
+   * Resolves the keychain password once per process — getExecutor() and
+   * getBatchManager() both call this instead of hitting the keychain themselves.
    */
-  protected async getExecutor(): Promise<AbilitiesExecutor> {
-    if (this.executor) {
-      return this.executor;
+  private async buildClientConfig(): Promise<HttpClientConfig> {
+    if (this.clientConfig) {
+      return this.clientConfig;
     }
 
     if (!this.currentProfile) {
@@ -198,16 +213,35 @@ export abstract class BaseCommand extends Command {
     }
 
     const keychain = getKeychain();
-    const password = await keychain.getOrThrow(this.currentProfile.name);
-    this.executor = createAbilitiesExecutor({
+    // Identity-bound read: refuses the credential if the profile's URL no
+    // longer matches the Dashboard the credential was saved for.
+    const appPassword = await keychain.getOrThrow(
+      this.currentProfile.name,
+      this.currentProfile.dashboardUrl
+    );
+    this.clientConfig = {
       baseUrl: this.currentProfile.dashboardUrl,
       username: this.currentProfile.username,
-      appPassword: password,
+      appPassword,
       ...this.getTransportConfig(),
-    });
+    };
+
+    return this.clientConfig;
+  }
+
+  /**
+   * Get the AbilitiesExecutor instance
+   */
+  protected async getExecutor(): Promise<AbilitiesExecutor> {
+    if (this.executor) {
+      return this.executor;
+    }
+
+    const config = await this.buildClientConfig();
+    this.executor = createAbilitiesExecutor(config);
 
     this.debugLog('Initialized abilities executor', {
-      profile: this.currentProfile.name,
+      profile: this.currentProfile?.name,
       timeoutMs: this.settings.timeout,
       allowInsecureHttp: this.settings.allowInsecureHttp,
       skipSSLVerification: this.getTransportConfig().skipSSLVerification,
@@ -224,25 +258,11 @@ export abstract class BaseCommand extends Command {
       return this.batchManagerInstance;
     }
 
-    if (!this.currentProfile) {
-      throw new ConfigError(
-        'No profile loaded',
-        undefined,
-        'This is an internal error. Please report this issue.'
-      );
-    }
-
-    const keychain = getKeychain();
-    const appPassword = await keychain.getOrThrow(this.currentProfile.name);
-    this.batchManagerInstance = createBatchManager({
-      baseUrl: this.currentProfile.dashboardUrl,
-      username: this.currentProfile.username,
-      appPassword,
-      ...this.getTransportConfig(),
-    });
+    const config = await this.buildClientConfig();
+    this.batchManagerInstance = createBatchManager(config);
 
     this.debugLog('Initialized batch manager', {
-      profile: this.currentProfile.name,
+      profile: this.currentProfile?.name,
       timeoutMs: this.settings.timeout,
       allowInsecureHttp: this.settings.allowInsecureHttp,
       skipSSLVerification: this.getTransportConfig().skipSSLVerification,
@@ -291,30 +311,50 @@ export abstract class BaseCommand extends Command {
     return this.explicitDebugMode || !this.quietMode;
   }
 
-  private redactDebugContext(context: Record<string, unknown>): Record<string, unknown> {
-    const sensitiveKeys = ['password', 'secret', 'token', 'authorization', 'cookie', 'apikey'];
+  private static readonly MAX_DEBUG_DEPTH = 32;
+
+  private redactDebugContext(
+    context: Record<string, unknown>,
+    depth = 0,
+    ancestors = new WeakSet<object>()
+  ): Record<string, unknown> {
     const redacted: Record<string, unknown> = {};
 
     for (const [key, value] of Object.entries(context)) {
-      if (sensitiveKeys.some(s => key.toLowerCase() === s)) {
-        redacted[key] = '[REDACTED]';
-        continue;
-      }
-
-      if (typeof value === 'string' && value.length > 300) {
-        redacted[key] = `${value.slice(0, 297)}...`;
-        continue;
-      }
-
-      if (value && typeof value === 'object' && !Array.isArray(value)) {
-        redacted[key] = this.redactDebugContext(value as Record<string, unknown>);
-        continue;
-      }
-
-      redacted[key] = value;
+      redacted[key] = isSensitiveKey(key) ? '[REDACTED]' : this.redactDebugValue(value, depth, ancestors);
     }
 
     return redacted;
+  }
+
+  /**
+   * Redact a single debug-context value: truncate long strings, recurse into
+   * arrays and objects. Kept separate from redactSensitiveKeys() because
+   * debug output also truncates — delegating would lose that for nested data.
+   * Depth-capped with ancestor tracking, matching the shared sanitizers:
+   * cycles truncate, legitimately shared references survive.
+   */
+  private redactDebugValue(value: unknown, depth = 0, ancestors = new WeakSet<object>()): unknown {
+    if (typeof value === 'string' && value.length > 300) {
+      return `${value.slice(0, 297)}...`;
+    }
+
+    if (value && typeof value === 'object') {
+      if (depth >= BaseCommand.MAX_DEBUG_DEPTH || ancestors.has(value)) {
+        return '[truncated]';
+      }
+      ancestors.add(value);
+      try {
+        if (Array.isArray(value)) {
+          return value.map((item) => this.redactDebugValue(item, depth + 1, ancestors));
+        }
+        return this.redactDebugContext(value as Record<string, unknown>, depth + 1, ancestors);
+      } finally {
+        ancestors.delete(value);
+      }
+    }
+
+    return value;
   }
 
   /**
@@ -341,6 +381,26 @@ export abstract class BaseCommand extends Command {
    * Handle errors with appropriate exit codes
    */
   protected async catch(err: Error & { exitCode?: number; oclif?: { exit?: number } }): Promise<void> {
+    // oclif flag/arg parse failures (CLIParseError subclasses all carry a
+    // `parse` property, e.g. FailedFlagValidationError from `exclusive`
+    // flags) are user input errors → exit 1. Handled before the generic
+    // oclif re-throw below, whose CLIError default exit of 2 would land
+    // them in the auth/config bucket.
+    if ('parse' in err) {
+      const rawJsonRequested = process.argv.some(
+        (argument) => argument === '--json' || argument.startsWith('--json=')
+      );
+      if (rawJsonRequested) {
+        // Wrap so the envelope code matches the exit code: a bare oclif parse
+        // error is not a MainWPCTLError and would be labeled INTERNAL_ERROR.
+        this.log(JSON.stringify(errorOutput(new InputError(err.message)), null, 2));
+      } else {
+        this.logToStderr(formatError(err));
+      }
+      this.exit(ExitCode.INPUT_ERROR);
+      return;
+    }
+
     // Re-throw oclif exit errors to preserve their exit code
     if (err.oclif && typeof err.oclif.exit === 'number') {
       throw err;

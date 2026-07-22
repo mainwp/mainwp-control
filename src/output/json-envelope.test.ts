@@ -132,6 +132,56 @@ describe('Golden Test: JSON Output Parses Cleanly', () => {
 });
 
 describe('Golden Test: Error Code Propagation', () => {
+  it.each([
+    ['Bearer token', 'Request failed with Bearer abc123secret', 'abc123secret', 'Bearer [REDACTED]'],
+    ['credential URL', 'Request failed at https://user:pass@host/x', 'user:pass', '[URL_WITH_CREDENTIALS]'],
+  ])('redacts %s credentials from Error messages', (_label, message, secret, marker) => {
+    const output = errorOutput(new Error(message));
+
+    expect(output.error?.message).not.toContain(secret);
+    expect(output.error?.message).toContain(marker);
+  });
+
+  it('emits a stable envelope for cyclic error details instead of overflowing', () => {
+    const details: Record<string, unknown> = { endpoint: 'https://host/x' };
+    details['self'] = details;
+
+    const output = errorOutput(new InputError('Bad input', details));
+    const parsed = JSON.parse(formatJSON(output));
+
+    expect(parsed.success).toBe(false);
+    expect(parsed.error.code).toBe('INPUT_ERROR');
+    expect(parsed.error.details.self).toBe('[TRUNCATED]');
+  });
+
+  it('emits a stable envelope for deeply nested error details instead of overflowing', () => {
+    let deep: unknown = 'leaf';
+    for (let index = 0; index < 100_000; index++) {
+      deep = { nested: deep };
+    }
+
+    const output = errorOutput(new InputError('Bad input', { deep }));
+    const serialized = formatJSON(output);
+
+    expect(JSON.parse(serialized).success).toBe(false);
+    expect(serialized).toContain('[TRUNCATED]');
+    expect(serialized).not.toContain('leaf');
+  });
+
+  it('redacts credentials from error details and hints', () => {
+    const output = errorOutput(
+      new InputError(
+        'Request failed with Bearer message-secret',
+        { endpoint: 'https://detail-user:detail-pass@host/x' },
+        'Retry with Bearer hint-secret'
+      )
+    );
+
+    expect(JSON.stringify(output.error)).not.toContain('message-secret');
+    expect(JSON.stringify(output.error)).not.toContain('detail-user:detail-pass');
+    expect(JSON.stringify(output.error)).not.toContain('hint-secret');
+  });
+
   it('propagates MainWPCTLError codes correctly', () => {
     const inputError = new InputError('Bad input');
     const networkError = new NetworkError('Connection failed');

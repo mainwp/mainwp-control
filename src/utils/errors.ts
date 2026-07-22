@@ -117,6 +117,22 @@ export class TLSError extends MainWPCTLError {
 }
 
 /**
+ * Unknown outcome after a dispatched destructive confirm (exit code 3)
+ *
+ * Thrown when the confirm call failed at the transport layer after the CLI
+ * initiated dispatch: the Dashboard may or may not have executed the action.
+ * Callers must never auto-retry the confirm in response to this error.
+ */
+export class UnknownOutcomeError extends MainWPCTLError {
+  readonly exitCode = ExitCode.NETWORK_ERROR;
+  readonly code = 'OUTCOME_UNKNOWN';
+
+  constructor(message: string, details?: unknown, hint?: string) {
+    super(message, details, hint);
+  }
+}
+
+/**
  * API error (exit code 4)
  */
 export class APIError extends MainWPCTLError {

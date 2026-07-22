@@ -3,7 +3,12 @@
  */
 
 import { isMainWPCTLError } from '../utils/errors.js';
-import { stripControlChars, sanitizeForTerminal, safeString } from '../utils/terminal-sanitizer.js';
+import {
+  sanitizeForTerminal,
+  sanitizeSingleLine,
+  safeString,
+} from '../utils/terminal-sanitizer.js';
+import { sanitizeErrorMessage, sanitizeErrorValue } from '../utils/error-sanitizer.js';
 import { colors, color } from '../utils/colors.js';
 
 /**
@@ -17,17 +22,24 @@ export function formatSuccess(message: string): string {
  * Format an error message
  */
 export function formatError(error: Error | string): string {
-  const message = error instanceof Error ? stripControlChars(error.message) : stripControlChars(error);
+  // Single-line: hostile error text must not inject CR/LF and fake
+  // subsequent output lines (anti-spoofing, same rule as other terminal fields).
+  const message = sanitizeErrorMessage(
+    sanitizeSingleLine(error instanceof Error ? error.message : error)
+  );
   let output = color('✗ Error: ', colors.red, colors.bold) + message;
 
   if (isMainWPCTLError(error)) {
     if (error.details) {
       // Sanitize error details before display (untrusted API data)
-      const sanitizedDetails = sanitizeForTerminal(error.details);
+      const sanitizedDetails = sanitizeErrorValue(sanitizeForTerminal(error.details));
       output += '\n' + color('  Details: ', colors.dim) + JSON.stringify(sanitizedDetails);
     }
     if (error.hint) {
-      output += '\n' + color('💡 ' + stripControlChars(error.hint), colors.dim);
+      output += '\n' + color(
+        '💡 ' + sanitizeErrorMessage(sanitizeSingleLine(error.hint)),
+        colors.dim
+      );
     }
   }
 
@@ -38,7 +50,7 @@ export function formatError(error: Error | string): string {
  * Format a warning message
  */
 export function formatWarning(message: string): string {
-  return color('⚠ Warning: ', colors.yellow) + stripControlChars(message);
+  return color('⚠ Warning: ', colors.yellow) + sanitizeSingleLine(message);
 }
 
 /**
@@ -56,11 +68,58 @@ export function formatHeading(text: string): string {
 }
 
 /**
+ * Status for pass/warn/fail style reports (doctor, config show)
+ */
+export type StatusKind = 'pass' | 'warn' | 'fail';
+
+/**
+ * Format a colored status icon for pass/warn/fail states
+ */
+export function formatStatusIcon(status: StatusKind): string {
+  switch (status) {
+    case 'pass':
+      return color('✓', colors.green);
+    case 'warn':
+      return color('⚠', colors.yellow);
+    case 'fail':
+      return color('✗', colors.red);
+  }
+}
+
+/**
+ * Get the color code associated with a pass/warn/fail status
+ */
+export function getStatusColor(status: StatusKind): string {
+  switch (status) {
+    case 'pass':
+      return colors.green;
+    case 'warn':
+      return colors.yellow;
+    case 'fail':
+      return colors.red;
+  }
+}
+
+/**
+ * Format a fixed-width horizontal divider used by report-style commands
+ */
+export function formatDivider(width = 40): string {
+  return '  ' + '─'.repeat(width);
+}
+
+/**
+ * Format a titled section from pre-formatted rows
+ */
+export function formatSection(title: string, rows: string[]): string {
+  return [`\n  ${color(title, colors.bold)}`, ...rows].join('\n');
+}
+
+/**
  * Format a key-value pair
  */
 export function formatKeyValue(key: string, value: unknown): string {
   // Sanitize both key and value (may contain untrusted API data)
-  const safeKey = stripControlChars(key);
+  const safeKey = sanitizeSingleLine(key);
   const valueStr = safeString(value);
   return color(safeKey + ': ', colors.dim) + valueStr;
 }
@@ -77,8 +136,8 @@ export function formatTable(
   }
 
   // Sanitize all table data (may contain untrusted API data)
-  const safeHeaders = headers.map((h) => stripControlChars(h));
-  const safeRows = rows.map((row) => row.map((cell) => stripControlChars(cell ?? '')));
+  const safeHeaders = headers.map((h) => sanitizeSingleLine(h));
+  const safeRows = rows.map((row) => row.map((cell) => sanitizeSingleLine(cell ?? '')));
 
   // Calculate column widths using sanitized data
   const widths = safeHeaders.map((h, i) => {
@@ -110,7 +169,7 @@ export function formatTable(
  */
 export function formatList(items: string[], bullet = '•'): string {
   // Sanitize list items (may contain untrusted API data)
-  return items.map((item) => `  ${bullet} ${stripControlChars(item)}`).join('\n');
+  return items.map((item) => `  ${bullet} ${sanitizeSingleLine(item)}`).join('\n');
 }
 
 /**
@@ -124,7 +183,7 @@ export function formatPreview(
   const sanitizedItems = sanitizeForTerminal(affectedItems);
 
   const lines = [
-    color('Preview: ', colors.yellow, colors.bold) + stripControlChars(action),
+    color('Preview: ', colors.yellow, colors.bold) + sanitizeSingleLine(action),
     '',
     color('Affected items:', colors.dim),
     JSON.stringify(sanitizedItems, null, 2),

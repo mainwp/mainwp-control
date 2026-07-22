@@ -77,6 +77,53 @@ describe('AbilitiesExecutor', () => {
         },
       },
     },
+    {
+      // String-typed annotation from a buggy/hostile server. SafetyController
+      // validates annotations with strict boolean checks and treats this as
+      // unset; transport must resolve it the same way (POST, never GET).
+      name: 'mainwp/get-stats-v1',
+      label: 'Get Stats',
+      description: 'Site statistics',
+      category: 'sites',
+      meta: {
+        annotations: {
+          readonly: 'true',
+          destructive: false,
+          idempotent: true,
+        },
+      },
+    } as unknown as Ability,
+    {
+      // One malformed boolean invalidates the annotation set. A hostile
+      // readonly:true value must not select GET when policy fails closed.
+      name: 'mainwp/get-malformed-v1',
+      label: 'Get Malformed',
+      description: 'Malformed annotation fixture',
+      category: 'sites',
+      meta: {
+        annotations: {
+          readonly: true,
+          destructive: false,
+          idempotent: 'false',
+        },
+      },
+    } as unknown as Ability,
+    {
+      // Contradictory/skewed annotations: destructive NAME but readonly:true.
+      // Used to verify transport (HTTP method) resolves destructiveness the
+      // same way policy does, and never routes this out as GET.
+      name: 'mainwp/reset-site-v1',
+      label: 'Reset Site',
+      description: 'Reset a site to defaults',
+      category: 'sites',
+      meta: {
+        annotations: {
+          readonly: true,
+          destructive: false,
+          idempotent: true,
+        },
+      },
+    },
   ];
 
   beforeEach(() => {
@@ -136,6 +183,81 @@ describe('AbilitiesExecutor', () => {
       expect(byFull).toBeDefined();
       expect(byShort).toBeDefined();
       expect(byFull?.name).toBe(byShort?.name);
+    });
+
+    it('skips malformed discovery entries and invalid ability names with warnings', async () => {
+      const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+      mockGet.mockResolvedValueOnce({
+        data: [
+          null,
+          [],
+          { name: '' },
+          { name: 'missing-namespace-v1' },
+          mockAbilities[0],
+        ],
+      });
+
+      const abilities = await executor.listAbilities();
+
+      expect(abilities).toEqual([mockAbilities[0]]);
+      expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining('invalid ability'));
+    });
+
+    it('refuses case-variant ability names so they cannot evade destructive classification', async () => {
+      const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+      mockGet.mockResolvedValueOnce({
+        data: [
+          { ...mockAbilities[0], name: 'Mainwp/Delete-Site-V1' },
+          mockAbilities[0],
+        ],
+      });
+
+      const abilities = await executor.listAbilities();
+
+      expect(abilities).toEqual([mockAbilities[0]]);
+      expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining('invalid ability'));
+    });
+
+    it('keeps the first duplicate full name and warns', async () => {
+      const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+      mockGet.mockResolvedValueOnce({
+        data: [
+          mockAbilities[0],
+          { ...mockAbilities[0], label: 'Duplicate' },
+        ],
+      });
+
+      await executor.listAbilities();
+
+      expect((await executor.getAbility('mainwp/list-sites-v1'))?.label).toBe('List Sites');
+      expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining('duplicate ability'));
+    });
+
+    it('removes colliding short aliases while preserving both full names', async () => {
+      const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+      const first = { ...mockAbilities[0], name: 'alpha/shared-v1' };
+      const second = { ...mockAbilities[0], name: 'beta/shared-v1' };
+      mockGet.mockResolvedValueOnce({ data: [first, second] });
+
+      await executor.listAbilities();
+
+      expect(await executor.getAbility('alpha/shared-v1')).toEqual(first);
+      expect(await executor.getAbility('beta/shared-v1')).toEqual(second);
+      expect(await executor.getAbility('shared-v1')).toBeUndefined();
+      expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining('ambiguous short alias'));
+    });
+
+    it('rejects discovery that exceeds the configured page cap', async () => {
+      mockGet.mockResolvedValue({
+        data: [],
+        headers: new Headers({ 'x-wp-totalpages': '999' }),
+      });
+
+      await expect(executor.listAbilities()).rejects.toMatchObject({
+        code: 'INVALID_RESPONSE',
+      });
+
+      expect(mockGet).toHaveBeenCalledTimes(1);
     });
   });
 
@@ -218,6 +340,57 @@ describe('AbilitiesExecutor', () => {
       expect(mockDelete).toHaveBeenCalledOnce();
     });
 
+    it('never uses GET for a destructive-named ability marked readonly (transport/policy consistency)', async () => {
+      mockPost.mockResolvedValueOnce({ data: { success: true } });
+
+      // reset-site-v1 is annotated readonly:true but its name is known-destructive.
+      // Transport must resolve destructiveness the same way SafetyController does,
+      // so this never goes out as GET. It also must not go out as DELETE: the
+      // annotations are distrusted here, so their `idempotent` flag cannot
+      // pick the method — the safe write default is POST.
+      await executor.execute('reset-site-v1', { site_id: 1 }, { confirm: true });
+
+      // The run request went out as POST; a readonly GET run would have left
+      // mockPost uncalled.
+      expect(mockPost).toHaveBeenCalledOnce();
+      expect(mockDelete).not.toHaveBeenCalled();
+      // The only GET is the abilities-list fetch — the run itself never uses GET.
+      expect(mockGet).toHaveBeenCalledTimes(1);
+      expect(String(mockGet.mock.calls[0]?.[0])).not.toContain('/run');
+    });
+
+    it('treats non-boolean annotation values as unset for method selection', async () => {
+      mockPost.mockResolvedValueOnce({ data: { success: true } });
+
+      // get-stats-v1 carries readonly: "true" (string). SafetyController's
+      // strict boolean validation ignores it, so transport must too:
+      // the run goes out as POST, never a readonly GET.
+      await executor.execute('get-stats-v1', {});
+
+      expect(mockPost).toHaveBeenCalledOnce();
+      // The only GET was the abilities-list fetch, not a readonly run.
+      expect(mockGet).toHaveBeenCalledOnce();
+    });
+
+    it('uses POST when any annotation field is malformed despite readonly true', async () => {
+      mockPost.mockResolvedValueOnce({ data: { success: true } });
+
+      await executor.execute('get-malformed-v1', {});
+
+      expect(mockPost).toHaveBeenCalledOnce();
+      expect(mockGet).toHaveBeenCalledOnce();
+    });
+
+    it('rejects a request with both dryRun and confirm set', async () => {
+      await expect(
+        executor.execute('delete-site-v1', { site_id: 1 }, { dryRun: true, confirm: true })
+      ).rejects.toThrow(/cannot both be set/);
+
+      // No run request of any kind is emitted with both flags.
+      expect(mockPost).not.toHaveBeenCalled();
+      expect(mockDelete).not.toHaveBeenCalled();
+    });
+
     it('adds dry_run flag when dryRun option is true', async () => {
       mockPost.mockResolvedValueOnce({
         data: {
@@ -296,6 +469,50 @@ describe('AbilitiesExecutor', () => {
         { id: 2, name: 'Site 2' },
       ]);
     });
+
+    it('normalizes the Dashboard queued envelope and exposes its job id', async () => {
+      mockGet.mockResolvedValueOnce({
+        data: {
+          queued: true,
+          job_id: 'sync_123',
+          status_url: 'https://dashboard.local/wp-json/mainwp/v2/jobs/sync_123',
+          sites_queued: 10,
+        },
+      });
+
+      const result = await executor.execute('list-sites-v1', {});
+
+      expect(result.success).toBe(true);
+      expect(result.jobId).toBe('sync_123');
+    });
+
+    it('extracts a queued job id from a wrapped data envelope', async () => {
+      mockGet.mockResolvedValueOnce({
+        data: {
+          success: true,
+          data: { queued: true, job_id: 'sync_456' },
+        },
+      });
+
+      const result = await executor.execute('list-sites-v1', {});
+
+      expect(result.success).toBe(true);
+      expect(result.jobId).toBe('sync_456');
+    });
+
+    it.each(['bad\njob', 'x'.repeat(513)])(
+      'rejects an unsafe queued job id',
+      async (jobId) => {
+        mockGet.mockResolvedValueOnce({
+          data: { queued: true, job_id: jobId },
+        });
+
+        await expect(executor.execute('list-sites-v1', {})).resolves.toMatchObject({
+          success: false,
+          error: { code: 'INVALID_RESPONSE' },
+        });
+      },
+    );
   });
 
   describe('getCategories', () => {

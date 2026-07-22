@@ -61,24 +61,58 @@ export type ExecutionIntent =
  * 2. dry_run and confirm are MUTUALLY EXCLUSIVE
  * 3. Safety check happens BEFORE any network call
  */
-/** Default annotations for abilities without explicit metadata */
-const DEFAULT_ANNOTATIONS: AbilityAnnotations = {
-  readonly: false,
-  destructive: false,
-  idempotent: false,
-};
+/**
+ * Known-destructive ability name patterns.
+ *
+ * Defense-in-depth: an ability whose name matches is treated as destructive
+ * regardless of what the API reports, so a compromised or buggy server cannot
+ * downgrade a destructive ability to bypass the safety flow. Intentionally
+ * verb-conservative — each verb is unambiguously destructive on its own; we do
+ * not add generic verbs like `update-` that are frequently non-destructive,
+ * since that would force preview+confirm on safe abilities and erode trust.
+ *
+ * Exported so transport (HTTP-method selection in AbilitiesExecutor) resolves
+ * destructiveness the same way policy does, instead of trusting raw annotations.
+ */
+const DESTRUCTIVE_NAME_PATTERNS = [
+  /^(?:mainwp\/)?delete-/,
+  /^(?:mainwp\/)?disconnect-/,
+  /^(?:mainwp\/)?suspend-/,
+  /^(?:mainwp\/)?deactivate-/,
+  /^(?:mainwp\/)?remove-/,
+  /^(?:mainwp\/)?run-updates-/,
+  /^(?:mainwp\/)?update-all-/,
+  /^(?:mainwp\/)?update-site-/,
+  /^(?:mainwp\/)?activate-/,
+  /^(?:mainwp\/)?reset-/,
+  /^(?:mainwp\/)?restore-/,
+  /^(?:mainwp\/)?rollback-/,
+  /^(?:mainwp\/)?wipe-/,
+  /^(?:mainwp\/)?purge-/,
+  /^(?:mainwp\/)?uninstall-/,
+];
+
+/**
+ * Whether an ability name matches a known-destructive pattern.
+ * Single source of truth for the name-based destructive override, shared by
+ * safety classification and HTTP-method selection.
+ */
+export function isKnownDestructiveName(name: string): boolean {
+  return DESTRUCTIVE_NAME_PATTERNS.some((pattern) => pattern.test(name));
+}
 
 export class SafetyController {
   /**
-   * Classify an ability's safety requirements
+   * Classify an ability's safety requirements.
    *
-   * Safety classification derives ONLY from ability annotations.
-   * No heuristics are permitted.
+   * Classification is the MORE RESTRICTIVE of the API annotations and a
+   * conservative name-based destructive override (see DESTRUCTIVE_NAME_PATTERNS):
+   * an ability is destructive if its annotations say so OR its name matches.
+   * The name override is deliberate defense-in-depth against a server that
+   * under-reports destructiveness; it never downgrades, only upgrades.
    */
   classify(ability: Ability): SafetyClassification {
-    const annotations = this.validateAnnotations(
-      ability.meta?.annotations ?? DEFAULT_ANNOTATIONS
-    );
+    const annotations = this.validateAnnotations(ability.meta?.annotations);
 
     // SECURITY: Defense-in-depth — force destructive classification for
     // abilities whose names match known-destructive patterns, regardless
@@ -95,39 +129,33 @@ export class SafetyController {
     };
   }
 
-  /**
-   * Known-destructive ability name patterns.
-   * These abilities require the safety flow regardless of API-reported annotations.
-   */
-  private static readonly DESTRUCTIVE_PATTERNS = [
-    /^(?:mainwp\/)?delete-/,
-    /^(?:mainwp\/)?disconnect-/,
-    /^(?:mainwp\/)?suspend-/,
-    /^(?:mainwp\/)?deactivate-/,
-    /^(?:mainwp\/)?remove-/,
-    /^(?:mainwp\/)?run-updates-/,
-    /^(?:mainwp\/)?update-all-/,
-  ];
-
   private isKnownDestructivePattern(name: string): boolean {
-    return SafetyController.DESTRUCTIVE_PATTERNS.some(pattern => pattern.test(name));
+    return isKnownDestructiveName(name);
   }
 
   /**
    * Validate annotation fields and resolve contradictions.
    *
-   * - Non-boolean values fall back to safe defaults.
+   * - Missing or non-boolean values fail closed as destructive.
    * - Contradictory annotations (destructive + readonly) → warn and treat as destructive.
    */
-  private validateAnnotations(annotations: AbilityAnnotations): AbilityAnnotations {
-    const defaults = DEFAULT_ANNOTATIONS;
+  private validateAnnotations(annotations: unknown): AbilityAnnotations {
+    if (typeof annotations !== 'object' || annotations === null || Array.isArray(annotations)) {
+      return { destructive: true, readonly: false, idempotent: false };
+    }
 
-    const destructive = typeof annotations.destructive === 'boolean'
-      ? annotations.destructive : defaults.destructive;
-    let readonly_ = typeof annotations.readonly === 'boolean'
-      ? annotations.readonly : defaults.readonly;
-    const idempotent = typeof annotations.idempotent === 'boolean'
-      ? annotations.idempotent : defaults.idempotent;
+    const record = annotations as Record<string, unknown>;
+    if (
+      typeof record['destructive'] !== 'boolean' ||
+      typeof record['readonly'] !== 'boolean' ||
+      typeof record['idempotent'] !== 'boolean'
+    ) {
+      return { destructive: true, readonly: false, idempotent: false };
+    }
+
+    const destructive = record['destructive'];
+    let readonly_ = record['readonly'];
+    const idempotent = record['idempotent'];
 
     // Contradictory: both destructive and readonly — treat as destructive (safe default)
     if (destructive && readonly_) {
@@ -245,6 +273,23 @@ export class SafetyController {
     const data = apiResult.data as Record<string, unknown> | undefined;
     const affected = this.extractAffectedItems(data);
 
+    // Unrecognized response shape: never tell the operator "no items would
+    // be affected" when we simply couldn't read the preview — show the raw
+    // data and say so, since a falsely reassuring summary right before a
+    // destructive confirm is worse than an honest "unknown".
+    if (affected === null) {
+      const noData = data === undefined || Object.keys(data).length === 0;
+      return {
+        affected: noData ? [] : [data],
+        summary: noData
+          ? 'Preview returned no data — the ability did not report what would be affected. Review the request carefully before approving.'
+          : 'Preview returned data in an unrecognized format — review the raw response below before approving.',
+        requiresApproval: true,
+        abilityName: ability.name,
+        input,
+      };
+    }
+
     return {
       affected,
       summary: this.generatePreviewSummary(ability, affected),
@@ -255,11 +300,18 @@ export class SafetyController {
   }
 
   /**
-   * Extract affected items from API preview response
+   * Extract affected items from API preview response.
+   *
+   * Returns null when the response carries no positive preview evidence —
+   * either data in none of the recognized shapes, or no data at all. Callers
+   * must distinguish "the preview showed zero items" (a recognized-but-empty
+   * array) from "the preview showed nothing" (null): only the former may be
+   * summarized as "no items would be affected".
    */
-  private extractAffectedItems(data: Record<string, unknown> | undefined): unknown[] {
+  private extractAffectedItems(data: Record<string, unknown> | undefined): unknown[] | null {
+    // Absent data is not evidence that nothing would be affected.
     if (!data) {
-      return [];
+      return null;
     }
 
     // Common patterns for affected items
@@ -281,7 +333,9 @@ export class SafetyController {
       return [data['preview']];
     }
 
-    return [];
+    // Data present but in no recognized shape — and an empty object is the
+    // same lack of evidence as no data.
+    return null;
   }
 
   /** Ability name keywords → past-tense action verbs */
@@ -320,4 +374,3 @@ export function getSafetyController(): SafetyController {
   }
   return instance;
 }
-

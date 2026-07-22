@@ -11,10 +11,19 @@
 import { describe, it, expect } from 'vitest';
 import {
   stripControlChars,
+  sanitizeSingleLine,
   sanitizeForTerminal,
   safeString,
   containsEscapeSequences,
 } from './terminal-sanitizer.js';
+
+describe('sanitizeSingleLine', () => {
+  it('strips terminal escapes and collapses CR, LF, and tabs to one space', () => {
+    const unsafe = '\x1b[31mprovider\x1b[0m\r\n\tinjected';
+
+    expect(sanitizeSingleLine(unsafe)).toBe('provider injected');
+  });
+});
 
 describe('stripControlChars', () => {
   describe('ANSI CSI sequences', () => {
@@ -85,6 +94,13 @@ describe('stripControlChars', () => {
     it('strips null bytes', () => {
       const nullByte = 'null\x00byte';
       expect(stripControlChars(nullByte)).toBe('nullbyte');
+    });
+  });
+
+  describe('bidirectional controls', () => {
+    it('strips RLO and isolate controls that could visually reorder output', () => {
+      expect(stripControlChars('safe‮detrevni‬ end')).toBe('safedetrevni end');
+      expect(stripControlChars('a⁦b⁧c⁨d⁩e')).toBe('abcde');
     });
   });
 
@@ -214,6 +230,17 @@ describe('sanitizeForTerminal', () => {
     });
   });
 
+  it('keeps a hostile __proto__ key as an ordinary data property', () => {
+    const input = JSON.parse('{"__proto__": {"polluted": true}, "safe": "ok"}') as unknown;
+
+    const result = sanitizeForTerminal(input) as Record<string, unknown>;
+
+    expect(result['safe']).toBe('ok');
+    expect(result['__proto__']).toEqual({ polluted: true });
+    expect(Object.getPrototypeOf(result)).toBeNull();
+    expect(({} as Record<string, unknown>)['polluted']).toBeUndefined();
+  });
+
   it('handles deeply nested structures', () => {
     const input = {
       level1: {
@@ -233,6 +260,27 @@ describe('sanitizeForTerminal', () => {
         },
       },
     });
+  });
+
+  it('terminates on cyclic structures instead of overflowing the stack', () => {
+    const cyclic: Record<string, unknown> = { name: 'outer' };
+    cyclic['self'] = cyclic;
+
+    expect(sanitizeForTerminal(cyclic)).toEqual({
+      name: 'outer',
+      self: '[TRUNCATED]',
+    });
+  });
+
+  it('truncates beyond the depth limit instead of recursing indefinitely', () => {
+    let deep: unknown = 'leaf';
+    for (let index = 0; index < 100_000; index++) {
+      deep = { nested: deep };
+    }
+
+    const sanitized = JSON.stringify(sanitizeForTerminal(deep));
+    expect(sanitized).toContain('[TRUNCATED]');
+    expect(sanitized).not.toContain('leaf');
   });
 });
 

@@ -11,7 +11,7 @@
  * Sensitive data (passwords, tokens, API keys) is automatically redacted.
  */
 
-import { promises as fs } from 'node:fs';
+import { constants as fsConstants, promises as fs } from 'node:fs';
 import { join } from 'node:path';
 import { getConfigDir } from '../config/settings.js';
 import { getInputSanitizer } from '../validation/input-sanitizer.js';
@@ -26,6 +26,15 @@ const MAX_LOG_SIZE = 10 * 1024 * 1024;
  */
 const MAX_ROTATIONS = 5;
 
+const MAX_SERIALIZED_INPUT_BYTES = 8 * 1024;
+
+/**
+ * Byte cap for free-text entry fields (preview summary, execution error).
+ * These strings can be derived from Dashboard responses, so an unbounded
+ * value could bloat the audit log the same way unbounded input could.
+ */
+const MAX_FREE_TEXT_BYTES = 2 * 1024;
+
 /**
  * Audit log filename
  */
@@ -39,20 +48,41 @@ export interface AuditEntry {
   timestamp: string;
   /** Name of the ability executed */
   abilityName: string;
-  /** Preview information (optional - not available in CLI executeDestructive path) */
+  /** Preview information (absent when the preview itself failed) */
   preview?: {
     summary: string;
     affectedCount: number;
   };
   /** User's decision */
   userDecision: 'approved' | 'declined';
-  /** Execution result (only present when approved) */
+  /**
+   * Present on the entry written immediately before the confirm call is
+   * dispatched. A 'dispatch' entry with no later matching result entry means
+   * the process died or errored mid-confirm — the action may have executed.
+   */
+  stage?: 'dispatch';
+  /**
+   * Execution result when approved. On a declined entry this instead records
+   * why the flow was aborted before the user could approve (e.g.
+   * "Preview failed: ..." from the fail-closed preview gate).
+   */
   execution?: {
     success: boolean;
     error?: string;
+    /**
+     * True when the confirm call failed at the transport layer after
+     * dispatch: the Dashboard may or may not have executed the action.
+     */
+    outcomeUnknown?: boolean;
   };
   /** Input parameters (redacted of sensitive data) */
   input: Record<string, unknown>;
+  /** Present when input was bounded before writing the entry. */
+  inputTruncated?: {
+    marker: 'TRUNCATED';
+    originalBytes: number;
+    limitBytes: number;
+  };
 }
 
 /**
@@ -65,9 +95,11 @@ export interface LogDestructiveActionInput {
     affectedCount: number;
   };
   userDecision: 'approved' | 'declined';
+  stage?: 'dispatch';
   execution?: {
     success: boolean;
     error?: string;
+    outcomeUnknown?: boolean;
   };
   input: Record<string, unknown>;
 }
@@ -77,6 +109,33 @@ export interface LogDestructiveActionInput {
  */
 export function getAuditLogPath(): string {
   return join(getConfigDir(), AUDIT_LOG_FILENAME);
+}
+
+/**
+ * Cap a free-text field at MAX_FREE_TEXT_BYTES, cutting on a byte boundary
+ * and dropping any trailing replacement characters from a split multi-byte
+ * sequence. Over-limit values end with a visible [TRUNCATED] marker.
+ */
+function boundText(text: string): string {
+  if (Buffer.byteLength(text, 'utf8') <= MAX_FREE_TEXT_BYTES) {
+    return text;
+  }
+  const truncated = Buffer.from(text, 'utf8')
+    .subarray(0, MAX_FREE_TEXT_BYTES)
+    .toString('utf8')
+    .replace(/�+$/, '');
+  return `${truncated}[TRUNCATED]`;
+}
+
+/**
+ * A failed permission repair must not abort the audit write, but it also
+ * must not pass silently: the log may be left readable by other users.
+ */
+function warnPermissionRepairFailed(path: string, error: unknown): void {
+  console.error(
+    `Warning: [AuditLogger] could not restrict permissions on ${path}: ` +
+    (error instanceof Error ? error.message : String(error))
+  );
 }
 
 /**
@@ -98,6 +157,9 @@ export class AuditLogger {
     // Create directory with restricted permissions (owner only)
     const dir = getConfigDir();
     await fs.mkdir(dir, { recursive: true, mode: 0o700 });
+    await fs.chmod(dir, 0o700).catch((error: unknown) => {
+      warnPermissionRepairFailed(dir, error);
+    });
 
     // Check if rotation is needed
     if (await this.shouldRotate(logPath)) {
@@ -106,46 +168,90 @@ export class AuditLogger {
 
     // Redact sensitive data from input
     const redactedInput = this.inputSanitizer.redactSensitive(params.input);
+    const boundedInput = this.boundInput(redactedInput);
 
     // Build audit entry
     const entry: AuditEntry = {
       timestamp: new Date().toISOString(),
       abilityName: params.abilityName,
       userDecision: params.userDecision,
-      input: redactedInput,
+      input: boundedInput.input,
     };
+    if (boundedInput.truncated) {
+      entry.inputTruncated = boundedInput.truncated;
+    }
 
     // Add optional fields
+    if (params.stage) {
+      entry.stage = params.stage;
+    }
     if (params.preview) {
-      entry.preview = params.preview;
+      entry.preview = {
+        summary: boundText(params.preview.summary),
+        affectedCount: params.preview.affectedCount,
+      };
     }
     if (params.execution) {
-      entry.execution = params.execution;
+      entry.execution = { ...params.execution };
+      if (entry.execution.error !== undefined) {
+        entry.execution.error = boundText(entry.execution.error);
+      }
     }
 
     // Format as NDJSON line
     const line = JSON.stringify(entry) + '\n';
 
-    // Ensure file exists with proper permissions before appending
-    await this.ensureLogFile(logPath);
-
-    // Append to log file
-    await fs.appendFile(logPath, line, 'utf-8');
+    // Open atomically in append mode and self-heal existing file permissions.
+    const noFollow = process.platform === 'win32' ? 0 : (fsConstants.O_NOFOLLOW ?? 0);
+    const appendFlags = fsConstants.O_APPEND | fsConstants.O_CREAT |
+      fsConstants.O_WRONLY | noFollow;
+    const handle = await fs.open(logPath, appendFlags, 0o600);
+    try {
+      await handle.chmod(0o600).catch((error: unknown) => {
+        warnPermissionRepairFailed(logPath, error);
+      });
+      await handle.writeFile(line, 'utf-8');
+    } finally {
+      await handle.close();
+    }
   }
 
-  /**
-   * Ensure log file exists with proper permissions
-   *
-   * SECURITY: Creates file with 0o600 (owner read/write only) if it doesn't exist.
-   */
-  private async ensureLogFile(logPath: string): Promise<void> {
-    try {
-      await fs.access(logPath);
-    } catch {
-      // File doesn't exist, create with restricted permissions
-      const fd = await fs.open(logPath, 'w', 0o600);
-      await fd.close();
+  private boundInput(input: Record<string, unknown>): {
+    input: Record<string, unknown>;
+    truncated?: AuditEntry['inputTruncated'];
+  } {
+    const serialized = JSON.stringify(input);
+    const originalBytes = Buffer.byteLength(serialized, 'utf8');
+    if (originalBytes <= MAX_SERIALIZED_INPUT_BYTES) {
+      return { input };
     }
+
+    const serializedBytes = Buffer.from(serialized, 'utf8');
+    let prefixBytes = MAX_SERIALIZED_INPUT_BYTES;
+    let bounded: Record<string, unknown>;
+    do {
+      bounded = {
+        // Cutting on a byte boundary can split a multi-byte sequence; drop
+        // the resulting trailing replacement characters.
+        serializedPrefix: serializedBytes
+          .subarray(0, prefixBytes)
+          .toString('utf8')
+          .replace(/�+$/, ''),
+      };
+      if (Buffer.byteLength(JSON.stringify(bounded), 'utf8') <= MAX_SERIALIZED_INPUT_BYTES) {
+        break;
+      }
+      prefixBytes = Math.floor(prefixBytes * 0.75);
+    } while (prefixBytes > 0);
+
+    return {
+      input: bounded!,
+      truncated: {
+        marker: 'TRUNCATED',
+        originalBytes,
+        limitBytes: MAX_SERIALIZED_INPUT_BYTES,
+      },
+    };
   }
 
   /**

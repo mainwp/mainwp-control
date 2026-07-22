@@ -16,6 +16,12 @@ import {
   type ToolCall,
 } from './provider.js';
 import { readSSEStream } from './sse-reader.js';
+import {
+  assertNoRedirect,
+  MAX_PROVIDER_ERROR_BODY_BYTES,
+  readBoundedResponseText,
+  sanitizeProviderErrorBody,
+} from './provider-fetch.js';
 
 /**
  * OpenAI-compatible API message format
@@ -252,25 +258,32 @@ export abstract class OpenAICompatibleProvider implements LLMProvider {
         // Final chunk
         if (choice.finish_reason === 'tool_calls') {
           for (const [, tc] of toolCalls) {
+            let args: unknown = tc.arguments;
             try {
-              const args = JSON.parse(tc.arguments) as Record<string, unknown>;
-              yield {
-                toolCall: {
-                  id: tc.id,
-                  name: tc.name,
-                  arguments: args,
-                },
-                done: false,
-              };
+              args = JSON.parse(tc.arguments) as unknown;
             } catch {
-              // Invalid JSON, skip
+              // Preserve the raw accumulated string. The shared tool envelope
+              // rejects non-object arguments as a protocol error without
+              // executing the proposed call.
             }
+            yield {
+              toolCall: {
+                id: tc.id,
+                name: tc.name,
+                arguments: args,
+              },
+              done: false,
+            };
           }
           yield { done: true };
           return;
         }
       } catch {
-        // Invalid JSON, skip line
+        // Invalid JSON, skip line — a systematically malformed stream would
+        // otherwise fail silently, so leave a trail when debugging
+        if (process.env['DEBUG']) {
+          console.debug(`[${this.name}] Skipped malformed SSE chunk`);
+        }
       }
     }
 
@@ -289,6 +302,18 @@ export abstract class OpenAICompatibleProvider implements LLMProvider {
 
       if (msg.role === 'tool' && msg.toolCallId) {
         base.tool_call_id = msg.toolCallId;
+      }
+
+      if (msg.role === 'assistant' && msg.toolCalls) {
+        base.content = msg.content || null;
+        base.tool_calls = msg.toolCalls.map((toolCall) => ({
+          id: toolCall.id,
+          type: 'function' as const,
+          function: {
+            name: toolCall.name,
+            arguments: JSON.stringify(toolCall.arguments),
+          },
+        }));
       }
 
       return base;
@@ -369,11 +394,11 @@ export abstract class OpenAICompatibleProvider implements LLMProvider {
   /**
    * Parse tool call arguments JSON
    */
-  protected parseArguments(args: string): Record<string, unknown> {
+  protected parseArguments(args: string): unknown {
     try {
-      return JSON.parse(args) as Record<string, unknown>;
+      return JSON.parse(args) as unknown;
     } catch {
-      return {};
+      return args;
     }
   }
 
@@ -406,11 +431,20 @@ export abstract class OpenAICompatibleProvider implements LLMProvider {
         headers: this.getHeaders(),
         body: JSON.stringify(body),
         signal: combinedSignal,
+        redirect: 'manual',
       });
 
+      assertNoRedirect(response, this.name);
+
       if (!response.ok) {
-        const error = await response.text();
-        throw new Error(`${this.name} API error: ${response.status} ${error}`);
+        const error = await readBoundedResponseText(
+          response,
+          MAX_PROVIDER_ERROR_BODY_BYTES,
+          combinedSignal,
+        );
+        throw new Error(
+          `${this.name} API error: ${response.status} ${sanitizeProviderErrorBody(error)}`
+        );
       }
 
       return (await response.json()) as T;

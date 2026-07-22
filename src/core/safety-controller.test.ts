@@ -217,7 +217,7 @@ describe('Golden Test: Safety Classification', () => {
     expect(classification.requiresSafetyFlow).toBe(true);
   });
 
-  it('handles abilities without annotations (defaults to safe)', () => {
+  it('handles abilities without annotations as destructive', () => {
     const ability: Ability = {
       name: 'legacy-ability-v1',
       label: 'Legacy Ability',
@@ -227,9 +227,9 @@ describe('Golden Test: Safety Classification', () => {
     };
     const classification = controller.classify(ability);
 
-    expect(classification.isDestructive).toBe(false);
+    expect(classification.isDestructive).toBe(true);
     expect(classification.isReadOnly).toBe(false);
-    expect(classification.requiresSafetyFlow).toBe(false);
+    expect(classification.requiresSafetyFlow).toBe(true);
   });
 });
 
@@ -296,7 +296,7 @@ describe('Annotation Validation (F2)', () => {
     controller = new SafetyController();
   });
 
-  it('falls back to safe defaults for non-boolean annotation values', () => {
+  it('treats non-boolean annotation values as destructive', () => {
     const ability: Ability = {
       name: 'bad-annotations-v1',
       label: 'Bad',
@@ -313,11 +313,10 @@ describe('Annotation Validation (F2)', () => {
 
     const classification = controller.classify(ability);
 
-    // All non-boolean → fall back to defaults (false)
-    expect(classification.isDestructive).toBe(false);
+    expect(classification.isDestructive).toBe(true);
     expect(classification.isReadOnly).toBe(false);
     expect(classification.isIdempotent).toBe(false);
-    expect(classification.requiresSafetyFlow).toBe(false);
+    expect(classification.requiresSafetyFlow).toBe(true);
   });
 
   it('warns on contradictory annotations and requires safety flow', () => {
@@ -340,7 +339,7 @@ describe('Annotation Validation (F2)', () => {
     errorSpy.mockRestore();
   });
 
-  it('missing/undefined annotation fields produce safe defaults', () => {
+  it('missing/undefined annotation fields require the safety flow', () => {
     const ability: Ability = {
       name: 'no-annotations-v1',
       label: 'None',
@@ -351,10 +350,10 @@ describe('Annotation Validation (F2)', () => {
 
     const classification = controller.classify(ability);
 
-    expect(classification.isDestructive).toBe(false);
+    expect(classification.isDestructive).toBe(true);
     expect(classification.isReadOnly).toBe(false);
     expect(classification.isIdempotent).toBe(false);
-    expect(classification.requiresSafetyFlow).toBe(false);
+    expect(classification.requiresSafetyFlow).toBe(true);
   });
 });
 
@@ -407,6 +406,34 @@ describe('M6: Known-destructive pattern defense-in-depth', () => {
     expect(classification.requiresSafetyFlow).toBe(true);
   });
 
+  it.each(['update-site-plugins-v1', 'activate-site-theme-v1'])(
+    'forces destructive classification for %s when annotations under-report it',
+    (name) => {
+      const ability = createTestAbility(name, {
+        destructive: false,
+        readonly: false,
+      });
+
+      const classification = controller.classify(ability);
+      expect(classification.isDestructive).toBe(true);
+      expect(classification.requiresSafetyFlow).toBe(true);
+    }
+  );
+
+  it.each(['get-site-v1', 'sync-sites-v1'])(
+    'keeps %s non-destructive',
+    (name) => {
+      const ability = createTestAbility(name, {
+        destructive: false,
+        readonly: false,
+      });
+
+      const classification = controller.classify(ability);
+      expect(classification.isDestructive).toBe(false);
+      expect(classification.requiresSafetyFlow).toBe(false);
+    }
+  );
+
   it('does not force destructive for non-matching ability names', () => {
     const ability = createTestAbility('list-sites-v1', {
       destructive: false,
@@ -426,6 +453,163 @@ describe('M6: Known-destructive pattern defense-in-depth', () => {
     const classification = controller.classify(ability);
     expect(classification.isDestructive).toBe(true);
     expect(classification.requiresSafetyFlow).toBe(true);
+  });
+
+  it('forces destructive classification for reset-* patterns', () => {
+    const ability = createTestAbility('mainwp/reset-site-v1', {
+      destructive: false,
+      readonly: true,
+    });
+
+    const classification = controller.classify(ability);
+    expect(classification.isDestructive).toBe(true);
+    expect(classification.requiresSafetyFlow).toBe(true);
+  });
+
+  it('forces destructive classification for restore-* patterns', () => {
+    const ability = createTestAbility('restore-backup-v1', {
+      destructive: false,
+    });
+
+    const classification = controller.classify(ability);
+    expect(classification.isDestructive).toBe(true);
+    expect(classification.requiresSafetyFlow).toBe(true);
+  });
+
+  it('forces destructive classification for rollback-* patterns', () => {
+    const ability = createTestAbility('mainwp/rollback-plugin-v1', {
+      destructive: false,
+    });
+
+    const classification = controller.classify(ability);
+    expect(classification.isDestructive).toBe(true);
+    expect(classification.requiresSafetyFlow).toBe(true);
+  });
+
+  it('forces destructive classification for wipe-* patterns', () => {
+    const ability = createTestAbility('wipe-site-v1', {
+      destructive: false,
+    });
+
+    const classification = controller.classify(ability);
+    expect(classification.isDestructive).toBe(true);
+    expect(classification.requiresSafetyFlow).toBe(true);
+  });
+
+  it('forces destructive classification for purge-* patterns', () => {
+    const ability = createTestAbility('mainwp/purge-cache-v1', {
+      destructive: false,
+      readonly: true,
+    });
+
+    const classification = controller.classify(ability);
+    expect(classification.isDestructive).toBe(true);
+    expect(classification.requiresSafetyFlow).toBe(true);
+  });
+
+  it('forces destructive classification for uninstall-* patterns', () => {
+    const ability = createTestAbility('uninstall-plugin-v1', {
+      destructive: false,
+    });
+
+    const classification = controller.classify(ability);
+    expect(classification.isDestructive).toBe(true);
+    expect(classification.requiresSafetyFlow).toBe(true);
+  });
+
+  it('does not force destructive for generic update-* patterns', () => {
+    const ability = createTestAbility('update-dashboard-settings-v1', {
+      destructive: false,
+      readonly: true,
+    });
+
+    const classification = controller.classify(ability);
+    expect(classification.isDestructive).toBe(false);
+    expect(classification.requiresSafetyFlow).toBe(false);
+  });
+});
+
+describe('formatPreviewResult: fail closed on absent preview evidence', () => {
+  let controller: SafetyController;
+
+  beforeEach(() => {
+    controller = new SafetyController();
+  });
+
+  it('data undefined: honest "no data" warning, affected [], requiresApproval true', () => {
+    const ability = createTestAbility('delete-site-v1', { destructive: true });
+    const result = controller.formatPreviewResult(ability, {}, {
+      success: true,
+    });
+
+    expect(result.affected).toEqual([]);
+    expect(result.summary).toContain('Preview returned no data');
+    expect(result.summary).not.toContain('No items would be affected');
+    expect(result.requiresApproval).toBe(true);
+  });
+
+  it('data {}: same "no data" warning path as undefined data', () => {
+    const ability = createTestAbility('delete-site-v1', { destructive: true });
+    const result = controller.formatPreviewResult(ability, {}, {
+      success: true,
+      data: {},
+    });
+
+    expect(result.affected).toEqual([]);
+    expect(result.summary).toContain('Preview returned no data');
+    expect(result.summary).not.toContain('No items would be affected');
+    expect(result.requiresApproval).toBe(true);
+  });
+
+  it('data in an unrecognized shape: "unrecognized format" warning, raw payload as affected', () => {
+    const ability = createTestAbility('delete-site-v1', { destructive: true });
+    const data = { foo: 'bar' };
+    const result = controller.formatPreviewResult(ability, {}, {
+      success: true,
+      data,
+    });
+
+    expect(result.summary).toContain('unrecognized format');
+    expect(result.affected).toEqual([data]);
+    expect(result.requiresApproval).toBe(true);
+  });
+
+  it('data {affected: []}: recognized-but-empty summary "No items would be <verb>."', () => {
+    const ability = createTestAbility('delete-site-v1', { destructive: true });
+    const result = controller.formatPreviewResult(ability, {}, {
+      success: true,
+      data: { affected: [] },
+    });
+
+    expect(result.summary).toBe('No items would be deleted.');
+    expect(result.affected).toEqual([]);
+    expect(result.requiresApproval).toBe(true);
+  });
+
+  it('data {affected: [{id: 1}]}: counts 1 item, affected contains the item', () => {
+    const ability = createTestAbility('delete-site-v1', { destructive: true });
+    const item = { id: 1 };
+    const result = controller.formatPreviewResult(ability, {}, {
+      success: true,
+      data: { affected: [item] },
+    });
+
+    expect(result.summary).toBe('1 item would be deleted.');
+    expect(result.affected).toEqual([item]);
+    expect(result.requiresApproval).toBe(true);
+  });
+
+  it('data {preview: {...}}: single-item preview still works', () => {
+    const ability = createTestAbility('delete-site-v1', { destructive: true });
+    const preview = { name: 'site-1' };
+    const result = controller.formatPreviewResult(ability, {}, {
+      success: true,
+      data: { preview },
+    });
+
+    expect(result.summary).toBe('1 item would be deleted.');
+    expect(result.affected).toEqual([preview]);
+    expect(result.requiresApproval).toBe(true);
   });
 });
 
