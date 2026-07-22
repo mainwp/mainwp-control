@@ -5,7 +5,8 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 // Mock modules before importing
-vi.mock('../../core/batch-manager.js', () => ({
+vi.mock('../../core/batch-manager.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../core/batch-manager.js')>()),
   createBatchManager: vi.fn(),
 }));
 

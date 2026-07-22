@@ -382,6 +382,9 @@ export class HttpClient {
     options: RequestOptions | undefined,
     redirectCount: number
   ): Promise<HttpResponse<T>> {
+    // The redirect response's body is never read; release the connection
+    // before following (or refusing) the redirect.
+    void response.body?.cancel().catch(() => {});
     if (redirectCount >= HttpClient.MAX_REDIRECTS) {
       throw new NetworkError(
         'Too many redirects',

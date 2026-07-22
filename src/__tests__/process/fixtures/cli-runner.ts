@@ -119,6 +119,22 @@ export function runCLIWithSignal(
 
     child.stdout.on('data', (chunk: Buffer) => stdoutChunks.push(chunk));
     child.stderr.on('data', (chunk: Buffer) => stderrChunks.push(chunk));
+    let spawned = false;
+    child.on('spawn', () => {
+      spawned = true;
+    });
+    child.on('error', (error) => {
+      // 'error' also fires when a later kill() fails. In that case the child
+      // is still running: leave the timers armed (the SIGKILL fallback must
+      // stay live) and let 'close' remain the terminal resolution path. Only
+      // a spawn failure, where 'close' is not guaranteed, resolves here.
+      if (spawned) {
+        return;
+      }
+      clearTimeout(signalTimer);
+      clearTimeout(timeoutTimer);
+      resolve({ stdout: '', stderr: String(error), exitCode: 1, json: undefined, duration: Date.now() - start });
+    });
     child.on('close', (code, closeSignal) => {
       clearTimeout(signalTimer);
       clearTimeout(timeoutTimer);

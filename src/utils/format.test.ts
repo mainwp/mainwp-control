@@ -155,6 +155,27 @@ describe('maskUrlUserinfo', () => {
     const url = 'not a valid URL';
     expect(maskUrlUserinfo(url)).toBe(url);
   });
+
+  it('fails closed when a newline in the userinfo defeats the masking regex', () => {
+    // new URL() strips \n before detecting credentials, but the raw string
+    // keeps it, so the whitespace-excluding replace cannot match.
+    const result = maskUrlUserinfo('https://admin:sec\nret@dashboard.example.com/path');
+    expect(result).toBe('[URL_WITH_CREDENTIALS_REDACTED]');
+    expect(result).not.toContain('sec');
+  });
+
+  it('fails closed when a tab in the userinfo defeats the masking regex', () => {
+    const result = maskUrlUserinfo('https://admin:sec\tret@dashboard.example.com');
+    expect(result).toBe('[URL_WITH_CREDENTIALS_REDACTED]');
+  });
+
+  it('fails closed when leading whitespace defeats the anchored regex', () => {
+    // Leading whitespace is trimmed by the parser but the regex is anchored,
+    // so the replace fails and the fail-closed path must catch it too.
+    const result = maskUrlUserinfo('  https://admin:secret@dashboard.example.com');
+    expect(result).toBe('[URL_WITH_CREDENTIALS_REDACTED]');
+    expect(result).not.toContain('secret');
+  });
 });
 
 describe('maskUrlUserinfoInText', () => {

@@ -94,6 +94,18 @@ async function runAbility<T>(
   return output.data.data;
 }
 
+/**
+ * Safety cap for the pagination loops below: a Dashboard reporting a wrong
+ * `total` while returning non-empty pages must fail loudly, not hang the run.
+ */
+const MAX_LIST_PAGES = 100;
+
+function assertPageWithinCap(page: number, abilityName: string): void {
+  if (page >= MAX_LIST_PAGES) {
+    throw new Error(`${abilityName} pagination did not terminate within ${MAX_LIST_PAGES} pages`);
+  }
+}
+
 async function cliListAll<T>(
   ctx: Parameters<ScenarioDefinition['run']>[0],
   abilityName: string
@@ -108,6 +120,7 @@ async function cliListAll<T>(
     );
     items.push(...response.items);
     if (items.length >= response.total || response.items.length === 0) return items;
+    assertPageWithinCap(page, abilityName);
   }
 }
 
@@ -123,6 +136,7 @@ async function verifierListAll<T>(
     })) as PaginatedResponse<T>;
     items.push(...response.items);
     if (items.length >= response.total || response.items.length === 0) return items;
+    assertPageWithinCap(page, abilityName);
   }
 }
 
@@ -185,6 +199,7 @@ async function verifierListUpdates(
     if (updates.length >= response.total || response.updates.length === 0) {
       return { updates, errors };
     }
+    assertPageWithinCap(page, 'mainwp/list-updates-v1');
   }
 }
 
@@ -206,6 +221,7 @@ async function cliListUpdates(
     if (updates.length >= response.total || response.updates.length === 0) {
       return { updates, errors };
     }
+    assertPageWithinCap(page, 'mainwp/list-updates-v1');
   }
 }
 

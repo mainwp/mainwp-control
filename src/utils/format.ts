@@ -102,7 +102,9 @@ export function maskApiKey(apiKey: string): string {
  * the URL byte-for-byte identical — no trailing-slash normalization.
  *
  * @param url - The URL to mask
- * @returns The URL with userinfo replaced by `***:***@`, or the input unchanged
+ * @returns The URL with userinfo replaced by `***:***@`, the input unchanged
+ * when it has no userinfo, or `[URL_WITH_CREDENTIALS_REDACTED]` when userinfo
+ * was detected but could not be isolated in the raw string
  *
  * @example
  * ```ts
@@ -124,7 +126,17 @@ export function maskUrlUserinfo(url: string): string {
 
   // Greedy through the LAST @ in the authority: a password containing "@"
   // must not leak its tail. `?`/`#`/`/` bound the authority section.
-  return url.replace(/^([a-z][a-z0-9+.-]*:\/\/)[^/?#\s]*@/i, '$1***:***@');
+  const masked = url.replace(/^([a-z][a-z0-9+.-]*:\/\/)[^/?#\s]*@/i, '$1***:***@');
+
+  // The parser saw userinfo the regex could not isolate: WHATWG parsing
+  // strips tab/newline and trims C0 controls before detecting credentials,
+  // so a raw string containing them slips past the whitespace-excluding
+  // regex. Fail closed rather than echo the credentials.
+  if (masked === url) {
+    return '[URL_WITH_CREDENTIALS_REDACTED]';
+  }
+
+  return masked;
 }
 
 /**

@@ -88,6 +88,15 @@ const MAX_STATUS_ARRAY_LENGTH = 10_000;
 /**
  * Batch Manager class
  */
+/**
+ * Check if a job status is terminal (job finished, no further polling).
+ * Shared with `jobs watch` so the two never drift.
+ */
+export function isTerminalStatus(status: string): boolean {
+  return status === 'completed' || status === 'failed' ||
+    status === 'partial' || status === 'cancelled';
+}
+
 export class BatchManager {
   private readonly httpClient: HttpClient;
   private readonly baseEndpoint = '/wp-json/wp-abilities/v1';
@@ -150,7 +159,7 @@ export class BatchManager {
         }
 
         // Check if job is complete
-        if (this.isTerminalStatus(status.status)) {
+        if (isTerminalStatus(status.status)) {
           break;
         }
 
@@ -193,7 +202,7 @@ export class BatchManager {
         status: timedOut ? 'partial' : 'failed',
         errors: [{ message: timedOut ? 'Polling timed out' : 'Polling aborted' }],
       };
-    } else if (timedOut && !this.isTerminalStatus(lastStatus.status)) {
+    } else if (timedOut && !isTerminalStatus(lastStatus.status)) {
       // Mark as partial if timed out while still running
       lastStatus = {
         ...lastStatus,
@@ -252,14 +261,6 @@ export class BatchManager {
       this.terminalJobs.add(validatedJobId);
     }
     return status;
-  }
-
-  /**
-   * Check if a status is terminal (job finished)
-   */
-  private isTerminalStatus(status: JobStatusType): boolean {
-    return status === 'completed' || status === 'failed' ||
-      status === 'partial' || status === 'cancelled';
   }
 
   private isServerTerminalStatus(status: JobStatusType): boolean {

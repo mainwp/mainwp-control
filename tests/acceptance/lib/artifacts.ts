@@ -131,7 +131,7 @@ export async function createArtifacts(
     version: string;
   };
   const startTime = new Date().toISOString();
-  const timestamp = startTime.replace(/[-:.]/g, '').replace('Z', 'Z');
+  const timestamp = startTime.replace(/[-:.]/g, '');
   const dirty = status.length > 0;
   const runId = `${timestamp}-${commit.slice(0, 8)}${dirty ? '-dirty' : ''}${suffix}`;
   const manifest: AcceptanceManifest = {

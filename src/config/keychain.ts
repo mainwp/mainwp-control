@@ -271,9 +271,10 @@ export class Keychain {
    * When `expectedDashboardUrl` is provided and the stored credential is
    * identity-bound, a mismatch throws instead of releasing the password —
    * a hand-edited profiles.json must not redirect a stored credential to a
-   * different host. Legacy (unbound) entries are accepted and re-bound on
-   * the next `login`. The env var is per-invocation operator input and is
-   * not identity-checked.
+   * different host. Legacy (unbound) entries are refused for authenticated
+   * use when an expected URL is provided; a one-time `login` re-binds them.
+   * Without an expected URL they still read, for display paths. The env var
+   * is per-invocation operator input and is not identity-checked.
    */
   async get(
     profileName: string,

@@ -311,11 +311,17 @@ export abstract class BaseCommand extends Command {
     return this.explicitDebugMode || !this.quietMode;
   }
 
-  private redactDebugContext(context: Record<string, unknown>): Record<string, unknown> {
+  private static readonly MAX_DEBUG_DEPTH = 32;
+
+  private redactDebugContext(
+    context: Record<string, unknown>,
+    depth = 0,
+    ancestors = new WeakSet<object>()
+  ): Record<string, unknown> {
     const redacted: Record<string, unknown> = {};
 
     for (const [key, value] of Object.entries(context)) {
-      redacted[key] = isSensitiveKey(key) ? '[REDACTED]' : this.redactDebugValue(value);
+      redacted[key] = isSensitiveKey(key) ? '[REDACTED]' : this.redactDebugValue(value, depth, ancestors);
     }
 
     return redacted;
@@ -325,18 +331,27 @@ export abstract class BaseCommand extends Command {
    * Redact a single debug-context value: truncate long strings, recurse into
    * arrays and objects. Kept separate from redactSensitiveKeys() because
    * debug output also truncates — delegating would lose that for nested data.
+   * Depth-capped with ancestor tracking, matching the shared sanitizers:
+   * cycles truncate, legitimately shared references survive.
    */
-  private redactDebugValue(value: unknown): unknown {
+  private redactDebugValue(value: unknown, depth = 0, ancestors = new WeakSet<object>()): unknown {
     if (typeof value === 'string' && value.length > 300) {
       return `${value.slice(0, 297)}...`;
     }
 
-    if (Array.isArray(value)) {
-      return value.map((item) => this.redactDebugValue(item));
-    }
-
     if (value && typeof value === 'object') {
-      return this.redactDebugContext(value as Record<string, unknown>);
+      if (depth >= BaseCommand.MAX_DEBUG_DEPTH || ancestors.has(value)) {
+        return '[truncated]';
+      }
+      ancestors.add(value);
+      try {
+        if (Array.isArray(value)) {
+          return value.map((item) => this.redactDebugValue(item, depth + 1, ancestors));
+        }
+        return this.redactDebugContext(value as Record<string, unknown>, depth + 1, ancestors);
+      } finally {
+        ancestors.delete(value);
+      }
     }
 
     return value;

@@ -20,10 +20,13 @@ import { safeString } from '../../utils/terminal-sanitizer.js';
 import { APIError } from '../../utils/errors.js';
 import { errorOutput } from '../../output/json-envelope.js';
 import {
+  isTerminalStatus,
   type BatchManager,
   type JobStatus,
   type WatchResult,
 } from '../../core/batch-manager.js';
+
+export { isTerminalStatus };
 
 /** Progress bar width in characters */
 const PROGRESS_BAR_WIDTH = 30;
@@ -33,14 +36,6 @@ const TERMINAL_LINE_WIDTH = 80;
 
 /** Maximum number of result items to preview */
 export const RESULTS_PREVIEW_LIMIT = 5;
-
-/**
- * Check if a job status is terminal (job finished, no further polling)
- */
-export function isTerminalStatus(status: string): boolean {
-  return status === 'completed' || status === 'failed' ||
-    status === 'partial' || status === 'cancelled';
-}
 
 export default class JobsWatch extends BaseCommand {
   static description = 'Monitor batch job status';

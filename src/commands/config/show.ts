@@ -298,7 +298,7 @@ export default class ConfigShowCommand extends BaseCommand {
             ? 'Stored in keychain'
             : 'From environment variable';
         profileRows.push(
-          `    Credentials:    ${formatStatusIcon('pass')} ${sourceLabel} (${config.profile.credentialsMasked})`
+          `    Credentials:    ${formatStatusIcon('pass')} ${sourceLabel} (${sanitizeSingleLine(config.profile.credentialsMasked ?? '')})`
         );
       }
     } else {
@@ -317,7 +317,7 @@ export default class ConfigShowCommand extends BaseCommand {
     const llmRows: string[] = [];
     if (config.llmProvider.configured) {
       llmRows.push(`    Provider:       ${color(config.llmProvider.name!, colors.green)}`);
-      llmRows.push(`    API Key:        ${config.llmProvider.apiKeyMasked}`);
+      llmRows.push(`    API Key:        ${sanitizeSingleLine(config.llmProvider.apiKeyMasked ?? '')}`);
       llmRows.push(`    Source:         ${config.llmProvider.source}`);
       llmRows.push(`    Status:         ${color('✓ Configured', colors.green)}`);
     } else if (config.llmProvider.name) {

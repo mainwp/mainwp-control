@@ -28,7 +28,7 @@ import {
 } from '../utils/format.js';
 import { color, colors } from '../utils/colors.js';
 import { formatDivider, formatStatusIcon, getStatusColor } from '../output/formatter.js';
-import { stripControlChars } from '../utils/terminal-sanitizer.js';
+import { sanitizeSingleLine, stripControlChars } from '../utils/terminal-sanitizer.js';
 
 /**
  * Check result
@@ -453,7 +453,7 @@ export default class DoctorCommand extends BaseCommand {
       // error-derived or config-derived text (the --json path gets the
       // same treatment via the envelope's sanitizeForTerminal).
       this.log(`  ${icon} ${check.name}`);
-      this.log(`     ${color(stripControlChars(check.message), statusColor)}`);
+      this.log(`     ${color(sanitizeSingleLine(check.message), statusColor)}`);
 
       if (verbose && check.details) {
         const detailLines = stripControlChars(check.details).split('\n');
