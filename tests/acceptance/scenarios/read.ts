@@ -238,6 +238,12 @@ export const startupDoctor: ScenarioDefinition = {
   },
 };
 
+// Discovery only lists catalog entries whose name is a namespaced, versioned
+// identifier (ABILITY_NAME_PATTERN in src/core/abilities-executor.ts); other
+// entries — such as WordPress-core abilities without a -vN suffix — are
+// skipped with a warning. The independent expectation applies the same rule.
+const LISTABLE_ABILITY_NAME = /^[a-z0-9][a-z0-9._-]*\/[a-z0-9][a-z0-9._-]*-v[1-9]\d*$/;
+
 export const abilitiesList: ScenarioDefinition = {
   id: 'abilities-list',
   purpose: 'Cross-check the CLI ability catalog count and full-name set against a direct read.',
@@ -245,6 +251,9 @@ export const abilitiesList: ScenarioDefinition = {
   targets: ['fixture', 'live'],
   async run(ctx) {
     const direct = await ctx.verifier.fetchCatalog();
+    const listable = direct.filter(
+      ability => typeof ability.name === 'string' && LISTABLE_ABILITY_NAME.test(ability.name)
+    );
     const result = await ctx.cli.run(['abilities', 'list', '--json']);
     const output = envelope<{
       abilities: Array<{ name: string }>;
@@ -252,11 +261,11 @@ export const abilitiesList: ScenarioDefinition = {
     }>(result.json);
     ctx.assert.equal('abilities list exits successfully', result.exitCode, 0);
     ctx.assert.equal('abilities list envelope succeeds', output.success, true);
-    ctx.assert.equal('ability count matches direct catalog', output.data?.total, direct.length);
+    ctx.assert.equal('ability count matches direct catalog', output.data?.total, listable.length);
     ctx.assert.deepEqual(
       'full ability name set matches direct catalog',
       sorted((output.data?.abilities ?? []).map(ability => ability.name)),
-      sorted(direct.map(ability => ability.name))
+      sorted(listable.map(ability => ability.name))
     );
   },
 };

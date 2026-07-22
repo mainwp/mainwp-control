@@ -75,9 +75,24 @@ const countSitesAbility = mockAbility({
   },
 });
 
+// Live Dashboards can expose WordPress-core abilities whose names carry no
+// -vN version suffix; CLI discovery skips those entries with a warning.
+// Mirror one here so the fixture target exercises the same contract.
+const unversionedCoreAbility = {
+  name: 'core/get-site-info',
+  label: 'get site info',
+  description: 'Unversioned core ability that discovery must skip.',
+  category: 'core',
+  input_schema: { type: 'object', properties: {} },
+  meta: {
+    annotations: { readonly: true, destructive: false, idempotent: false },
+  },
+};
+
 export const FIXTURE_ABILITIES = [
   ...STANDARD_ABILITIES,
   countSitesAbility,
+  unversionedCoreAbility,
 ];
 
 function json(response: ServerResponse, status: number, body: unknown): void {
