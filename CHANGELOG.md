@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-07-22
+
 ### Fixed
 
 - Concurrent `ChatEngine.sendMessage` calls now queue and run in call order instead of interleaving shared history and preview state; the interactive REPL already serialized calls, so this protects programmatic callers
@@ -131,7 +133,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Unimplemented `cancelJob` and `listJobs` from BatchManager
 
-[Unreleased]: https://github.com/mainwp/mainwp-control/compare/v1.1.0-beta.1...HEAD
+[Unreleased]: https://github.com/mainwp/mainwp-control/compare/v1.1.0...HEAD
+[1.1.0]: https://github.com/mainwp/mainwp-control/compare/v1.1.0-beta.1...v1.1.0
 [1.1.0-beta.1]: https://github.com/mainwp/mainwp-control/compare/v1.0.1...v1.1.0-beta.1
 [1.0.1]: https://github.com/mainwp/mainwp-control/compare/v1.0.0...v1.0.1
 [1.0.0]: https://github.com/mainwp/mainwp-control/releases/tag/v1.0.0
