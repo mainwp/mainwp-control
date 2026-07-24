@@ -34,7 +34,7 @@ The rules the CLI enforces:
 
 - `--dry-run` and `--confirm` are mutually exclusive. You cannot pass both.
 - A destructive ability without either flag does not run.
-- A preview shows what the Dashboard reports at preview time. Preview and execution are two independent calls with nothing binding them, so server state can change in between; the guarantee is "you approved a preview taken immediately before execution," not "what executes is byte-for-byte what you saw."
+- A preview shows what the Dashboard reports at preview time. Preview and execution are two independent calls with nothing binding them, so server state can change in between. What you approve is a preview taken immediately before execution; the execution itself runs against whatever the state is at confirm time.
 - A preview that fails blocks execution. The CLI never falls through to "run it anyway."
 - Safety flags come only from the command line. `dry_run` or `confirm` keys smuggled into `--input` JSON are stripped, so a parameter file (or an LLM composing one) cannot self-approve an operation.
 - Each confirmed execution is recorded in a local audit log before dispatch.

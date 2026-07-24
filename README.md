@@ -22,7 +22,8 @@ mainwpcontrol abilities run list-updates-v1 --json
 mainwpcontrol abilities run sync-sites-v1 --wait --json
 
 # Nightly health check from cron, alert on failure
-mainwpcontrol abilities run check-sites-v1 --quiet || notify "Sites down"
+mainwpcontrol abilities run check-sites-v1 --quiet \
+  || curl -fsS "$SLACK_WEBHOOK" -d '{"text":"Sites down"}'
 ```
 
 The CLI is a small program that runs on your own computer or server. Nothing new is installed on your Dashboard or your child sites; it talks to the same Abilities API your Dashboard already exposes. Anything classified as destructive stops for a preview and your explicit confirmation before it runs.
@@ -188,7 +189,7 @@ Your Dashboard exposes its operations as versioned, self-describing "abilities" 
 | Tags             | 7         | [Tags Abilities](https://docs.mainwp.com/api-reference/abilities-api/tags)                |
 | Batch Operations | 1         | [Batch Operations](https://docs.mainwp.com/api-reference/abilities-api/batch-operations)  |
 
-`abilities list` shows what your Dashboard actually offers, `abilities info <name>` shows an ability's input schema and annotations, and `abilities run <name>` executes it. Because the CLI discovers abilities at runtime, new Dashboard capabilities appear without a CLI update.
+The table counts the Dashboard's built-in `mainwp/*` abilities. Extensions and other plugins can register their own, so your total may be higher (the 87 in the Quick Start sample comes from a Dashboard with extensions installed). `abilities list` shows what your Dashboard actually offers, `abilities info <name>` shows an ability's input schema and annotations, and `abilities run <name>` executes it. Because the CLI discovers abilities at runtime, new Dashboard capabilities appear without a CLI update.
 
 ## Safety
 

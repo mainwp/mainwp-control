@@ -109,6 +109,8 @@ mainwpcontrol profile delete staging.example.com   # also removes its keychain c
 
 Any command accepts `--profile <name>` to target a profile without switching the default.
 
+`profile delete` always asks for confirmation and has no skip flag. In non-interactive contexts (pipes, CI) it cancels safely instead of deleting, so treat profile removal as a manual step.
+
 ## `config show`
 
 Prints the active settings (from `~/.config/mainwpcontrol/settings.json` and defaults), with secrets redacted.
@@ -145,10 +147,10 @@ Chat-specific flags: `--provider`, `--model`, `--max-turns`, `--max-context-mess
 
 ```bash
 # Bash
-source /path/to/mainwp-control/scripts/completions/mainwpcontrol.bash
+source "$(npm root -g)/@mainwp/control/scripts/completions/mainwpcontrol.bash"
 
 # Zsh
-source /path/to/mainwp-control/scripts/completions/mainwpcontrol.zsh
+source "$(npm root -g)/@mainwp/control/scripts/completions/mainwpcontrol.zsh"
 ```
 
 ## Exit codes
