@@ -1,28 +1,90 @@
+<p align="center">
+  <img src="docs/images/mainwp-control-logo-2026.png" alt="MainWP Control" width="400">
+</p>
+
+<p align="center">
+  <img src="https://img.shields.io/badge/status-stable-green" alt="Stable">
+  <a href="https://www.npmjs.com/package/@mainwp/control"><img src="https://img.shields.io/npm/v/@mainwp/control" alt="npm version"></a>
+  <a href="https://github.com/mainwp/mainwp-control/actions/workflows/ci.yml"><img src="https://github.com/mainwp/mainwp-control/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+</p>
+
 # MainWP Control
 
-*A [MainWP Labs](https://mainwp.com/mainwp-labs/) project, powered by MainWP*
+_A [MainWP Labs](https://mainwp.com/mainwp-labs/) project, powered by MainWP_
 
-A CLI for managing your MainWP Dashboard from the terminal. List sites, push updates, sync data, run batch operations across dozens of sites. The command is `mainwpcontrol`.
+Manage your whole WordPress network from the terminal. [MainWP Control](https://github.com/mainwp/mainwp-control) is a command-line interface for your MainWP Dashboard, built for the work you do on a schedule rather than in a browser tab:
 
-**Looking for the MCP Server instead?** [MainWP MCP Server](https://github.com/mainwp/mainwp-mcp) is for conversational AI management inside Claude, Cursor, or any MCP-compatible client. MainWP Control is for automation: cron jobs, CI/CD pipelines, monitoring scripts, and batch operations. Both talk to the same Abilities API with the same safety model.
+```bash
+# Which sites have pending updates?
+mainwpcontrol abilities run list-updates-v1 --json
 
----
+# Sync every site and wait for the result
+mainwpcontrol abilities run sync-sites-v1 --wait --json
+
+# Nightly health check from cron, alert on failure
+mainwpcontrol abilities run check-sites-v1 --quiet || notify "Sites down"
+```
+
+The CLI is a small program that runs on your own computer or server. Nothing new is installed on your Dashboard or your child sites; it talks to the same Abilities API your Dashboard already exposes. Anything classified as destructive stops for a preview and your explicit confirmation before it runs.
+
+<p align="center">
+  <img src="docs/images/mainwp-control-fleet-from-the-terminal.png" alt="Dark MainWP branded card with the headline &quot;Your WordPress fleet from the terminal&quot; and a terminal listing 87 Dashboard abilities, running sync-sites-v1 with the wait and json flags to a success envelope, then checking exit code 0" width="800">
+</p>
+
+**Looking for the MCP Server instead?** [MainWP MCP Server](https://github.com/mainwp/mainwp-mcp) connects Claude, Cursor, and other AI tools to your Dashboard for conversational management. MainWP Control is for automation: cron jobs, CI/CD pipelines, monitoring scripts, and batch operations. Both talk to the same Abilities API with the same safety model.
+
+## Why a CLI?
+
+The Dashboard UI is built for a person clicking through sites. A CLI is built for everything that should happen without you watching:
+
+- **Scriptable output.** `--json` prints exactly one machine-readable envelope on stdout. Warnings and progress never contaminate it, so you can pipe results straight into `jq`, a spreadsheet, or a monitoring agent.
+- **Honest exit codes.** Classified outcomes exit 0-5 by error class (input, auth, network, API, internal); interruptions use the standard signal exits (130/143). Your pipeline branches on the code instead of parsing error text.
+- **Batch operations that survive.** Large operations queue as batch jobs with a `job_id` you can watch, wait on, or come back to. A timeout or Ctrl-C leaves you with a resumable job, not a mystery.
+- **Credentials that stay put.** Passwords live in your OS keychain, or in an environment variable for CI. The profile file on disk never contains them.
+- **Guard rails you can't script around by accident.** Destructive abilities require a successful `--dry-run` preview and an explicit `--confirm`, and each confirmed run is written to a local audit log.
+
+## What You Can Do
+
+- **Site Management**: List sites, check connection status, sync data, add or remove child sites
+- **Update Management**: See pending updates across all sites, apply core/plugin/theme updates
+- **Plugin and Theme Control**: View installed plugins and themes, activate or deactivate them
+- **Client Organization**: Manage client records, assign sites to clients, track costs
+- **Bulk Operations**: Sync, reconnect, or check connectivity across dozens of sites at once
+- **Chat Mode**: Optionally talk to your Dashboard in plain English, with the same safety gates
+
+Built for WordPress agencies and site managers who want their MainWP routine in scripts, schedulers, and pipelines.
 
 ## Quick Start
 
+**Requirements:** Node.js >=20.18.1 and MainWP Dashboard 6.0+
+
 > **On Windows?** Use [Git Bash](https://gitforwindows.org/) and every example below works without changes. For scheduled workflows (cron), see [WSL](https://learn.microsoft.com/en-us/windows/wsl/install).
 
-You need Node.js 20.18.1+ and a MainWP Dashboard (v6+) with an [Application Password](https://make.wordpress.org/core/2020/11/05/application-passwords-integration-guide/).
+**1. Create an Application Password.** This is a separate password WordPress issues for tools like this one; it never changes your login and you can revoke it at any time.
+
+1. Log into your MainWP Dashboard as an administrator
+2. Go to **Users > Profile** (click your username in the top right)
+3. Scroll to the **Application Passwords** section
+4. Enter a name like "MainWP Control" and click **Add New Application Password**
+5. Copy the generated password immediately (it is only shown once; spaces are fine either way)
+
+> **Tip:** Create a dedicated WordPress user for API access rather than using your main admin account. It keeps the audit trail clean and is easy to revoke later.
+
+**2. Install and log in.**
 
 ```bash
 npm install -g @mainwp/control
 
 mainwpcontrol login
-
-mainwpcontrol abilities list
 ```
 
-You should see something like this:
+`login` prompts for your Dashboard URL, username, and the Application Password, then stores the credentials in your OS keychain. For CI and headless machines, use [environment variable auth](docs/configuration.md#environment-variable-auth) instead.
+
+**3. See what your Dashboard can do.**
+
+```bash
+mainwpcontrol abilities list
+```
 
 ```text
 Abilities (87 total)
@@ -38,416 +100,56 @@ sync-sites-v1     Sync all sites        ✏️  write
     mainwpcontrol abilities run sync-sites-v1
 ```
 
-That's it. You're connected and you can see every operation your Dashboard supports.
-
----
-
-## What Just Happened
-
-`abilities list` shows every operation available on your Dashboard. These are called "abilities" and they cover sites, plugins, themes, updates, clients, tags, and more.
-
-Each ability has a name (like `list-sites-v1`) that you pass to `abilities run` to execute it. The list tells you whether each one is read-only, a write operation, or destructive.
-
----
-
-## Common Use Cases
-
-**List all your sites:**
+Every operation your Dashboard supports, with the exact command to run it and whether it reads, writes, or destroys. Pick one and run it:
 
 ```bash
 mainwpcontrol abilities run list-sites-v1 --json
 ```
 
-**Check for pending updates across sites:**
+> **New to the command line?** [Getting Started](docs/getting-started.md) covers terminals, environment variables, JSON quoting, and everything else the other guides assume.
+
+## Everyday Commands
 
 ```bash
+# Check for pending updates across all sites
 mainwpcontrol abilities run list-updates-v1 --json
-```
 
-**Get details for a specific site:**
-
-```bash
+# Get details for one site
 mainwpcontrol abilities run get-site-v1 --input '{"site_id_or_domain": 1}' --json
-```
 
-> **Windows?** This works as-is in [Git Bash](https://gitforwindows.org/). In PowerShell, use `--input-file` instead of inline JSON: how PowerShell passes quoted arguments to native commands varies by version ([details](docs/workflows/input-from-file.md)).
-
-**Preview a destructive action before running it:**
-
-```bash
+# Preview a destructive action; nothing changes without --confirm
 mainwpcontrol abilities run delete-site-v1 \
   --input '{"site_id_or_domain": "mysite.com"}' \
   --dry-run --json
-```
 
-Nothing changes until you explicitly pass `--confirm`.
-
-**Update plugins and wait for completion:**
-
-```bash
+# Updates are classified destructive too: preview, then confirm
+# (--force skips the interactive prompt for CI; --wait blocks until done)
 mainwpcontrol abilities run update-site-plugins-v1 \
-  --input '{"site_id": 1}' \
-  --wait --json
-```
+  --input '{"site_id_or_domain": 1}' --dry-run --json
+mainwpcontrol abilities run update-site-plugins-v1 \
+  --input '{"site_id_or_domain": 1}' --confirm --force --wait --json
 
-`--wait` blocks until the operation finishes. Useful in CI pipelines.
+# See the input schema for any ability
+mainwpcontrol abilities info update-site-plugins-v1
 
----
-
-## Installation
-
-### Standard install (recommended)
-
-Pre-built keychain binaries are included for macOS, Windows, and Linux (x64 and arm64). On other platforms you may need C++ build tools during installation.
-
-```bash
-npm install -g @mainwp/control
-
-# Interactive login (stores credentials in your OS keychain)
-mainwpcontrol login
-```
-
-### Environment variable auth (CI, Docker, headless)
-
-Use this when no OS keychain is available, or if keytar fails to build.
-
-```bash
-npm install -g @mainwp/control
-
-export MAINWP_APP_PASSWORD='xxxx xxxx xxxx xxxx xxxx xxxx'
-
-mainwpcontrol login --url https://dashboard.example.com --username admin
-```
-
-When the OS keychain is unavailable, credentials are not stored on disk. Keep `MAINWP_APP_PASSWORD` set for each run.
-
-If keytar is installed but broken, set `MAINWPCONTROL_NO_KEYTAR=1` to skip loading it.
-
----
-
-<details>
-<summary><strong>New to the Command Line?</strong></summary>
-
-If you haven't used a terminal before, here's what you need to know.
-
-### What is a terminal?
-
-A terminal is where you type commands instead of clicking buttons. You'll see it called "command line" or "shell" in different places.
-
-**How to open it:**
-- **macOS**: Open **Terminal** (search in Spotlight, or look in Applications > Utilities)
-- **Windows**: Open **Git Bash** (installed with [Git for Windows](https://gitforwindows.org/)). If you don't have it, PowerShell works too; see the [quoting notes](#json-quoting-on-the-command-line) below.
-- **Linux**: Open your distribution's **Terminal** app (usually in the applications menu)
-
-### What does `npm install -g` do?
-
-`npm` is the Node.js package manager. It downloads and installs JavaScript packages. The `-g` flag installs globally, which makes `mainwpcontrol` available as a command anywhere on your system, not only in one project folder.
-
-### What is an environment variable?
-
-An environment variable is a named value that programs can read. They're commonly used for passwords and API keys.
-
-**Setting one:**
-```bash
-# macOS / Linux (lasts until you close the terminal)
-export MAINWP_APP_PASSWORD='xxxx xxxx xxxx xxxx xxxx xxxx'
-
-# Windows PowerShell (lasts until you close the window)
-$env:MAINWP_APP_PASSWORD = 'xxxx xxxx xxxx xxxx xxxx xxxx'
-```
-
-For long-term storage, use the OS keychain (the default when you run `mainwpcontrol login`) or a restricted-permission `.env` file rather than pasting credentials into shell profile files.
-
-### What is an Application Password?
-
-WordPress Application Passwords let external tools like `mainwpcontrol` access your site without using your main login password. They look like groups of four characters separated by spaces (e.g., `abcd efgh ijkl mnop qrst uvwx`).
-
-**To create one:** Log into WordPress admin > Users > Your Profile > scroll to **Application Passwords** > enter a name like "mainwpcontrol" > click **Add New Application Password** > copy the generated password.
-
-### Reading command output
-
-When you run a command, the output appears in your terminal. A few things to know:
-
-- **`--json`** tells `mainwpcontrol` to output structured JSON (useful for scripting and piping to other tools)
-- **Exit codes** indicate success (`0`) or failure (`1` through `5`). You won't see them directly, but scripts and CI use them to decide what happens next. Run `echo $?` (macOS/Linux) or `echo $LASTEXITCODE` (PowerShell) after a command to check.
-
-### JSON quoting on the command line
-
-When you pass JSON with `--input`, quoting depends on your shell:
-
-```bash
-# macOS / Linux / Git Bash on Windows
-mainwpcontrol abilities run get-site-v1 --input '{"site_id_or_domain": 1}' --json
-```
-
-**Git Bash on Windows** (comes with [Git for Windows](https://gitforwindows.org/)) handles quoting the same way macOS and Linux do. If you use Git Bash, all the examples in this documentation work without changes.
-
-**Windows PowerShell** quoting of inline JSON is unreliable: whether backslash-escaped quotes inside a single-quoted string reach the command intact depends on your PowerShell version. Don't fight it, put your parameters in a file and use `--input-file`:
-
-```bash
-mainwpcontrol abilities run get-site-v1 --input-file params.json --json
-```
-
-This works the same on every platform. See [Input from File](docs/workflows/input-from-file.md) for details.
-
-</details>
-
----
-
-## Basic Usage
-
-### Abilities
-
-Your Dashboard exposes its operations as "abilities." You browse them, pick one, and run it. Every ability has a versioned name like `list-sites-v1` that you pass to `abilities run`.
-
-```bash
-# List all abilities
-mainwpcontrol abilities list
-
-# Filter by category
-mainwpcontrol abilities list --category sites
-
-# Get full details and input schema for an ability
-mainwpcontrol abilities info list-sites-v1
-
-# Run an ability
-mainwpcontrol abilities run list-sites-v1 --json
-
-# Run with input parameters
-mainwpcontrol abilities run get-site-v1 --input '{"site_id_or_domain": 1}' --json
-
-# Or use a file (works everywhere, and is the reliable option on Windows PowerShell)
-mainwpcontrol abilities run get-site-v1 --input-file params.json --json
-```
-
-### Profiles
-
-Each `mainwpcontrol login` creates a profile, a named connection to a Dashboard, identified by hostname. If you manage multiple Dashboards, run `login` once per Dashboard to create a profile for each.
-
-```bash
-# List all profiles
-mainwpcontrol profile list
-
-# Switch active profile
-mainwpcontrol profile use production.example.com
-
-# Use a profile for one command without switching
-mainwpcontrol abilities list --profile staging.example.com
-
-# Delete a profile and its keychain credentials
-mainwpcontrol profile delete staging.example.com
-```
-
-### Diagnostics
-
-`doctor` checks your configuration, credentials, and Dashboard connectivity. Run it first if something isn't working.
-
-```bash
-# Check configuration and connectivity
+# Something wrong? Diagnose configuration and connectivity
 mainwpcontrol doctor
-
-# Verbose output
-mainwpcontrol doctor -v
-
-# JSON output
-mainwpcontrol doctor --json
 ```
 
-### Chat Mode
+Managing more than one Dashboard? Each `login` creates a profile named after the hostname; switch with `mainwpcontrol profile use <name>` or per-command with `--profile <name>`. See the [CLI Reference](docs/cli-reference.md#profile) for details.
 
-If you have an LLM API key, you can talk to your Dashboard in plain English instead of constructing commands. Good for exploration, not required for anything.
+> **Windows PowerShell** quoting of inline JSON is unreliable; put parameters in a file and use `--input-file` instead. Git Bash handles the examples as written. Details in [Input from File](docs/workflows/input-from-file.md).
 
-Set one of these environment variables to enable it:
+## Documentation
 
-```bash
-# Pick one (Anthropic, OpenAI, Google, or OpenRouter)
-export ANTHROPIC_API_KEY='sk-ant-...'
+- [Getting Started](docs/getting-started.md): terminals, npm, Application Passwords, and JSON quoting, if the command line is new territory
+- [CLI Reference](docs/cli-reference.md): every command, flag, and exit code
+- [Configuration](docs/configuration.md): profiles, settings.json, environment variables, and credential storage
+- [Safety & Destructive Operations](docs/safety.md): the preview-and-confirm flow, ability annotations, batch jobs, and what the guard rails do and don't cover
+- [Chat Mode](docs/chat.md): plain-English management with your own LLM API key
+- [Troubleshooting](docs/troubleshooting.md): install failures, connection errors, and authentication issues
 
-mainwpcontrol chat
-mainwpcontrol chat "list all sites with pending updates"
-```
-
-See [Chat Mode Configuration](#chat-mode-configuration) for all supported providers and flags.
-
-### Global Flags
-
-These flags work on every `mainwpcontrol` command except the built-in `help` and `autocomplete` commands.
-
-| Flag | Description |
-|------|-------------|
-| `--json` | Structured JSON output |
-| `--quiet` / `-q` | Suppress output (exit code only) |
-| `--profile <name>` | Use a specific profile |
-| `--debug` | Show redacted debug diagnostics on stderr |
-| `--help` | Show help |
-
-### Abilities Run Flags
-
-Extra flags for `abilities run`. These control input, safety checks, and batch job behavior.
-
-| Flag | Description |
-|------|-------------|
-| `--input` / `-i` | Input parameters as JSON (use `-` for stdin) |
-| `--input-file` | Read input from a JSON file |
-| `--dry-run` | Preview changes without executing |
-| `--confirm` | Execute a destructive ability |
-| `--force` | Skip interactive confirmation (CI mode) |
-| `--wait` | Block until batch job completes |
-| `--wait-timeout` | Max seconds to wait (default: 300) |
-
----
-
-## Concepts
-
-### Abilities
-
-Abilities are the operations your MainWP Dashboard exposes through its REST API. Each one has:
-
-- A versioned name (e.g., `list-sites-v1`, `delete-site-v1`)
-- An input schema (what parameters it accepts)
-- Annotations that tell you what kind of operation it is
-
-The annotations matter:
-- **Readonly**: Safe to run anytime. Cannot modify data.
-- **Destructive**: Permanently changes or deletes data. Requires `--dry-run` preview, then `--confirm` to execute.
-- **Idempotent**: Safe to re-run. Same result on repeated calls.
-
-Run `mainwpcontrol abilities info <name>` to see the full schema and annotations for any ability.
-
-### Profiles
-
-A profile is a named connection to a MainWP Dashboard. It stores the Dashboard URL and username. Your password stays in the OS keychain (or in the `MAINWP_APP_PASSWORD` environment variable when no keychain is available).
-
-Running `mainwpcontrol login` creates a profile automatically, named after the Dashboard hostname:
-
-```bash
-# Creates profile "staging.example.com"
-mainwpcontrol login --url https://staging.example.com --username admin
-
-# Creates profile "production.example.com"
-mainwpcontrol login --url https://production.example.com --username admin
-```
-
-The profile file at `~/.config/mainwpcontrol/profiles.json` never contains passwords.
-
-### Safety Model
-
-Destructive operations follow a two-step pattern: preview first, then execute.
-
-```bash
-# Step 1: Preview (nothing changes)
-mainwpcontrol abilities run delete-site-v1 \
-  --input '{"site_id_or_domain": "mysite.com"}' \
-  --dry-run --json
-
-# Step 2: Execute after reviewing the preview
-mainwpcontrol abilities run delete-site-v1 \
-  --input '{"site_id_or_domain": "mysite.com"}' \
-  --confirm --force --json
-```
-
-`--dry-run` and `--confirm` are mutually exclusive. You cannot pass both.
-
-In CI/scripted workflows where you've already validated the operation, pass `--confirm --force` directly to skip the interactive prompt.
-
-### Batch Jobs
-
-Operations that affect many items (200+) are automatically queued as batch jobs. The command returns a `job_id` immediately, and you can watch progress:
-
-```bash
-mainwpcontrol jobs watch <job-id>
-
-# With a timeout
-mainwpcontrol jobs watch <job-id> --timeout 120
-```
-
-Or use `--wait` on the original command to block until completion:
-
-```bash
-mainwpcontrol abilities run sync-sites-v1 --wait --wait-timeout 300 --json
-```
-
----
-
-## Advanced Usage
-
-### CI/CD Patterns
-
-```bash
-# Non-interactive login
-export MAINWP_APP_PASSWORD='xxxx xxxx xxxx xxxx xxxx xxxx'
-mainwpcontrol login --url https://dashboard.example.com --username admin
-
-# Silent execution with exit codes
-mainwpcontrol abilities run list-sites-v1 --json --quiet
-echo "Exit code: $?"
-
-# Pipeline branching on exit codes
-if mainwpcontrol abilities run check-sites-v1 --json --quiet; then
-  echo "All sites healthy"
-else
-  echo "Issues detected"
-fi
-```
-
-### Input from Files and Stdin
-
-```bash
-# From a JSON file
-mainwpcontrol abilities run update-site-plugins-v1 --input-file params.json --json
-
-# From stdin
-echo '{"site_id_or_domain": 1}' | mainwpcontrol abilities run get-site-v1 --input - --json
-
-# Heredoc
-mainwpcontrol abilities run get-site-v1 --input - --json <<EOF
-{"site_id_or_domain": 1}
-EOF
-```
-
-### Chat Mode Configuration
-
-Chat requires one of these environment variables:
-
-| Variable | Provider |
-|----------|----------|
-| `ANTHROPIC_API_KEY` | Anthropic Claude |
-| `OPENAI_API_KEY` | OpenAI GPT |
-| `GOOGLE_API_KEY` | Google Gemini |
-| `OPENROUTER_API_KEY` | OpenRouter |
-| `LOCAL_LLM_API_KEY` | Local LLM (with optional `LOCAL_LLM_URL`) |
-
-Additional chat flags: `--provider`, `--model`, `--max-turns`, `--max-context-messages`, `--no-stream`.
-
-In non-TTY environments (pipes, CI), `mainwpcontrol chat` without a message argument exits with guidance instead of hanging.
-
-### Shell Completion
-
-```bash
-# Bash
-source /path/to/mainwp-control/scripts/completions/mainwpcontrol.bash
-
-# Zsh
-source /path/to/mainwp-control/scripts/completions/mainwpcontrol.zsh
-```
-
-### Configuration File
-
-Settings live at `~/.config/mainwpcontrol/settings.json`:
-
-```json
-{
-  "defaultJsonOutput": true,
-  "timeout": 30000,
-  "debug": false,
-  "llmProvider": "openai",
-  "chatContextMessages": 20
-}
-```
-
-### Workflow Guides
-
-Step-by-step guides for common automation patterns:
+Step-by-step automation guides live in [docs/workflows](docs/workflows):
 
 | Workflow | Description |
 |----------|-------------|
@@ -457,127 +159,53 @@ Step-by-step guides for common automation patterns:
 | [Input from File](docs/workflows/input-from-file.md) | Pass complex parameters via JSON files, stdin pipes, or heredocs |
 | [Monitoring Integration](docs/workflows/monitoring-integration.md) | Send site metrics to Datadog, StatsD, or other monitoring tools |
 
----
+## Configuration
 
-## Reference
-
-### Exit Codes
-
-| Code | Meaning | CI Usage |
-|------|---------|----------|
-| 0 | Success | Continue pipeline |
-| 1 | User/input error | Fix command syntax |
-| 2 | Auth/config error | Check credentials |
-| 3 | Network error | Retry or check connectivity |
-| 4 | API error | Check ability parameters |
-| 5 | Internal error | Report bug |
-| 130 | Interrupted (SIGINT) | Ctrl-C during a prompt or `jobs watch`; standard Unix 128+SIGINT convention, outside the 0-5 contract |
-
-### Environment Variables
-
-#### MainWP Configuration
+Interactive use needs no configuration beyond `mainwpcontrol login`. For CI, Docker, and headless machines:
 
 | Variable | Description |
 |----------|-------------|
-| `MAINWP_APP_PASSWORD` | Application password for non-interactive login and commands when keychain is unavailable |
-| `MAINWPCONTROL_NO_KEYTAR` | Set to `1` to skip keytar (keychain) loading entirely |
-| `MAINWP_ALLOW_HTTP` | Set to `1` to allow insecure HTTP Dashboard URLs |
+| `MAINWP_APP_PASSWORD` | Application Password for non-interactive login, and for commands when no OS keychain is available |
+| `MAINWPCONTROL_NO_KEYTAR` | Set to `1` to skip keychain loading entirely |
+| `MAINWP_ALLOW_HTTP` | Set to `1` to allow insecure `http://` Dashboard URLs |
 
-#### Chat/LLM Configuration
+```bash
+export MAINWP_APP_PASSWORD='xxxx xxxx xxxx xxxx xxxx xxxx'
+mainwpcontrol login --url https://dashboard.example.com --username admin
+```
 
-| Variable | Description |
-|----------|-------------|
-| `ANTHROPIC_API_KEY` | Anthropic Claude |
-| `OPENAI_API_KEY` | OpenAI GPT |
-| `GOOGLE_API_KEY` | Google Gemini |
-| `OPENROUTER_API_KEY` | OpenRouter |
-| `LOCAL_LLM_API_KEY` | Local LLM provider (required to enable local provider) |
-| `LOCAL_LLM_URL` | Local endpoint URL (optional, defaults to localhost) |
-| `MAINWP_LLM_PROVIDER` | Override auto-detected provider |
-| `MAINWP_LLM_MODEL` | Specify model to use |
+Optional defaults (JSON output, timeouts, chat provider) live in `~/.config/mainwpcontrol/settings.json`. The full list of settings, chat provider keys, and the credential storage model are in the [Configuration guide](docs/configuration.md).
 
-### Configuration Settings
+## Abilities
 
-All settings in `~/.config/mainwpcontrol/settings.json`:
+Your Dashboard exposes its operations as versioned, self-describing "abilities" (the exact set varies by Dashboard version):
 
-| Setting | Type | Description |
-|---------|------|-------------|
-| `defaultJsonOutput` | boolean | Default to JSON output |
-| `timeout` | number | HTTP request timeout in milliseconds |
-| `debug` | boolean | Enable debug output |
-| `llmProvider` | string | Default LLM provider for chat |
-| `chatContextMessages` | number | Max messages in chat context |
-| `skipSSLVerification` | boolean | Disable TLS verification (insecure, prefer per-profile setting via `login --skip-ssl-verify`) |
-| `allowInsecureHttp` | boolean | Allow `http://` Dashboard URLs without `MAINWP_ALLOW_HTTP=1` |
+| Category         | Abilities | Reference                                                                                 |
+| ---------------- | --------- | ----------------------------------------------------------------------------------------- |
+| Sites            | 30        | [Sites Abilities](https://docs.mainwp.com/api-reference/abilities-api/sites)              |
+| Updates          | 13        | [Updates Abilities](https://docs.mainwp.com/api-reference/abilities-api/updates)          |
+| Clients          | 11        | [Clients Abilities](https://docs.mainwp.com/api-reference/abilities-api/clients)          |
+| Tags             | 7         | [Tags Abilities](https://docs.mainwp.com/api-reference/abilities-api/tags)                |
+| Batch Operations | 1         | [Batch Operations](https://docs.mainwp.com/api-reference/abilities-api/batch-operations)  |
 
----
+`abilities list` shows what your Dashboard actually offers, `abilities info <name>` shows an ability's input schema and annotations, and `abilities run <name>` executes it. Because the CLI discovers abilities at runtime, new Dashboard capabilities appear without a CLI update.
 
-## Troubleshooting
+## Safety
 
-<details>
-<summary><strong>"keytar failed to build" or native module errors during install</strong></summary>
-
-Keytar requires native C++ compilation on some platforms. If it fails:
-
-1. **Use environment variable auth instead** (bypasses keytar entirely):
-   ```bash
-   export MAINWP_APP_PASSWORD='your-application-password'
-   mainwpcontrol login --url https://dashboard.example.com --username admin
-   ```
-2. **Or skip keytar explicitly** by setting `MAINWPCONTROL_NO_KEYTAR=1` before running commands.
-
-The pre-built binaries cover macOS, Windows, and Linux (x64/arm64). If you're on a different platform or architecture, you'll need C++ build tools (`gcc`, `g++`, `make`) or the env var approach.
-
-</details>
-
-<details>
-<summary><strong>"command not found" after install</strong></summary>
-
-This usually means your npm global bin directory isn't in your system PATH.
-
-1. **Find where npm installs global packages:**
-   ```bash
-   npm config get prefix
-   ```
-2. **Add the `bin` subdirectory to your PATH.** For example, if the prefix is `/usr/local`:
-   ```bash
-   # Add to ~/.bashrc, ~/.zshrc, or your shell profile:
-   export PATH="/usr/local/bin:$PATH"
-   ```
-3. **Restart your terminal** (or run `source ~/.zshrc` / `source ~/.bashrc`) and try again.
-
-On Windows, the npm global directory is usually already in PATH after installing Node.js.
-
-</details>
-
-<details>
-<summary><strong>"connection refused" or network errors</strong></summary>
-
-If `mainwpcontrol login` or commands fail with connection errors:
-
-1. **Check the Dashboard URL.** Make sure it's the full URL with `https://` (e.g., `https://dashboard.example.com`). Don't include a trailing slash.
-2. **Verify HTTPS.** `mainwpcontrol` requires HTTPS by default. If your Dashboard uses HTTP (not recommended), set `MAINWP_ALLOW_HTTP=1`.
-3. **Check firewall/network.** Make sure your machine can reach the Dashboard:
-   ```bash
-   curl -I https://dashboard.example.com
-   ```
-4. **SSL certificate issues.** If using a self-signed certificate, you can use `mainwpcontrol login --skip-ssl-verify` (not recommended for production).
-
-</details>
-
----
+Every ability carries annotations that classify it as read-only, a write, or destructive, and the CLI enforces them. Destructive operations follow a two-step flow: a `--dry-run` preview shows what the Dashboard reports would be affected, and only an explicit `--confirm` executes it. The destructive class is deliberately wide: deletions, updates (`update-site-*`, `run-updates-*`, `update-all-*`), any ability that does not declare itself non-destructive, and a conservative name-based override that a mislabeling Dashboard cannot downgrade. The two flags are mutually exclusive, previews that fail block execution, and each confirmed run is written to a local audit log. Scripted pipelines that have already validated an operation can pass `--confirm --force` to skip the interactive prompt; that is a deliberate, per-command decision, never a default. Chat mode goes through the identical execution path, so an LLM can propose a destructive action but cannot confirm it. The full model is in [Safety & Destructive Operations](docs/safety.md).
 
 ## Contributing
 
 ```bash
-npm run build      # Build the project
-npm test           # Run tests (unit + e2e, no network needed)
-npm run lint       # Check code style
+npm ci             # install dependencies
+npm run build      # build
+npm test           # run tests (unit + e2e, no network needed)
+npm run lint       # check code style
 ```
 
-### Live Integration Tests
+CI runs lint, type check, tests, and build on every pull request.
 
-`npm run test:live` runs tests against a real MainWP Dashboard, including workflow documentation validation. These require a running Dashboard and credentials:
+`npm run test:live` exercises a real Dashboard: API tests (login, discovery, read-only execution, safety model, exit codes) plus validation that every jq expression and field name in `docs/workflows/` works against the real API. It runs read-only operations and `--dry-run` previews only, never mutations, and needs credentials:
 
 ```bash
 export MAINWP_API_URL=https://your-dashboard.example.com
@@ -587,23 +215,11 @@ export MAINWP_APP_PASSWORD='your-application-password'
 npm run test:live
 ```
 
-The live suite includes API tests (login, abilities discovery, read-only execution, safety model, exit codes) and workflow doc tests (validates that every jq expression, field name, and data pipeline documented in `docs/workflows/` works against the real API).
-
-Live tests are safe: they only run read-only operations and `--dry-run` previews, never mutations.
-
----
+The full acceptance harness, which packs and installs the CLI as a consumer would, is described in [Acceptance Testing](docs/acceptance-testing.md).
 
 ## License
 
-GPL-3.0-or-later
-
----
-
-## Requirements
-
-- Node.js 20.18.1 or later
-- MainWP Dashboard 6+ with Abilities API
-- WordPress Application Password
+GPL-3.0-or-later. See [LICENSE](LICENSE).
 
 ---
 
