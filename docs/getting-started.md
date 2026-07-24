@@ -42,7 +42,7 @@ export MAINWP_APP_PASSWORD='xxxx xxxx xxxx xxxx xxxx xxxx'
 $env:MAINWP_APP_PASSWORD = 'xxxx xxxx xxxx xxxx xxxx xxxx'
 ```
 
-For long-term storage, use the OS keychain (the default when you run `mainwpcontrol login`) or a restricted-permission `.env` file rather than pasting credentials into shell profile files.
+For long-term storage, use the OS keychain (the default when you run `mainwpcontrol login`) or a restricted-permission `.env` file rather than pasting credentials into shell profile files. Note that `mainwpcontrol` does not read `.env` files itself: source the file (or export the variable another way) before running the CLI.
 
 ## Reading command output
 

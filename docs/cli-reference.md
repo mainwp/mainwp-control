@@ -29,7 +29,7 @@ mainwpcontrol login --url https://dashboard.example.com --username admin
 
 | Flag | Description |
 |------|-------------|
-| `--url <url>` | Dashboard URL (HTTPS required unless `MAINWP_ALLOW_HTTP=1`) |
+| `--url <url>` | Dashboard URL (HTTPS required unless `MAINWP_ALLOW_HTTP=1` or the `allowInsecureHttp` setting is enabled) |
 | `--username <name>` | WordPress username |
 | `--name <name>` | Profile name (defaults to the Dashboard hostname) |
 | `--password <pw>` | Application Password; prefer `MAINWP_APP_PASSWORD` or the prompt, since flags are visible in the process list |

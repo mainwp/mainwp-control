@@ -12,13 +12,13 @@ mainwpcontrol doctor -v
 
 Keytar (the keychain module) requires native C++ compilation on some platforms. Pre-built binaries cover macOS, Windows, and Linux (x64/arm64); elsewhere the build can fail. If it does:
 
-1. **Use environment variable auth instead** (bypasses keytar entirely):
+1. **Skip keytar and use environment variable auth.** `MAINWP_APP_PASSWORD` supplies the credential, but login still tries the keychain layer unless you disable it, so set both:
    ```bash
+   export MAINWPCONTROL_NO_KEYTAR=1
    export MAINWP_APP_PASSWORD='your-application-password'
    mainwpcontrol login --url https://dashboard.example.com --username admin
    ```
-2. **Or skip keytar explicitly** by setting `MAINWPCONTROL_NO_KEYTAR=1` before running commands.
-3. **Or install C++ build tools** (`gcc`, `g++`, `make`) and reinstall.
+2. **Or install C++ build tools** (`gcc`, `g++`, `make`) and reinstall.
 
 ## "command not found" after install
 
@@ -71,4 +71,4 @@ once for each profile. This is a one-time migration; your Application Password i
 
 ## Still stuck?
 
-[Open an issue](https://github.com/mainwp/mainwp-control/issues) with the command you ran, the `--debug` stderr output, and your `doctor -v` output (credentials removed).
+[Open an issue](https://github.com/mainwp/mainwp-control/issues) with the command you ran, the `--debug` stderr output, and your `doctor -v` output. Before posting, remove anything that identifies your setup: credentials and tokens, usernames, Dashboard URLs, and site names or IDs.

@@ -63,7 +63,7 @@ mainwpcontrol jobs watch <job-id> --timeout 120
 mainwpcontrol abilities run sync-sites-v1 --wait --wait-timeout 300 --json
 ```
 
-A timeout reports the last known job status in its error details and leaves the job resumable by ID; a watch that gave up tells you what it knew, never "success." Interrupting the watch (Ctrl-C exits 130, SIGTERM exits 143) cancels it and reports the job ID; the job itself keeps running on the Dashboard, and `jobs watch <job-id>` picks it back up.
+A timeout reports the last known job status in its error details and leaves the job resumable by ID; a watch that gave up tells you what it knew, never "success." Interrupting with Ctrl-C (exit 130) or SIGTERM (exit 143) stops only the watch and reports the job ID; the Dashboard job keeps running, and `jobs watch <job-id>` picks it back up.
 
 ## Chat mode
 
@@ -71,7 +71,7 @@ Chat goes through the same execution path as the CLI commands. The LLM can propo
 
 ## What the guard rails do not cover
 
-- **Non-destructive writes run without confirmation.** Syncing, updating plugins, and reconnecting sites are writes. The confirm flow is for the destructive class, not for every mutation.
+- **Non-destructive writes run without confirmation.** Syncing and reconnecting sites are writes that execute without the confirm flow. Updates are not in this group: the name-based override classifies `update-site-*`, `run-updates-*`, and `update-all-*` as destructive. The confirm flow is for the destructive class, not for every mutation.
 - **Annotations come from your Dashboard.** The CLI enforces them faithfully and treats undeclared abilities as destructive, but it cannot detect an ability that mislabels itself as read-only.
 - **Your Application Password is the real boundary.** The CLI adds friction and audit, but anyone holding the password can use the API directly. Use a dedicated WordPress user, and revoke its password if a machine is compromised.
 - **`--confirm --force` in a script is your judgment call.** The flags exist so validated pipelines can run unattended. Review what goes into those pipelines the way you'd review the command itself.
