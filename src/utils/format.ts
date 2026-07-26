@@ -114,6 +114,7 @@ export function maskApiKey(apiKey: string): string {
  */
 /** The placeholder both userinfo components are replaced with. */
 const MASKED_USERINFO = '***';
+const REDACTED_SENTINEL = '[URL_WITH_CREDENTIALS_REDACTED]';
 
 export function maskUrlUserinfo(url: string): string {
   let parsed: URL;
@@ -145,7 +146,7 @@ export function maskUrlUserinfo(url: string): string {
   // so a raw string containing them slips past the whitespace-excluding
   // regex. Fail closed rather than echo the credentials.
   if (masked === url) {
-    return '[URL_WITH_CREDENTIALS_REDACTED]';
+    return REDACTED_SENTINEL;
   }
 
   return masked;
@@ -224,10 +225,22 @@ function isHostChar(char: string): boolean {
  * sits inside a JSON error body, so the host it produced has to be believable
  * before the match counts.
  */
-/** Where the authority starting at `from` ends: the next structural character. */
-function authorityEnd(text: string, from: number): number {
+/**
+ * How far past the last `@` the adjudicator will look for the end of an
+ * authority. No credible URL carries a kilobyte of host and port, and without a
+ * bound every candidate is sliced and parsed out to the next structural
+ * character, which is where two separate quadratic blowups lived (repeated
+ * scheme opens in terminator-free text, and an unclosed IPv6 bracket scanning
+ * to end of input). Past the bound the scan fails closed and masks: for a real
+ * oversized URL the verdict would have been "mask" anyway, and for oversized
+ * junk over-masking is the documented safe direction.
+ */
+const MAX_AUTHORITY_SPAN = 1024;
+
+/** Where the authority starting at `from` ends, bounded by `limit`. */
+function authorityEnd(text: string, from: number, limit: number): number {
   let end = from;
-  while (end < text.length && !AUTHORITY_TERMINATORS.has(text[end]!)) end++;
+  while (end < limit && !AUTHORITY_TERMINATORS.has(text[end]!)) end++;
   return end;
 }
 
@@ -244,8 +257,30 @@ function hostEnd(text: string, from: number, limit: number): number {
 }
 
 function hasCredentials(scan: string, schemeStart: number, hostStart: number): boolean {
-  const ends = [hostEnd(scan, hostStart, scan.length), authorityEnd(scan, hostStart)];
-  return ends.some((end) => end > hostStart && parsesWithCredentials(scan.slice(schemeStart, end)));
+  const limit = Math.min(scan.length, hostStart + MAX_AUTHORITY_SPAN);
+  const structEnd = authorityEnd(scan, hostStart, limit);
+  if (structEnd === limit && limit < scan.length) {
+    // No structural end within the window: fail closed (see MAX_AUTHORITY_SPAN).
+    return true;
+  }
+  // Three candidate extents, cheapest first. The conservative host stops at the
+  // first character that is definitely not one, which separates
+  // `one.t,https://…` into two URLs. The structural end accepts the many host
+  // characters the parser allows and a character set keeps getting wrong
+  // (`!example`, `%21example`, `,example`). But when both a weird host AND a
+  // trailing wrapper are present — `<https://u:p@!host>` — the conservative
+  // extent is empty and the structural one swallows the `>` and fails to
+  // parse, so a third extent trims trailing non-host characters off the
+  // structural end. The table still only finds candidates; the parser decides.
+  let trimmedEnd = structEnd;
+  while (trimmedEnd > hostStart && !isHostChar(scan[trimmedEnd - 1]!)) trimmedEnd--;
+  const ends = [hostEnd(scan, hostStart, structEnd), trimmedEnd, structEnd];
+  for (let i = 0; i < ends.length; i++) {
+    const end = ends[i]!;
+    if (end <= hostStart || ends.indexOf(end) !== i) continue;
+    if (parsesWithCredentials(scan.slice(schemeStart, end))) return true;
+  }
+  return false;
 }
 
 function parsesWithCredentials(candidate: string): boolean {
@@ -255,6 +290,67 @@ function parsesWithCredentials(candidate: string): boolean {
   } catch {
     return false;
   }
+}
+
+/**
+ * How many `@` positions the spaced-userinfo look-ahead will offer the parser.
+ * A WordPress Application Password contains spaces but no `@`, so one is the
+ * realistic count; the bound keeps hostile text from turning each look-ahead
+ * into an unbounded run of candidate parses.
+ */
+const MAX_LOOKAHEAD_ATS = 8;
+
+/**
+ * The scan treats a space as the end of a URL, because in free text it almost
+ * always is — but the parser percent-encodes spaces inside userinfo, and a
+ * WordPress Application Password contains them, so `https://admin:AbCD 1234
+ * efGH@host/x` is a credential the plain scan cannot see. When an authority
+ * closes at a space with no `@` seen, this decides whether the token continues
+ * through the space as userinfo.
+ *
+ * The discriminator is the parser, not a character rule: the look-ahead only
+ * runs when the closed token alone does NOT parse as a URL. `https://host.test`
+ * parses, so `https://host.test failed for admin@example.com` is a URL
+ * followed by prose and an email and stays untouched; `https://admin:AbCD`
+ * does not parse (its "port" is not a number), so the text after the space is
+ * offered to the parser as userinfo continuation. Candidates stop at `/?#`
+ * (raw slashes cannot sit in userinfo) and at MAX_AUTHORITY_SPAN, and the
+ * SHORTEST credentialed extent wins so a bare-host URL followed by an email
+ * never swallows the email. Residuals accepted and documented in
+ * REVIEW_DECISIONS.md: a password whose first chunk is all digits parses as a
+ * valid port and is indistinguishable from `host:port`, and a spaced password
+ * that itself contains `@` masks only up to its first credentialed extent.
+ *
+ * @returns The scan index of the `@` ending the spaced userinfo, or -1.
+ */
+function spacedUserinfoEnd(
+  scan: string,
+  schemeStart: number,
+  authorityStart: number,
+  closePos: number
+): number {
+  // An empty authority (`https:// admin@e.com`) offers nothing to continue.
+  if (closePos <= authorityStart) return -1;
+  const token = scan.slice(schemeStart, closePos);
+  // Our own sentinel makes any token unparseable; treating what follows it as
+  // userinfo would break masking idempotency.
+  if (token.includes(REDACTED_SENTINEL)) return -1;
+  try {
+    new URL(token);
+    return -1; // A complete URL on its own; the space really ends it.
+  } catch {
+    // Not a URL alone — the space may sit inside its userinfo.
+  }
+  const limit = Math.min(scan.length, closePos + MAX_AUTHORITY_SPAN);
+  let tried = 0;
+  for (let i = closePos + 1; i < limit; i++) {
+    const char = scan[i]!;
+    if (char === '/' || char === '?' || char === '#') break;
+    if (char !== '@') continue;
+    if (++tried > MAX_LOOKAHEAD_ATS) break;
+    if (hasCredentials(scan, schemeStart, i + 1)) return i;
+  }
+  return -1;
 }
 
 /**
@@ -310,15 +406,10 @@ export function maskUrlUserinfoInText(text: string): string {
     if (
       authorityStart >= 0 &&
       lastAt > authorityStart &&
-      // Ask the parser, not the scan, whether this is a credential. Two
-      // candidate extents are offered because neither alone is right: the
-      // conservative host stops at the first character that is definitely not
-      // one, which separates `one.t,https://…` into two URLs, while the
-      // structural end runs to the next `/?#` or space, which is what accepts
-      // the many host characters the parser allows and a character set keeps
-      // getting wrong (`!example`, `%21example`, `,example`). Either verdict is
-      // safe: only the userinfo is rewritten, so the host extent affects the
-      // decision, never the output.
+      // Ask the parser, not the scan, whether this is a credential. Several
+      // candidate extents are offered (see hasCredentials); any verdict is
+      // safe, because only the userinfo is rewritten, so the host extent
+      // affects the decision, never the output.
       hasCredentials(scan, schemeStart, lastAt + 1)
     ) {
       // Only the userinfo is rewritten. Replacing from the scheme instead let a
@@ -377,7 +468,26 @@ export function maskUrlUserinfoInText(text: string): string {
     }
 
     if (authorityStart >= 0 && AUTHORITY_TERMINATORS.has(char)) {
+      const sawAt = lastAt > authorityStart;
+      const openScheme = schemeStart;
+      const openAuthority = authorityStart;
       closeAuthority();
+      // A space-closed authority with no @ may be a URL whose userinfo
+      // contains spaces (a WordPress Application Password). Tab/CR/LF never
+      // reach here — they are stripped from the scan — so the space is the
+      // only whitespace close that can sit inside userinfo.
+      if (!sawAt && char === ' ') {
+        const at = spacedUserinfoEnd(scan, openScheme, openAuthority, index);
+        if (at >= 0) {
+          const start = sourceIndex[openAuthority]!;
+          const stop = sourceIndex[at]! + 1;
+          const obscured = stop - start !== at + 1 - openAuthority;
+          spans.push({ start, end: stop, obscured });
+          index = at + 1;
+          tokenStart = index;
+          continue;
+        }
+      }
       index++;
       tokenStart = index;
       continue;
@@ -398,7 +508,10 @@ export function maskUrlUserinfoInText(text: string): string {
     // Running this only as a fallback keeps multi-URL text with the scan, which
     // masks every URL rather than just the first.
     const trimmed = text.trim();
-    if (trimmed && parsesWithCredentials(trimmed)) {
+    // A sentinel in the value means a prior pass already masked it; the
+    // sentinel cannot leak, and offering it to the parser as userinfo made a
+    // second pass collapse the whole value (masking must be idempotent).
+    if (trimmed && !trimmed.includes(REDACTED_SENTINEL) && parsesWithCredentials(trimmed)) {
       const at = text.indexOf(trimmed);
       return text.slice(0, at) + maskUrlUserinfo(trimmed) + text.slice(at + trimmed.length);
     }
@@ -411,7 +524,7 @@ export function maskUrlUserinfoInText(text: string): string {
     // A fail-closed span can extend over a later one; skip what it covered.
     if (span.start < cursor) continue;
     output += text.slice(cursor, span.start);
-    output += span.obscured ? '[URL_WITH_CREDENTIALS_REDACTED]' : '***:***@';
+    output += span.obscured ? REDACTED_SENTINEL : '***:***@';
     cursor = span.end;
   }
   return output + text.slice(cursor);

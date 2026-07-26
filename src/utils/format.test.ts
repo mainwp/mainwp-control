@@ -342,13 +342,60 @@ describe('maskUrlUserinfoInText', () => {
   it('does not leak a password containing spaces, as WordPress passwords do', () => {
     // The scan has to treat a space as the end of a URL because in free text it
     // almost always is, but the parser percent-encodes spaces inside userinfo,
-    // and an Application Password is exactly this shape. The whole-value
-    // fallback catches it; masking in place is not possible without guessing
-    // where the credential ended, so it fails closed to the sentinel.
+    // and an Application Password is exactly this shape. The space look-ahead
+    // catches it: `https://admin:AbCD` alone does not parse (its "port" is not
+    // a number), so the text after the space is offered to the parser as
+    // userinfo continuation and masked in place.
     const result = maskUrlUserinfoInText('https://admin:AbCD 1234 efGH@host.example.com/x');
 
     expect(result).not.toContain('AbCD');
-    expect(result).toBe('[URL_WITH_CREDENTIALS_REDACTED]');
+    expect(result).toBe('https://***:***@host.example.com/x');
+  });
+
+  it('masks a spaced password even when another URL already matched', () => {
+    // The whole-value fallback only ran when the scan found nothing, so a
+    // spaced credential embedded alongside any other URL survived untouched.
+    expect(
+      maskUrlUserinfoInText(
+        'first https://a:b@one.example/x then <https://admin:AbCD 1234 efGH@host.example/x>'
+      )
+    ).toBe('first https://***:***@one.example/x then <https://***:***@host.example/x>');
+  });
+
+  it('does not let the space look-ahead swallow prose after a real URL', () => {
+    // `https://host.test` and `https://host.test:8443` parse on their own, so
+    // the space genuinely ends them and the email stays untouched.
+    for (const text of [
+      'Connection to https://host.test failed for admin@example.com',
+      'Connection to https://host.test:8443 failed for admin@example.com',
+    ]) {
+      expect(maskUrlUserinfoInText(text)).toBe(text);
+    }
+  });
+
+  it('stops a spaced credential at its first credentialed extent', () => {
+    // The shortest extent that parses with credentials wins, so a bare-host
+    // spaced credential followed by prose and an email masks only itself.
+    expect(
+      maskUrlUserinfoInText('Request to https://admin:AbCD 1234@host failed for admin@e.com')
+    ).toBe('Request to https://***:***@host failed for admin@e.com');
+  });
+
+  it('masks a wrapped URL whose host starts with a sub-delimiter', () => {
+    // The conservative host extent is empty when the host starts with `!`, and
+    // the structural extent swallowed the closing `>` and failed to parse, so
+    // neither candidate matched the visible URL and the credential leaked.
+    expect(maskUrlUserinfoInText('<https://u:p@!host>')).toBe('<https://***:***@!host>');
+    expect(maskUrlUserinfoInText('(https://u:p@,host.example)')).toBe(
+      '(https://***:***@,host.example)'
+    );
+  });
+
+  it('fails closed on a wrapped, control-obscured URL with a sub-delimiter host', () => {
+    const result = maskUrlUserinfoInText('<https://u:se\ncret@!host>');
+
+    expect(result).not.toContain('cret@');
+    expect(result).toBe('<https://[URL_WITH_CREDENTIALS_REDACTED]!host>');
   });
 
   it('masks hosts the parser accepts but a character set would not', () => {
@@ -424,6 +471,21 @@ describe('maskUrlUserinfoInText', () => {
     expect(Date.now() - start).toBeLessThan(500);
   });
 
+  it('stays linear on terminator-free scheme repeats and unclosed brackets', () => {
+    // Slicing and parsing candidates out to the next structural character was
+    // quadratic when none exists: repeated scheme opens each re-scanned the
+    // rest of the input, and an unclosed IPv6 bracket searched to the end for
+    // its `]`. Past MAX_AUTHORITY_SPAN the adjudicator now fails closed
+    // instead of parsing unbounded candidates.
+    for (const unit of ['https:\\\\u:p@', 'https:\\\\u:p@!', 'https://u:p@[/']) {
+      const start = Date.now();
+
+      maskUrlUserinfoInText(unit.repeat(20_000));
+
+      expect(Date.now() - start).toBeLessThan(1_000);
+    }
+  });
+
   it('masks both URLs when they are adjacent with no whitespace between', () => {
     expect(
       maskUrlUserinfoInText('https://a:b@one.example.com,https://c:d@two.example.com')
@@ -437,6 +499,21 @@ describe('maskUrlUserinfoInText', () => {
     // isolate" and replaced with the sentinel.
     const once = maskUrlUserinfoInText('failed at https://u:p@host.example.com/x');
     expect(maskUrlUserinfoInText(once)).toBe(once);
+  });
+
+  it('is idempotent when the first pass emitted the sentinel', () => {
+    // The whole-value fallback offered the sentinel to the parser as userinfo
+    // on the second pass and collapsed the surrounding prose; a sentinel means
+    // a prior pass already masked, and the sentinel itself cannot leak.
+    for (const text of [
+      'https://u:se\ncret@h contact admin@e.com',
+      'https://admin:AbCD 1234@host/x https://u:se\ncret@h/x',
+    ]) {
+      const once = maskUrlUserinfoInText(text);
+      expect(maskUrlUserinfoInText(once)).toBe(once);
+      expect(once).not.toContain('cret@');
+      expect(once).not.toContain('AbCD');
+    }
   });
 
   it('masks several credentialed URLs in one string', () => {
