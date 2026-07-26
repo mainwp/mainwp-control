@@ -92,14 +92,17 @@ async function loadKeytar(): Promise<typeof import('keytar') | null> {
   }
 
   try {
-    const mod = await import('keytar');
+    const mod: unknown = await import('keytar');
     // CJS/ESM interop: on newer Node versions, CJS exports are nested under .default.
-    // Check for the expected API on mod first; only unwrap .default if needed.
-    keytar = typeof mod.setPassword === 'function'
-      ? mod
-      : typeof (mod as any).default?.setPassword === 'function'
-        ? (mod as any).default
-        : undefined;
+    // Check for the expected API on mod first; only touch .default if needed
+    // (mocked modules can throw on access of an export they don't define).
+    const direct = mod as typeof import('keytar');
+    if (typeof direct.setPassword === 'function') {
+      keytar = direct;
+    } else {
+      const unwrapped = (mod as { default?: typeof import('keytar') }).default;
+      keytar = typeof unwrapped?.setPassword === 'function' ? unwrapped : null;
+    }
 
     if (!keytar) {
       keytarAvailable = false;
