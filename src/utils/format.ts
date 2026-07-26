@@ -152,14 +152,41 @@ export function maskUrlUserinfo(url: string): string {
 }
 
 /**
- * URL spans carrying tab/CR/LF between the scheme and the rest.
- *
- * The WHATWG parser strips those characters before detecting credentials, so
- * `https://user:sec\nret@host` has userinfo that a whitespace-excluding pattern
- * cannot see. Requiring at least one of them keeps this sweep off ordinary
- * text, which the primary pass below already handles correctly.
+ * Schemes the WHATWG parser gives an authority even without `//`, so
+ * `https:user:pass@host` carries real userinfo.
  */
-const CONTROL_BEARING_URL = /[a-z][a-z0-9+.-]*:\/\/[^\s]*(?:[\t\n\r]+[^\s]*)+/gi;
+const SPECIAL_SCHEMES = new Set(['http', 'https', 'ws', 'wss', 'ftp', 'file']);
+
+/** Longest scheme this scanner will look back for. */
+const MAX_SCHEME_LENGTH = 32;
+
+/** Characters that end an authority. */
+const AUTHORITY_TERMINATORS = new Set(['/', '?', '#', ' ', '\t', '\n', '\r']);
+
+function isSchemeChar(code: number, first: boolean): boolean {
+  const isAlpha = (code >= 97 && code <= 122) || (code >= 65 && code <= 90);
+  if (first) return isAlpha;
+  const isDigit = code >= 48 && code <= 57;
+  return isAlpha || isDigit || code === 43 || code === 46 || code === 45; // + . -
+}
+
+/**
+ * Walk back from a colon over scheme characters. Returns where the scheme
+ * starts, or -1 if what precedes the colon is not one. Bounded by
+ * MAX_SCHEME_LENGTH so this stays linear over the whole string: an unanchored
+ * `[a-z][a-z0-9+.-]*:` regex rescans long letter runs from every position and
+ * measures quadratic.
+ */
+function findSchemeStart(text: string, colon: number): number {
+  const floor = Math.max(0, colon - MAX_SCHEME_LENGTH);
+  let index = colon - 1;
+  while (index >= floor && isSchemeChar(text.charCodeAt(index), false)) {
+    index--;
+  }
+  const start = index + 1;
+  if (start >= colon) return -1;
+  return isSchemeChar(text.charCodeAt(start), true) ? start : -1;
+}
 
 /**
  * Mask userinfo in any URLs embedded within arbitrary text.
@@ -167,32 +194,95 @@ const CONTROL_BEARING_URL = /[a-z][a-z0-9+.-]*:\/\/[^\s]*(?:[\t\n\r]+[^\s]*)+/gi
  * SECURITY: Error messages (e.g. fetch failures) can echo a full request URL
  * including embedded credentials from a legacy profile.
  *
- * Two passes. The first is bounded by whitespace and `/?#`, so it stops at a
- * closing bracket or the start of a following URL rather than swallowing them;
- * tokenizing on whitespace alone regressed `<https://u:p@host>` and
- * comma-adjacent URLs into passing through unmasked. The second is a
- * fail-closed sweep for the credentials only the WHATWG parser can see.
+ * Implemented as a linear scan rather than a pattern, after three regex
+ * attempts each missed a case. The scan runs over a copy with tab/CR/LF
+ * removed, because the URL parser discards those characters anywhere —
+ * including inside `://` — so `https:\n//user:pass@host` is credentialed even
+ * though no pattern anchored on a literal `://` can see it. Offsets are mapped
+ * back so only the matching span is rewritten and surrounding lines survive.
  *
  * @param text - Text that may contain credentialed URLs
- * @returns The text with each `scheme://user:pass@` replaced by `scheme://***:***@`,
- * and any control-character-obscured credentialed URL replaced by
- * `[URL_WITH_CREDENTIALS_REDACTED]`
+ * @returns The text with each URL's userinfo replaced by `***:***@`, or that
+ * span replaced by `[URL_WITH_CREDENTIALS_REDACTED]` when control characters
+ * obscured it and it cannot be safely rewritten
  */
 export function maskUrlUserinfoInText(text: string): string {
-  // Greedy through the LAST @ before a path/query/fragment or whitespace, so
-  // passwords containing "@" mask fully instead of leaking after the first @.
-  // Re-masking an already-masked URL is a no-op, so this stays idempotent.
-  const masked = text.replace(/([a-z][a-z0-9+.-]*:\/\/)[^\s/?#]+@/gi, '$1***:***@');
+  if (!text.includes('@')) {
+    return text;
+  }
 
-  return masked.replace(CONTROL_BEARING_URL, (candidate) => {
-    try {
-      const parsed = new URL(candidate.replace(/[\t\n\r]/g, ''));
-      if (parsed.username || parsed.password) {
-        return '[URL_WITH_CREDENTIALS_REDACTED]';
-      }
-    } catch {
-      // Not a parseable URL, so there is no userinfo to hide.
+  // Strip what the parser ignores, keeping a map back to the original offsets.
+  let scan = '';
+  const sourceIndex: number[] = [];
+  for (let index = 0; index < text.length; index++) {
+    const char = text[index]!;
+    if (char === '\t' || char === '\n' || char === '\r') continue;
+    scan += char;
+    sourceIndex.push(index);
+  }
+
+  const spans: { start: number; end: number; obscured: boolean; prefix: string }[] = [];
+  let colon = scan.indexOf(':');
+
+  while (colon !== -1) {
+    const schemeStart = findSchemeStart(scan, colon);
+    if (schemeStart === -1) {
+      colon = scan.indexOf(':', colon + 1);
+      continue;
     }
-    return candidate;
-  });
+
+    const scheme = scan.slice(schemeStart, colon).toLowerCase();
+    let authorityStart = colon + 1;
+    if (scan.startsWith('//', authorityStart)) {
+      authorityStart += 2;
+    } else if (!SPECIAL_SCHEMES.has(scheme)) {
+      // `mailto:user@host` and friends have no authority, so the `@` is data.
+      colon = scan.indexOf(':', colon + 1);
+      continue;
+    }
+
+    let end = authorityStart;
+    while (end < scan.length && !AUTHORITY_TERMINATORS.has(scan[end]!)) end++;
+
+    // Greedy to the LAST `@` in the authority, so a password containing `@`
+    // masks completely. Resuming just past it (rather than past the whole
+    // authority) is what lets a second URL sharing this run still be found,
+    // while still visiting each character a bounded number of times.
+    const lastAt = scan.lastIndexOf('@', end - 1);
+    if (lastAt < authorityStart) {
+      colon = scan.indexOf(':', Math.max(end, colon + 1));
+      continue;
+    }
+    colon = scan.indexOf(':', lastAt + 1);
+
+    // Normally only `scheme://userinfo@` is rewritten, leaving the host in
+    // place. A span the parser reshaped cannot be rewritten in place without
+    // guessing where the credential sat, so that one fails closed over the
+    // whole authority.
+    const scanStop = lastAt + 1;
+    const start = sourceIndex[schemeStart]!;
+    const stop = sourceIndex[scanStop - 1]! + 1;
+    const obscured = stop - start !== scanStop - schemeStart;
+    spans.push({
+      start,
+      end: obscured ? sourceIndex[end - 1]! + 1 : stop,
+      obscured,
+      prefix: scan.slice(schemeStart, authorityStart),
+    });
+  }
+
+  if (spans.length === 0) {
+    return text;
+  }
+
+  let output = '';
+  let cursor = 0;
+  for (const span of spans) {
+    // A fail-closed span can extend over a later one; skip what it covered.
+    if (span.start < cursor) continue;
+    output += text.slice(cursor, span.start);
+    output += span.obscured ? '[URL_WITH_CREDENTIALS_REDACTED]' : `${span.prefix}***:***@`;
+    cursor = span.end;
+  }
+  return output + text.slice(cursor);
 }

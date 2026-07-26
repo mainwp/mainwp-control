@@ -39,10 +39,17 @@ export interface CLIResult {
 }
 
 /**
- * Resolve the Dashboard URL the CLI will authenticate against: the profile
- * named by `--profile`/`-p` if present, otherwise the active profile.
+ * Resolve the Dashboard URL the CLI will authenticate against: for `login` that
+ * is its own `--url`, since no profile exists yet; otherwise the profile named
+ * by `--profile`/`-p`, falling back to the active profile.
  */
 function resolveDashboardUrl(xdgConfigHome: string, args: string[]): string | undefined {
+  if (args[0] === 'login') {
+    const flagIndex = args.indexOf('--url');
+    if (flagIndex >= 0) return args[flagIndex + 1];
+    return args.find((arg) => arg.startsWith('--url='))?.slice('--url='.length);
+  }
+
   let parsed: { activeProfile?: string; profiles?: { name: string; dashboardUrl: string }[] };
   try {
     parsed = JSON.parse(

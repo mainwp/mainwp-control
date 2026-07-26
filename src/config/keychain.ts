@@ -123,26 +123,23 @@ async function loadKeytar(): Promise<typeof import('keytar') | null> {
  * Refuse the env credential unless the operator declared the same Dashboard it
  * is about to be sent to. Fails closed on a missing or unparseable declaration.
  *
+ * Every authenticated use of the env credential goes through here, `login`
+ * included. An earlier revision let login proceed without a declaration on the
+ * grounds that `--url` already names the destination, but that reopened the
+ * hole: in CI the password lives in a protected secret store while command
+ * arguments usually do not, so anyone who can edit the workflow can redirect it
+ * without touching the secret. Binding is only worth having if nothing skips it.
+ *
  * @param expectedDashboardUrl - Where the credential would be sent
  * @param destinationLabel - How to name that destination in the error
- * @param requireDeclaration - When false, an absent MAINWP_DASHBOARD_URL is
- * allowed and only a mismatch throws. `login` uses that form: it names its
- * destination with `--url` and has no profile yet, so requiring the operator to
- * repeat the URL would break the documented non-interactive flow. Every other
- * authenticated path takes its destination from profiles.json, which an
- * attacker may be able to write, so there the declaration is mandatory.
  */
 export function assertEnvCredentialDeclaredFor(
   expectedDashboardUrl: string,
-  destinationLabel: string,
-  requireDeclaration = true
+  destinationLabel: string
 ): void {
   const declaredUrl = process.env[ENV_URL_VAR];
 
   if (!declaredUrl) {
-    if (!requireDeclaration) {
-      return;
-    }
     throw new AuthError(
       `${ENV_VAR} is set but ${ENV_URL_VAR} is not, so the destination cannot be verified. Refusing to send the credential.`,
       undefined,
@@ -150,7 +147,20 @@ export function assertEnvCredentialDeclaredFor(
     );
   }
 
-  const expected = canonicalDashboardIdentity(expectedDashboardUrl);
+  // The expected URL comes from profiles.json, which is untrusted input, so a
+  // malformed one must fail closed as an AuthError rather than surface a raw
+  // TypeError from the parser.
+  let expected: string;
+  try {
+    expected = canonicalDashboardIdentity(expectedDashboardUrl);
+  } catch {
+    throw new AuthError(
+      `The destination URL is not valid, so it cannot be verified against ${ENV_URL_VAR}. Refusing to send the credential.`,
+      undefined,
+      'Check the Dashboard URL on the profile, or run `mainwpcontrol login` to recreate it.'
+    );
+  }
+
   let declared: string;
   try {
     declared = canonicalDashboardIdentity(declaredUrl);

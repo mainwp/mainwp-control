@@ -33,7 +33,12 @@ const MAX_ERROR_MESSAGE_LENGTH = 16384;
  */
 function truncateAtTokenBoundary(text: string, limit: number): string {
   const cut = text.slice(0, limit);
-  const lastBoundary = cut.search(/\s\S*$/);
+  // Tab, CR and LF are NOT safe boundaries: the URL parser discards them, so
+  // `https://user:secret\n...@host` is one credential to the parser even though
+  // it looks like two tokens here. Cutting on the newline would keep
+  // `https://user:secret`, which the pattern below can no longer recognize.
+  // [^\S\t\n\r] is "whitespace, excluding tab/CR/LF".
+  const lastBoundary = cut.search(/[^\S\t\n\r]\S*$/);
   return lastBoundary > 0 ? cut.slice(0, lastBoundary) : '';
 }
 

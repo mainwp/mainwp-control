@@ -124,7 +124,11 @@ export function sanitizeSingleLine(str: string): string {
  * cursor to column 0 and overwrite what was already printed.
  */
 export function sanitizeMultiLine(str: string): string {
-  return stripControlChars(str).replace(/\r\n?/g, '\n');
+  return stripControlChars(str)
+    .replace(/\r\n?/g, '\n')
+    // Tabs jump to the next tab stop, which lets hostile text align itself into
+    // fake columns; the single-line variant collapses them for the same reason.
+    .replace(/\t/g, ' ');
 }
 
 /**

@@ -337,24 +337,31 @@ describe('Keychain identity binding', () => {
       ).rejects.toBeInstanceOf(AuthError);
     });
 
-    it('login form allows an absent declaration but still rejects a mismatch', async () => {
-      // login names its destination with --url and has no profile yet, so the
-      // declaration is optional there; a wrong one is still refused.
+    it('requires a declaration on every authenticated path, login included', () => {
+      // No skip-the-check mode: in CI the password is a protected secret while
+      // command arguments are not, so an unbound login would reopen the hole.
       vi.stubEnv('MAINWP_APP_PASSWORD', 'env-secret');
 
-      expect(() =>
-        assertEnvCredentialDeclaredFor('https://dash.example.com', '--url', false)
-      ).not.toThrow();
+      expect(() => assertEnvCredentialDeclaredFor('https://dash.example.com', '--url')).toThrow(
+        AuthError
+      );
 
       vi.stubEnv('MAINWP_DASHBOARD_URL', 'https://attacker.example.com');
-      expect(() =>
-        assertEnvCredentialDeclaredFor('https://dash.example.com', '--url', false)
-      ).toThrow(AuthError);
+      expect(() => assertEnvCredentialDeclaredFor('https://dash.example.com', '--url')).toThrow(
+        AuthError
+      );
 
       vi.stubEnv('MAINWP_DASHBOARD_URL', 'https://dash.example.com/');
       expect(() =>
-        assertEnvCredentialDeclaredFor('https://dash.example.com', '--url', false)
+        assertEnvCredentialDeclaredFor('https://dash.example.com', '--url')
       ).not.toThrow();
+    });
+
+    it('fails closed as AuthError when the destination URL is malformed', () => {
+      vi.stubEnv('MAINWP_APP_PASSWORD', 'env-secret');
+      vi.stubEnv('MAINWP_DASHBOARD_URL', 'https://dash.example.com');
+
+      expect(() => assertEnvCredentialDeclaredFor('not-a-url', 'the profile')).toThrow(AuthError);
     });
 
     it('still reads the env password for display paths with no expected URL', async () => {

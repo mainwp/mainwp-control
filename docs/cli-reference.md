@@ -22,8 +22,10 @@ Connects to a Dashboard and creates a profile named after its hostname. Interact
 # Interactive
 mainwpcontrol login
 
-# Non-interactive (CI, headless): password from the environment
+# Non-interactive (CI, headless): password from the environment.
+# MAINWP_DASHBOARD_URL is required with it and must match --url.
 export MAINWP_APP_PASSWORD='xxxx xxxx xxxx xxxx xxxx xxxx'
+export MAINWP_DASHBOARD_URL='https://dashboard.example.com'
 mainwpcontrol login --url https://dashboard.example.com --username admin
 ```
 

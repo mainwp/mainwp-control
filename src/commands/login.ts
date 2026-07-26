@@ -108,17 +108,14 @@ export default class Login extends BaseCommand {
     // NetworkError and the user never sees the real reason.
     validateDashboardUrl(normalizedUrl, { rejectUserinfo: true });
 
-    // Cross-check the env credential against its declared Dashboard.
-    //
-    // login names its own destination with --url, so it does not require
-    // MAINWP_DASHBOARD_URL the way later authenticated commands do (there is no
-    // profile yet, and demanding the same URL twice would break the documented
-    // non-interactive flow). But when the operator has declared one, sending
-    // the password anywhere else is not what they asked for: in CI, where this
-    // env var is the documented credential path, the --url in a workflow file
-    // is easier to change than the secret store.
+    // The env credential is identity-bound here too. --url names the
+    // destination, but in CI the password comes from a protected secret store
+    // while command arguments generally do not, so requiring the operator to
+    // declare the Dashboard separately is what stops an edited workflow from
+    // redirecting it. Checked before the client is built, so a mismatch never
+    // reaches the network.
     if (!flags.password && envPassword) {
-      assertEnvCredentialDeclaredFor(normalizedUrl, '--url', false);
+      assertEnvCredentialDeclaredFor(normalizedUrl, '--url');
     }
 
     // Generate profile name from URL if not provided

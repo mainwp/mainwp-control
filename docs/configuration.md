@@ -16,10 +16,11 @@ For CI, Docker, and machines without a keychain, put the password in the environ
 
 ```bash
 export MAINWP_APP_PASSWORD='xxxx xxxx xxxx xxxx xxxx xxxx'
+export MAINWP_DASHBOARD_URL='https://dashboard.example.com'
 mainwpcontrol login --url https://dashboard.example.com --username admin
 ```
 
-When no keychain is available, the password is never written to disk; keep `MAINWP_APP_PASSWORD` set for each run, together with `MAINWP_DASHBOARD_URL`:
+When no keychain is available, the password is never written to disk; keep both variables set for each run:
 
 ```bash
 export MAINWP_APP_PASSWORD='xxxx xxxx xxxx xxxx xxxx xxxx'
@@ -27,7 +28,7 @@ export MAINWP_DASHBOARD_URL='https://dashboard.example.com'
 mainwpcontrol abilities list
 ```
 
-`login` takes the destination as `--url`, so it needs only the password. Every later command reads the credential back, and the CLI hands it over only when `MAINWP_DASHBOARD_URL` matches the profile it is about to authenticate against; otherwise the command fails instead of sending the password. That way a `profiles.json` that someone else can write cannot point your credential at their server. Keychain-stored credentials carry the same binding internally and need no extra variable. `doctor` and `config show` only display configuration, so they are unaffected.
+Any command that authenticates with `MAINWP_APP_PASSWORD`, `login` included, sends it only to the Dashboard named in `MAINWP_DASHBOARD_URL` and fails rather than sending it anywhere else. Two things follow: a `profiles.json` that someone else can write cannot point your credential at their server, and in CI, where the password usually comes from a protected secret store and command arguments do not, an edited pipeline cannot redirect it either. Keychain-stored credentials carry the same binding internally and need no extra variable. Interactive `login` prompts for the password and does not use the env var; `doctor` and `config show` only display configuration, so all three are unaffected.
 
 The profile file is still written and records the Dashboard URL and username, as it does in every mode. If keytar is installed but broken, set `MAINWPCONTROL_NO_KEYTAR=1` to skip loading it.
 

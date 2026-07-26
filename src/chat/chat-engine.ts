@@ -792,6 +792,8 @@ export class ChatEngine {
     let content = '';
     // Providers yield complete tool calls (not deltas), so we collect them directly
     const toolCalls: ToolCall[] = [];
+    // A response we cut short must not be reported as a complete answer.
+    let contentTruncated = false;
 
     try {
       for await (const chunk of stream) {
@@ -801,10 +803,20 @@ export class ChatEngine {
           // provider stream has no size cap of its own, so an oversized
           // response would otherwise grow unbounded in memory and feed the
           // downstream envelope scan. Display still streams every chunk.
-          if (content.length < MAX_STREAM_CONTENT_LENGTH) {
-            content += chunk.content;
-            if (content.length > MAX_STREAM_CONTENT_LENGTH) {
-              content = truncateWholeCodePoints(content, MAX_STREAM_CONTENT_LENGTH);
+          if (content.length >= MAX_STREAM_CONTENT_LENGTH) {
+            // Already full; this chunk is being dropped.
+            contentTruncated = true;
+          } else {
+            const combined = content + chunk.content;
+            // >= not >: a surrogate pair split across chunks can land exactly on
+            // the cap, and a `>` test would never trim the orphaned half.
+            if (combined.length >= MAX_STREAM_CONTENT_LENGTH) {
+              content = truncateWholeCodePoints(combined, MAX_STREAM_CONTENT_LENGTH);
+              if (combined.length > content.length) {
+                contentTruncated = true;
+              }
+            } else {
+              content = combined;
             }
           }
           // Call callback for progressive display
@@ -865,6 +877,18 @@ export class ChatEngine {
 
     // Return accumulated LLMResponse
     const parsedToolCalls = toolCalls;
+
+    // Content we cut at the cap is not a complete answer. Reporting 'stop'
+    // would let a truncated response pass as a finished one; 'length' routes it
+    // into the envelope parser's existing protocol-error path instead.
+    if (contentTruncated && parsedToolCalls.length === 0) {
+      return {
+        content,
+        toolCalls: undefined,
+        finishReason: 'length',
+        model: this.provider.getDefaultModel(),
+      };
+    }
 
     return {
       content,

@@ -128,6 +128,12 @@ export class SchemaValidator {
    */
   private assertSyncResult(result: unknown, schemaId?: string): boolean {
     if (typeof result !== 'boolean') {
+      // Adopt a thenable before throwing. An async validator's promise rejects
+      // on invalid input, and with nothing attached that rejection is unhandled
+      // and kills the process — the exact crash this guard exists to prevent.
+      if (typeof (result as PromiseLike<unknown> | null)?.then === 'function') {
+        void Promise.resolve(result as PromiseLike<unknown>).catch(() => undefined);
+      }
       const schemaName = schemaId ? `"${schemaId}"` : '(unnamed)';
       throw new APIError(
         'ABILITY_SCHEMA_INVALID',
