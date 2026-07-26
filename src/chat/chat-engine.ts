@@ -59,6 +59,41 @@ import { executeAbilityWithPolicy } from '../core/execute-ability-with-policy.js
 const MAX_STREAM_CONTENT_LENGTH = 1_048_576;
 
 /**
+ * Tool calls retained from one streamed response.
+ *
+ * The envelope accepts exactly one call, so two is everything a truthful
+ * "received N" protocol error needs; the rest is memory a hostile endpoint
+ * controls. Without this, thousands of calls accumulate before the envelope
+ * ever sees the response.
+ */
+const MAX_STREAM_TOOL_CALLS = 2;
+
+/**
+ * Aggregate size of the tool-call arguments retained from one streamed
+ * response, mirroring the content cap.
+ */
+const MAX_STREAM_TOOL_ARGUMENTS_LENGTH = 1_048_576;
+
+/**
+ * Size of one streamed tool call's arguments, for the aggregate cap.
+ *
+ * Arguments are the provider's parsed JSON, or the raw string when it did not
+ * parse (the envelope rejects that as a protocol error). Serializing is the
+ * only way to price the parsed form; a value that cannot be serialized is
+ * charged the whole budget rather than being treated as free.
+ */
+function measureToolArguments(args: unknown): number {
+  if (typeof args === 'string') {
+    return args.length;
+  }
+  try {
+    return JSON.stringify(args)?.length ?? 0;
+  } catch {
+    return MAX_STREAM_TOOL_ARGUMENTS_LENGTH;
+  }
+}
+
+/**
  * Truncate to `limit` UTF-16 units without splitting a surrogate pair.
  *
  * A plain slice can cut between the halves of an astral character (emoji,
@@ -795,6 +830,8 @@ export class ChatEngine {
     // A response we cut short must not be reported as a complete answer.
     let contentTruncated = false;
     let capReached = false;
+    let toolCallsTruncated = false;
+    let toolArgumentsLength = 0;
 
     try {
       for await (const chunk of stream) {
@@ -833,6 +870,19 @@ export class ChatEngine {
         // Handle tool call chunks - providers yield each complete tool call as a separate chunk
         // before the done chunk, so push each one immediately
         if (chunk.toolCall && chunk.toolCall.id && chunk.toolCall.name) {
+          // Bound both the count and the bytes, then stop consuming: past
+          // either cap the stream is only spending memory on a response the
+          // envelope will reject anyway.
+          if (toolCalls.length >= MAX_STREAM_TOOL_CALLS) {
+            toolCallsTruncated = true;
+            break;
+          }
+          const argumentsLength = measureToolArguments(chunk.toolCall.arguments);
+          if (toolArgumentsLength + argumentsLength > MAX_STREAM_TOOL_ARGUMENTS_LENGTH) {
+            toolCallsTruncated = true;
+            break;
+          }
+          toolArgumentsLength += argumentsLength;
           toolCalls.push({
             id: chunk.toolCall.id,
             name: chunk.toolCall.name,
@@ -882,6 +932,20 @@ export class ChatEngine {
 
     // Return accumulated LLMResponse
     const parsedToolCalls = toolCalls;
+
+    // A stream cut at a tool-call cap is not a complete answer either. With two
+    // calls retained the envelope's own "received 2" error already says so, so
+    // only the byte cap (which can stop at one call, or at none) needs routing
+    // through the truncated path — a single call from a stream we abandoned
+    // must never be proposed for execution.
+    if (toolCallsTruncated && parsedToolCalls.length < MAX_STREAM_TOOL_CALLS) {
+      return {
+        content,
+        toolCalls: undefined,
+        finishReason: 'length',
+        model: this.provider.getDefaultModel(),
+      };
+    }
 
     // Content we cut at the cap is not a complete answer. Reporting 'stop'
     // would let a truncated response pass as a finished one; 'length' routes it

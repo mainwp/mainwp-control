@@ -106,7 +106,7 @@ export default class Login extends BaseCommand {
     // Reject malformed URLs (embedded credentials included) before the
     // connection test — undici otherwise fails first with an opaque
     // NetworkError and the user never sees the real reason.
-    validateDashboardUrl(normalizedUrl, { rejectUserinfo: true });
+    validateDashboardUrl(normalizedUrl, { strictIntake: true });
 
     // The env credential is identity-bound here too. --url names the
     // destination, but in CI the password comes from a protected secret store

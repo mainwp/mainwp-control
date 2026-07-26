@@ -10,15 +10,18 @@ import { describe, it, expect } from 'vitest';
 import { sanitizeErrorMessage, sanitizeErrorValue } from './error-sanitizer.js';
 
 describe('sanitizeErrorMessage', () => {
+  // Userinfo masking is delegated to maskUrlUserinfoInText, which keeps the
+  // scheme and host and replaces only the credential — a more useful
+  // diagnostic than the whole-URL placeholder this used to emit.
   it('redacts user-and-password credentialed URLs', () => {
     expect(sanitizeErrorMessage('failed: https://admin:secret@dashboard.example.com/wp-json')).toBe(
-      'failed: [URL_WITH_CREDENTIALS]'
+      'failed: https://***:***@dashboard.example.com/wp-json'
     );
   });
 
   it('redacts username-only credentialed URLs', () => {
     expect(sanitizeErrorMessage('failed: https://alice@dashboard.example.com')).toBe(
-      'failed: [URL_WITH_CREDENTIALS]'
+      'failed: https://***:***@dashboard.example.com'
     );
   });
 
@@ -32,6 +35,49 @@ describe('sanitizeErrorMessage', () => {
       sanitizeErrorMessage('failed: https://dashboard.example.com/cb?access_token=abc123&page=2')
     ).toBe('failed: https://dashboard.example.com/cb?access_token=[REDACTED]&page=2');
   });
+
+  // Every case below leaked past the local credential pattern this function
+  // used before the shared scanner replaced it (adversarial review round 10).
+  it('redacts an uppercase scheme', () => {
+    const result = sanitizeErrorMessage('HTTPS://admin:secret@host/x');
+
+    expect(result).not.toContain('secret');
+    expect(result).toBe('HTTPS://***:***@host/x');
+  });
+
+  it('redacts a scheme split by a newline the URL parser discards', () => {
+    const result = sanitizeErrorMessage('https:\n//admin:secret@host/x');
+
+    expect(result).not.toContain('secret');
+    expect(result).toBe('https:\n//***:***@host/x');
+  });
+
+  it('redacts a password containing spaces', () => {
+    const result = sanitizeErrorMessage('https://admin:my secret pass@host/x');
+
+    expect(result).not.toContain('my secret pass');
+    expect(result).toBe('https://***:***@host/x');
+  });
+
+  it('redacts a whole b64token Bearer value', () => {
+    expect(sanitizeErrorMessage('Bearer abc+def/ghi~=')).toBe('Bearer [REDACTED]');
+  });
+
+  it('redacts a base64url Basic value', () => {
+    expect(sanitizeErrorMessage('Basic YWRtaW4-c2Vj_cmV0==')).toBe('Basic [REDACTED]');
+  });
+
+  it('redacts sensitive parameters carried in a fragment', () => {
+    expect(sanitizeErrorMessage('https://dash.example/wp#api_key=TOPSECRET')).toBe(
+      'https://dash.example/wp#api_key=[REDACTED]'
+    );
+  });
+
+  it('redacts a fragment key that follows a harmless query parameter', () => {
+    expect(sanitizeErrorMessage('https://dash.example/wp?page=2#api_key=TOPSECRET')).toBe(
+      'https://dash.example/wp?page=2#api_key=[REDACTED]'
+    );
+  });
 });
 
 describe('sanitizeErrorValue', () => {
@@ -40,7 +86,7 @@ describe('sanitizeErrorValue', () => {
       sanitizeErrorValue({
         urls: ['https://admin:secret@dashboard.example.com'],
       })
-    ).toEqual({ urls: ['[URL_WITH_CREDENTIALS]'] });
+    ).toEqual({ urls: ['https://***:***@dashboard.example.com'] });
   });
 
   it('redacts values under sensitive keys outright', () => {
@@ -127,14 +173,14 @@ describe('sanitizeErrorMessage input bounding (F11)', () => {
   });
 
   it('still redacts credentials in a normal-length message', () => {
-    expect(sanitizeErrorMessage('failed at https://alice:pw@host/x')).toContain(
-      '[URL_WITH_CREDENTIALS]'
+    expect(sanitizeErrorMessage('failed at https://alice:pw@host/x')).toBe(
+      'failed at https://***:***@host/x'
     );
   });
 
   it('still redacts a username-only credential URL', () => {
-    expect(sanitizeErrorMessage('failed at https://alice@host/x')).toContain(
-      '[URL_WITH_CREDENTIALS]'
+    expect(sanitizeErrorMessage('failed at https://alice@host/x')).toBe(
+      'failed at https://***:***@host/x'
     );
   });
 });

@@ -134,7 +134,7 @@ describe('Golden Test: JSON Output Parses Cleanly', () => {
 describe('Golden Test: Error Code Propagation', () => {
   it.each([
     ['Bearer token', 'Request failed with Bearer abc123secret', 'abc123secret', 'Bearer [REDACTED]'],
-    ['credential URL', 'Request failed at https://user:pass@host/x', 'user:pass', '[URL_WITH_CREDENTIALS]'],
+    ['credential URL', 'Request failed at https://user:pass@host/x', 'user:pass', 'https://***:***@host/x'],
   ])('redacts %s credentials from Error messages', (_label, message, secret, marker) => {
     const output = errorOutput(new Error(message));
 

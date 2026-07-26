@@ -2,6 +2,7 @@
  * Pure sanitizers for error messages and structured error details.
  */
 
+import { maskUrlUserinfoInText } from './format.js';
 import { isSensitiveKey } from './redaction.js';
 
 const PATH_PATTERNS = [
@@ -68,28 +69,34 @@ export function sanitizeErrorMessage(message: string): string {
     sanitized = sanitized.replace(pattern, '[PATH]');
   }
 
-  // Password is optional: `https://alice@host` still leaks a username.
-  // The host class excludes ":" so it cannot overlap the optional password
-  // group — an ambiguous split would make a credential-less URL backtrack
-  // quadratically before failing.
+  // Embedded userinfo, delegated to the shared linear scanner. A local pattern
+  // lived here through three rewrites and still missed an uppercase scheme, a
+  // scheme split by a newline the URL parser discards, and a password
+  // containing spaces (the Application Password format). The scanner masks the
+  // userinfo in place and keeps scheme/host, which is the more useful
+  // diagnostic than the old whole-URL placeholder.
+  sanitized = maskUrlUserinfoInText(sanitized);
+
+  // RFC 6750 b64token: `Basic`/`Bearer` values may use base64url (`-` `_`) and
+  // the token68 extras (`.` `~` `+` `/`). Stopping at the first character
+  // outside a narrower class left the credential's tail in the message.
   sanitized = sanitized.replace(
-    /https?:\/\/[^\s@/:]+(?::[^\s@]*)?@[^\s]+/g,
-    '[URL_WITH_CREDENTIALS]'
-  );
-  sanitized = sanitized.replace(
-    /Basic\s+[A-Za-z0-9+/]+=*/gi,
+    /Basic\s+[A-Za-z0-9+/_-]+=*/gi,
     'Basic [REDACTED]'
   );
   sanitized = sanitized.replace(
-    /Bearer\s+[A-Za-z0-9._-]+/gi,
+    /Bearer\s+[A-Za-z0-9._~+/-]+=*/gi,
     'Bearer [REDACTED]'
   );
 
-  // Query-string parameters whose key is on the shared sensitive list
-  // (access_token, api_key, ...) — a URL like ?access_token=... carries the
-  // credential outside the userinfo form handled above.
+  // Parameters whose key is on the shared sensitive list (access_token,
+  // api_key, ...) — a URL like ?access_token=... carries the credential
+  // outside the userinfo form handled above. `#` is a separator too: a
+  // fragment-carried key never reaches a server but does reach the terminal.
+  // `#` also has to leave the key/value classes, or a preceding harmless
+  // parameter's value swallows `#api_key=...` and the scan never sees it.
   sanitized = sanitized.replace(
-    /([?&])([^=&\s"']{1,64})=([^&\s"']+)/g,
+    /([?&#])([^=&#\s"']{1,64})=([^&#\s"']+)/g,
     (match, sep: string, key: string) =>
       isSensitiveKey(key) ? `${sep}${key}=[REDACTED]` : match
   );

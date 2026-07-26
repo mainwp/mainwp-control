@@ -7,6 +7,7 @@ import {
   maskSecret,
   maskPassword,
   maskApiKey,
+  maskUrlCredentials,
   maskUrlUserinfo,
   maskUrlUserinfoInText,
   type MaskOptions,
@@ -175,6 +176,60 @@ describe('maskUrlUserinfo', () => {
     const result = maskUrlUserinfo('  https://admin:secret@dashboard.example.com');
     expect(result).toBe('[URL_WITH_CREDENTIALS_REDACTED]');
     expect(result).not.toContain('secret');
+  });
+});
+
+describe('maskUrlCredentials', () => {
+  it('masks userinfo like maskUrlUserinfo', () => {
+    expect(maskUrlCredentials('https://admin:secret@dashboard.example.com/path')).toBe(
+      'https://***:***@dashboard.example.com/path'
+    );
+  });
+
+  it('redacts a sensitive query parameter', () => {
+    expect(maskUrlCredentials('https://dashboard.example.com/?access_token=abc123')).toBe(
+      'https://dashboard.example.com/?access_token=[REDACTED]'
+    );
+  });
+
+  it('redacts a sensitive fragment parameter', () => {
+    expect(maskUrlCredentials('https://dashboard.example.com/wp#api_key=TOPSECRET')).toBe(
+      'https://dashboard.example.com/wp#api_key=[REDACTED]'
+    );
+  });
+
+  it('redacts a fragment key that follows a harmless query parameter', () => {
+    expect(maskUrlCredentials('https://dashboard.example.com/wp?page=2#api_key=TOPSECRET')).toBe(
+      'https://dashboard.example.com/wp?page=2#api_key=[REDACTED]'
+    );
+  });
+
+  it('redacts every sensitive parameter and keeps the rest byte-for-byte', () => {
+    expect(
+      maskUrlCredentials('https://dashboard.example.com/wp?site=1&api_key=a&password=b&page=2')
+    ).toBe('https://dashboard.example.com/wp?site=1&api_key=[REDACTED]&password=[REDACTED]&page=2');
+  });
+
+  it('leaves non-sensitive parameters untouched', () => {
+    const url = 'https://dashboard.example.com/wp-json?page=1&per_page=50#section';
+    expect(maskUrlCredentials(url)).toBe(url);
+  });
+
+  it('masks userinfo and parameters together', () => {
+    expect(maskUrlCredentials('https://admin:secret@dashboard.example.com/?api_key=abc')).toBe(
+      'https://***:***@dashboard.example.com/?api_key=[REDACTED]'
+    );
+  });
+
+  it('keeps the fail-closed sentinel when userinfo cannot be isolated', () => {
+    const result = maskUrlCredentials('https://admin:sec\nret@dashboard.example.com/?api_key=abc');
+    expect(result).toBe('[URL_WITH_CREDENTIALS_REDACTED]');
+    expect(result).not.toContain('abc');
+  });
+
+  it('returns invalid URL input unchanged', () => {
+    const url = 'not a valid URL';
+    expect(maskUrlCredentials(url)).toBe(url);
   });
 });
 

@@ -72,6 +72,36 @@ describe('profile commands', () => {
       expect(names).toContain('prod');
       expect(names).toContain('staging');
     });
+
+    it('masks a credential carried in a legacy profile URL query string', async () => {
+      // Query strings are rejected at intake now, but a profile written before
+      // that check still loads, and both the table and the JSON print its URL.
+      const legacyDir = await ConfigDir.create({
+        profiles: [
+          {
+            name: 'legacy',
+            dashboardUrl: `http://127.0.0.1:${server.port}/?access_token=TOPSECRET`,
+            username: 'admin',
+          },
+        ],
+        activeProfile: 'legacy',
+      });
+
+      try {
+        for (const args of [['profile', 'list'], ['profile', 'list', '--json']]) {
+          const result = await runCLI(args, {
+            xdgConfigHome: legacyDir.xdgHome,
+            env: { MAINWP_APP_PASSWORD: 'test-pass' },
+          });
+
+          expect(result.exitCode).toBe(0);
+          expect(result.stdout).not.toContain('TOPSECRET');
+          expect(result.stdout).toContain('access_token=[REDACTED]');
+        }
+      } finally {
+        await legacyDir.cleanup();
+      }
+    });
   });
 
   // --------------------------------------------------------------------------

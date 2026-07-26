@@ -83,13 +83,14 @@ async function saveProfilesFile(data: ProfilesFile): Promise<void> {
 /**
  * Validate a Dashboard URL's format and protocol
  *
- * `rejectUserinfo` is set only on intake paths (login, save): legacy profiles
- * already on disk with embedded credentials must keep loading so their
- * URLs can be masked at display instead of bricking the config.
+ * `strictIntake` is set only on intake paths (login, save): legacy profiles
+ * already on disk with embedded credentials or a query string must keep
+ * loading so their URLs can be masked at display instead of bricking the
+ * config.
  */
 export function validateDashboardUrl(
   url: string,
-  options: { rejectUserinfo?: boolean } = {}
+  options: { strictIntake?: boolean } = {}
 ): void {
   let parsed: URL;
   try {
@@ -114,11 +115,22 @@ export function validateDashboardUrl(
 
   // SECURITY: Reject rather than silently strip — the user should know
   // their pasted URL carried credentials.
-  if (options.rejectUserinfo && (parsed.username || parsed.password)) {
+  if (options.strictIntake && (parsed.username || parsed.password)) {
     throw new ConfigError(
       'Embedded credentials in the dashboard URL are not supported',
       undefined,
       'Pass the username with --username and enter the password at the password prompt'
+    );
+  }
+
+  // SECURITY: a query string or fragment is not part of a Dashboard base URL,
+  // and `?access_token=`/`#api_key=` are credential carriers that would be
+  // stored in profiles.json and reprinted by every URL display path.
+  if (options.strictIntake && (parsed.search || parsed.hash)) {
+    throw new ConfigError(
+      'The dashboard URL must not carry a query string or fragment',
+      undefined,
+      'Use the Dashboard base URL only, for example https://dashboard.example.com/'
     );
   }
 
@@ -131,7 +143,7 @@ export function validateDashboardUrl(
 export class ProfileStore {
   private data: ProfilesFile | null = null;
 
-  private validateUrl(url: string, options: { rejectUserinfo?: boolean } = {}): void {
+  private validateUrl(url: string, options: { strictIntake?: boolean } = {}): void {
     validateDashboardUrl(url, options);
   }
 
@@ -140,7 +152,7 @@ export class ProfileStore {
    */
   private validateProfile(
     profile: Profile,
-    options: { rejectUserinfo?: boolean } = {}
+    options: { strictIntake?: boolean } = {}
   ): void {
     const validationHint = 'Run `mainwpcontrol login` to create a valid profile';
 
@@ -302,7 +314,7 @@ export class ProfileStore {
   async save(profile: Profile): Promise<void> {
     // Validate profile before saving; intake is the only place userinfo
     // URLs are rejected outright (legacy stored profiles are masked instead)
-    this.validateProfile(profile, { rejectUserinfo: true });
+    this.validateProfile(profile, { strictIntake: true });
 
     const data = await this.ensureLoaded();
 

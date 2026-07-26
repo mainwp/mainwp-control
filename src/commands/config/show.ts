@@ -27,7 +27,7 @@ import {
   resolveProviderSelection,
   type ProviderSelectionSource,
 } from '../../chat/providers/provider.js';
-import { maskPassword, maskApiKey, maskUrlUserinfo } from '../../utils/format.js';
+import { maskPassword, maskApiKey, maskUrlCredentials } from '../../utils/format.js';
 import { color, colors } from '../../utils/colors.js';
 import { formatDivider, formatSection, formatStatusIcon } from '../../output/formatter.js';
 import { sanitizeSingleLine } from '../../utils/terminal-sanitizer.js';
@@ -195,8 +195,9 @@ export default class ConfigShowCommand extends BaseCommand {
 
       return {
         active: activeProfile.name,
-        // Mask userinfo from profiles stored before intake rejection existed
-        dashboardUrl: maskUrlUserinfo(activeProfile.dashboardUrl),
+        // Mask userinfo and sensitive query/fragment parameters from profiles
+        // stored before intake rejection existed
+        dashboardUrl: maskUrlCredentials(activeProfile.dashboardUrl),
         username: activeProfile.username,
         skipSSLVerification:
           activeProfile.skipSSLVerification ?? this.settings.skipSSLVerification,

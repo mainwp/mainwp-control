@@ -41,6 +41,37 @@ describe('ProfileStore URL validation', () => {
     });
   });
 
+  it.each([
+    'https://dashboard.example.com/?access_token=abc123',
+    'https://dashboard.example.com/#api_key=abc123',
+  ])('rejects dashboard URLs carrying a query or fragment: %s', async (dashboardUrl) => {
+    const store = new ProfileStore();
+
+    await expect(store.save({ ...baseProfile, dashboardUrl })).rejects.toMatchObject({
+      message: 'The dashboard URL must not carry a query string or fragment',
+      hint: expect.stringMatching(/base URL only/i),
+    });
+  });
+
+  it('still loads a legacy profile whose stored URL carries a query string', async () => {
+    // Strict validation is intake-only: a profile already on disk must keep
+    // loading so its URL can be masked at display instead of bricking the config.
+    const configDir = join(tempRoot, 'mainwpcontrol');
+    await fs.mkdir(configDir, { recursive: true });
+    const dashboardUrl = 'https://dashboard.example.com/?access_token=abc123';
+    await fs.writeFile(
+      join(configDir, 'profiles.json'),
+      JSON.stringify({
+        activeProfile: baseProfile.name,
+        profiles: [{ ...baseProfile, dashboardUrl }],
+      })
+    );
+
+    const profile = await new ProfileStore().get(baseProfile.name);
+
+    expect(profile?.dashboardUrl).toBe(dashboardUrl);
+  });
+
   async function writeProfilesFile(skipSSLVerification: unknown): Promise<void> {
     const configDir = join(tempRoot, 'mainwpcontrol');
     await fs.mkdir(configDir, { recursive: true });

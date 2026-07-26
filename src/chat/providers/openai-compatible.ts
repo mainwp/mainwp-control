@@ -14,6 +14,7 @@ import {
   type ProviderCapabilities,
   type StreamChunk,
   type ToolCall,
+  MAX_TOOL_ARGUMENTS_LENGTH,
 } from './provider.js';
 import { readSSEStream } from './sse-reader.js';
 import {
@@ -213,6 +214,11 @@ export abstract class OpenAICompatibleProvider implements LLMProvider {
       { id: string; name: string; arguments: string }
     >();
 
+    // Set inside the try below, thrown after it: the catch there swallows
+    // everything as a malformed chunk, so throwing inside would turn the cap
+    // breach into a silently skipped event and let accumulation continue.
+    let argumentsOverflow = false;
+
     for await (const data of readSSEStream({
       url: `${this.baseUrl}/chat/completions`,
       headers: this.getHeaders(),
@@ -247,8 +253,16 @@ export abstract class OpenAICompatibleProvider implements LLMProvider {
                 name: tc.function?.name ?? '',
                 arguments: tc.function?.arguments ?? '',
               });
-            } else {
-              if (tc.function?.arguments) {
+            } else if (tc.function?.arguments) {
+              // Per call: the deltas for one index are concatenated across an
+              // unbounded number of events, which the SSE line cap does not
+              // bound.
+              if (
+                existing.arguments.length + tc.function.arguments.length >
+                MAX_TOOL_ARGUMENTS_LENGTH
+              ) {
+                argumentsOverflow = true;
+              } else {
                 existing.arguments += tc.function.arguments;
               }
             }
@@ -284,6 +298,10 @@ export abstract class OpenAICompatibleProvider implements LLMProvider {
         if (process.env['DEBUG']) {
           console.debug(`[${this.name}] Skipped malformed SSE chunk`);
         }
+      }
+
+      if (argumentsOverflow) {
+        throw new Error(`${this.name} tool call argument limit exceeded`);
       }
     }
 

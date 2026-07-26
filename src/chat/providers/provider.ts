@@ -97,6 +97,17 @@ export interface ChatOptions {
 }
 
 /**
+ * Largest tool-call argument payload a provider will accumulate across SSE
+ * events before yielding it.
+ *
+ * Each SSE line is already bounded, but the argument deltas are concatenated
+ * across an unbounded number of them, so without this a hostile endpoint grows
+ * one tool call without limit. Mirrors the chat engine's stream caps; any real
+ * ability input is orders of magnitude smaller.
+ */
+export const MAX_TOOL_ARGUMENTS_LENGTH = 1_048_576;
+
+/**
  * Stream chunk for streaming responses
  */
 export interface StreamChunk {

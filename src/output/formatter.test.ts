@@ -15,6 +15,7 @@ import {
   formatStatusIcon,
   getStatusColor,
   formatHeading,
+  formatUntrustedBlock,
   formatSuccess,
   formatInfo,
 } from './formatter.js';
@@ -24,7 +25,7 @@ import { InputError } from '../utils/errors.js';
 describe('formatError credential redaction', () => {
   it.each([
     ['Bearer token', 'Request failed with Bearer abc123secret', 'abc123secret', 'Bearer [REDACTED]'],
-    ['credential URL', 'Request failed at https://user:pass@host/x', 'user:pass', '[URL_WITH_CREDENTIALS]'],
+    ['credential URL', 'Request failed at https://user:pass@host/x', 'user:pass', 'https://***:***@host/x'],
   ])('redacts %s credentials from Error messages', (_label, message, secret, marker) => {
     const output = formatError(new Error(message));
 
@@ -120,6 +121,49 @@ describe('heading/success/info sanitization (F2/F5/F7)', () => {
     const result = formatInfo('\x1b]0;pwn\x07Heads up\nsecond');
     expect(result).not.toContain('\x1b');
     expect(result).toContain('Heads up second');
+  });
+});
+
+describe('formatUntrustedBlock', () => {
+  it('keeps multi-paragraph text readable across lines', () => {
+    expect(formatUntrustedBlock('First line\n\nSecond line')).toBe(
+      '  │ First line\n  │ \n  │ Second line'
+    );
+  });
+
+  it('prefixes every line so remote text cannot reach column 0', () => {
+    // A hostile ability description imitating this command's own output.
+    const spoof = 'Harmless summary\n\nAnnotations\nDestructive: No\nPassword:';
+    const result = formatUntrustedBlock(spoof);
+
+    for (const line of result.split('\n')) {
+      expect(line.startsWith('  │ ')).toBe(true);
+    }
+    expect(result).not.toMatch(/^Destructive: No$/m);
+    expect(result).not.toMatch(/^Annotations$/m);
+  });
+
+  it('strips escape sequences and normalizes carriage returns', () => {
+    const result = formatUntrustedBlock('\x1b[2JOverwrite\rfaked\ttab');
+
+    expect(result).not.toContain('\x1b');
+    expect(result).not.toContain('\r');
+    expect(result).toBe('  │ Overwrite\n  │ faked tab');
+  });
+
+  it('bounds the block with a visible truncation marker', () => {
+    const result = formatUntrustedBlock('x'.repeat(5000));
+
+    expect(result).toContain('... [truncated]');
+    expect(result.length).toBeLessThan(5000);
+  });
+
+  it('does not split a surrogate pair at the truncation boundary', () => {
+    // 4095 filler characters puts the cut inside the emoji that follows.
+    const result = formatUntrustedBlock('x'.repeat(4095) + '😀'.repeat(10));
+
+    expect(result).not.toContain('�');
+    expect(JSON.stringify(result)).not.toMatch(/\\ud83d(?!\\ude)/);
   });
 });
 

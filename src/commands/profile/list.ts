@@ -7,7 +7,7 @@
 import { BaseCommand, commonFlags } from '../../lib/base-command.js';
 import { getProfileStore } from '../../config/profile-store.js';
 import { formatTable, formatHeading } from '../../output/formatter.js';
-import { maskUrlUserinfo } from '../../utils/format.js';
+import { maskUrlCredentials } from '../../utils/format.js';
 
 export default class ProfileList extends BaseCommand {
   static description = 'List saved Dashboard profiles';
@@ -38,9 +38,10 @@ export default class ProfileList extends BaseCommand {
       {
         profiles: profiles.map((p) => ({
           name: p.name,
-          // Legacy profiles may carry user:pass@ in the stored URL; the table
-          // below prints even without --json, so both paths must mask it.
-          url: maskUrlUserinfo(p.dashboardUrl),
+          // Legacy profiles may carry user:pass@ or ?access_token= in the
+          // stored URL; the table below prints even without --json, so both
+          // paths must mask it.
+          url: maskUrlCredentials(p.dashboardUrl),
           username: p.username,
           active: p.name === activeName,
         })),
@@ -56,7 +57,7 @@ export default class ProfileList extends BaseCommand {
         const headers = ['Name', 'URL', 'Username', 'Active'];
         const rows = profiles.map((p) => [
           p.name,
-          maskUrlUserinfo(p.dashboardUrl),
+          maskUrlCredentials(p.dashboardUrl),
           p.username,
           p.name === activeName ? '*' : '',
         ]);

@@ -4,6 +4,8 @@
  * Provides consistent secret masking across all commands.
  */
 
+import { isSensitiveKey } from './redaction.js';
+
 /**
  * Options for customizing secret masking behavior
  */
@@ -150,6 +152,40 @@ export function maskUrlUserinfo(url: string): string {
   }
 
   return masked;
+}
+
+/**
+ * Query and fragment parameters, for sensitive-key redaction.
+ *
+ * `#` is a separator alongside `?`/`&` and is excluded from the key and value
+ * classes: without that, a harmless leading parameter's value swallows
+ * `#api_key=...` and the fragment is never examined.
+ */
+const URL_PARAMETER = /([?&#])([^=&#\s]{1,64})=([^&#\s]*)/g;
+
+/**
+ * Mask everything credential-shaped in a URL for display: userinfo, plus the
+ * value of any query or fragment parameter whose key is on the shared
+ * sensitive list.
+ *
+ * SECURITY: userinfo is rejected at intake, but profiles saved before that
+ * check — and before query strings were rejected — can still carry
+ * `?access_token=` or `#api_key=` in the stored dashboard URL. Every display
+ * path must mask both forms.
+ *
+ * @param url - The URL to mask
+ * @returns The URL with userinfo masked as `***:***@` and sensitive parameter
+ * values replaced by `[REDACTED]`, or the userinfo sentinel when credentials
+ * were detected but could not be isolated
+ */
+export function maskUrlCredentials(url: string): string {
+  const masked = maskUrlUserinfo(url);
+  if (masked === REDACTED_SENTINEL) {
+    return masked;
+  }
+  return masked.replace(URL_PARAMETER, (match, separator: string, key: string) =>
+    isSensitiveKey(key) ? `${separator}${key}=[REDACTED]` : match
+  );
 }
 
 /**

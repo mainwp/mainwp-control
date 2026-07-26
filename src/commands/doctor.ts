@@ -23,7 +23,7 @@ import { ExitCode } from '../utils/exit-codes.js';
 import {
   maskPassword,
   maskApiKey,
-  maskUrlUserinfo,
+  maskUrlCredentials,
   maskUrlUserinfoInText,
 } from '../utils/format.js';
 import { color, colors } from '../utils/colors.js';
@@ -211,8 +211,9 @@ export default class DoctorCommand extends BaseCommand {
         name: 'Active Profile',
         status: 'pass',
         message: `Active: ${activeProfile.name}`,
-        // Mask userinfo from profiles stored before intake rejection existed
-        details: maskUrlUserinfo(activeProfile.dashboardUrl),
+        // Mask userinfo and sensitive query/fragment parameters from profiles
+        // stored before intake rejection existed
+        details: maskUrlCredentials(activeProfile.dashboardUrl),
       };
     } catch (error) {
       return {
