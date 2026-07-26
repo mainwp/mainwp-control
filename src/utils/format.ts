@@ -112,6 +112,9 @@ export function maskApiKey(apiKey: string): string {
  * maskUrlUserinfo('https://example.com/path') // unchanged
  * ```
  */
+/** The placeholder both userinfo components are replaced with. */
+const MASKED_USERINFO = '***';
+
 export function maskUrlUserinfo(url: string): string {
   let parsed: URL;
   try {
@@ -121,6 +124,15 @@ export function maskUrlUserinfo(url: string): string {
   }
 
   if (!parsed.username && !parsed.password) {
+    return url;
+  }
+
+  // Already masked. Re-masking would produce a byte-identical string, which
+  // the fail-closed check below reads as "credentials the regex could not
+  // isolate" and replaces with the sentinel. Masking must be idempotent: the
+  // debug redactor applies it centrally, so a value can arrive here twice.
+  // There is nothing to leak either way, since the userinfo is literally `***`.
+  if (parsed.username === MASKED_USERINFO && parsed.password === MASKED_USERINFO) {
     return url;
   }
 

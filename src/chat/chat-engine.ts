@@ -59,6 +59,23 @@ import { executeAbilityWithPolicy } from '../core/execute-ability-with-policy.js
 const MAX_STREAM_CONTENT_LENGTH = 1_048_576;
 
 /**
+ * Truncate to `limit` UTF-16 units without splitting a surrogate pair.
+ *
+ * A plain slice can cut between the halves of an astral character (emoji,
+ * many CJK extensions) and leave a lone surrogate, which serializes as a
+ * replacement character and can corrupt the tail of the response.
+ */
+function truncateWholeCodePoints(text: string, limit: number): string {
+  const cut = text.slice(0, limit);
+  const lastCode = cut.charCodeAt(cut.length - 1);
+  // High surrogate at the boundary means its low half was cut off.
+  if (lastCode >= 0xd800 && lastCode <= 0xdbff) {
+    return cut.slice(0, -1);
+  }
+  return cut;
+}
+
+/**
  * Chat response types
  */
 export type ChatResponse =
@@ -787,7 +804,7 @@ export class ChatEngine {
           if (content.length < MAX_STREAM_CONTENT_LENGTH) {
             content += chunk.content;
             if (content.length > MAX_STREAM_CONTENT_LENGTH) {
-              content = content.slice(0, MAX_STREAM_CONTENT_LENGTH);
+              content = truncateWholeCodePoints(content, MAX_STREAM_CONTENT_LENGTH);
             }
           }
           // Call callback for progressive display

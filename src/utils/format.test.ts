@@ -220,6 +220,15 @@ describe('maskUrlUserinfoInText', () => {
     expect(result).toContain('[URL_WITH_CREDENTIALS_REDACTED]');
   });
 
+  it('is idempotent: masking already-masked text does not collapse it', () => {
+    // The debug redactor masks centrally, so text can reach this twice. The
+    // masked form re-parses as credentialed, and re-masking it produced an
+    // identical string, which the fail-closed check read as "could not
+    // isolate" and replaced with the sentinel.
+    const once = maskUrlUserinfoInText('failed at https://u:p@host.example.com/x');
+    expect(maskUrlUserinfoInText(once)).toBe(once);
+  });
+
   it('masks several credentialed URLs in one string', () => {
     expect(
       maskUrlUserinfoInText('first https://a:b@one.example.com then https://c:d@two.example.com')
