@@ -152,15 +152,14 @@ export function maskUrlUserinfo(url: string): string {
 }
 
 /**
- * Candidate URL spans inside free text.
+ * URL spans carrying tab/CR/LF between the scheme and the rest.
  *
- * Tab/CR/LF are allowed *inside* a candidate (when followed by more non-space
- * text) because the WHATWG parser strips them before detecting credentials —
- * `https://user:sec\nret@host` carries userinfo even though a
- * whitespace-excluding pattern cannot see it. The two alternatives match
- * disjoint character sets, so matching stays linear.
+ * The WHATWG parser strips those characters before detecting credentials, so
+ * `https://user:sec\nret@host` has userinfo that a whitespace-excluding pattern
+ * cannot see. Requiring at least one of them keeps this sweep off ordinary
+ * text, which the primary pass below already handles correctly.
  */
-const URL_CANDIDATE = /[a-z][a-z0-9+.-]*:\/\/(?:[^\s]|[\t\n\r](?=[^\s]))*/gi;
+const CONTROL_BEARING_URL = /[a-z][a-z0-9+.-]*:\/\/[^\s]*(?:[\t\n\r]+[^\s]*)+/gi;
 
 /**
  * Mask userinfo in any URLs embedded within arbitrary text.
@@ -168,16 +167,32 @@ const URL_CANDIDATE = /[a-z][a-z0-9+.-]*:\/\/(?:[^\s]|[\t\n\r](?=[^\s]))*/gi;
  * SECURITY: Error messages (e.g. fetch failures) can echo a full request URL
  * including embedded credentials from a legacy profile.
  *
- * Each candidate URL is delegated to `maskUrlUserinfo`, so this shares that
- * function's fail-closed behavior: a credentialed URL the replacement cannot
- * isolate collapses to `[URL_WITH_CREDENTIALS_REDACTED]` instead of passing
- * through untouched.
+ * Two passes. The first is bounded by whitespace and `/?#`, so it stops at a
+ * closing bracket or the start of a following URL rather than swallowing them;
+ * tokenizing on whitespace alone regressed `<https://u:p@host>` and
+ * comma-adjacent URLs into passing through unmasked. The second is a
+ * fail-closed sweep for the credentials only the WHATWG parser can see.
  *
  * @param text - Text that may contain credentialed URLs
  * @returns The text with each `scheme://user:pass@` replaced by `scheme://***:***@`,
- * or the candidate replaced by `[URL_WITH_CREDENTIALS_REDACTED]` when its
- * credentials could not be isolated
+ * and any control-character-obscured credentialed URL replaced by
+ * `[URL_WITH_CREDENTIALS_REDACTED]`
  */
 export function maskUrlUserinfoInText(text: string): string {
-  return text.replace(URL_CANDIDATE, (candidate) => maskUrlUserinfo(candidate));
+  // Greedy through the LAST @ before a path/query/fragment or whitespace, so
+  // passwords containing "@" mask fully instead of leaking after the first @.
+  // Re-masking an already-masked URL is a no-op, so this stays idempotent.
+  const masked = text.replace(/([a-z][a-z0-9+.-]*:\/\/)[^\s/?#]+@/gi, '$1***:***@');
+
+  return masked.replace(CONTROL_BEARING_URL, (candidate) => {
+    try {
+      const parsed = new URL(candidate.replace(/[\t\n\r]/g, ''));
+      if (parsed.username || parsed.password) {
+        return '[URL_WITH_CREDENTIALS_REDACTED]';
+      }
+    } catch {
+      // Not a parseable URL, so there is no userinfo to hide.
+    }
+    return candidate;
+  });
 }

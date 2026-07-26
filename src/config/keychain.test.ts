@@ -16,7 +16,11 @@ vi.mock('keytar', () => ({
 }));
 
 import * as keytar from 'keytar';
-import { Keychain, canonicalDashboardIdentity } from './keychain.js';
+import {
+  Keychain,
+  canonicalDashboardIdentity,
+  assertEnvCredentialDeclaredFor,
+} from './keychain.js';
 import { AuthError } from '../utils/errors.js';
 
 describe('Keychain error normalization', () => {
@@ -331,6 +335,26 @@ describe('Keychain identity binding', () => {
       await expect(
         new Keychain().get('default', 'https://dash.example.com')
       ).rejects.toBeInstanceOf(AuthError);
+    });
+
+    it('login form allows an absent declaration but still rejects a mismatch', async () => {
+      // login names its destination with --url and has no profile yet, so the
+      // declaration is optional there; a wrong one is still refused.
+      vi.stubEnv('MAINWP_APP_PASSWORD', 'env-secret');
+
+      expect(() =>
+        assertEnvCredentialDeclaredFor('https://dash.example.com', '--url', false)
+      ).not.toThrow();
+
+      vi.stubEnv('MAINWP_DASHBOARD_URL', 'https://attacker.example.com');
+      expect(() =>
+        assertEnvCredentialDeclaredFor('https://dash.example.com', '--url', false)
+      ).toThrow(AuthError);
+
+      vi.stubEnv('MAINWP_DASHBOARD_URL', 'https://dash.example.com/');
+      expect(() =>
+        assertEnvCredentialDeclaredFor('https://dash.example.com', '--url', false)
+      ).not.toThrow();
     });
 
     it('still reads the env password for display paths with no expected URL', async () => {

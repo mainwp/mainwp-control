@@ -220,6 +220,27 @@ describe('maskUrlUserinfoInText', () => {
     expect(result).toContain('[URL_WITH_CREDENTIALS_REDACTED]');
   });
 
+  it('masks a credentialed URL wrapped in brackets or angle brackets', () => {
+    // A tokenizer that runs to the next whitespace swallows the closing
+    // delimiter, and the resulting string no longer parses as a URL, so the
+    // credential passed through untouched.
+    expect(maskUrlUserinfoInText('<https://u:p@host.example.com>')).toBe(
+      '<https://***:***@host.example.com>'
+    );
+    expect(maskUrlUserinfoInText('see [https://u:p@h.example.com] here')).toBe(
+      'see [https://***:***@h.example.com] here'
+    );
+    expect(maskUrlUserinfoInText('(https://u:p@host.example.com)')).toBe(
+      '(https://***:***@host.example.com)'
+    );
+  });
+
+  it('masks both URLs when they are adjacent with no whitespace between', () => {
+    expect(
+      maskUrlUserinfoInText('https://a:b@one.example.com,https://c:d@two.example.com')
+    ).toBe('https://***:***@one.example.com,https://***:***@two.example.com');
+  });
+
   it('is idempotent: masking already-masked text does not collapse it', () => {
     // The debug redactor masks centrally, so text can reach this twice. The
     // masked form re-parses as credentialed, and re-masking it produced an

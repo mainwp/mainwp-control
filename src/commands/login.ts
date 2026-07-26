@@ -7,7 +7,7 @@
 import { Flags } from '@oclif/core';
 import { BaseCommand, commonFlags } from '../lib/base-command.js';
 import { getProfileStore, validateDashboardUrl, type Profile } from '../config/profile-store.js';
-import { getKeychain } from '../config/keychain.js';
+import { getKeychain, assertEnvCredentialDeclaredFor } from '../config/keychain.js';
 import { createHttpClient } from '../core/http-client.js';
 import { formatSuccess, formatWarning, formatInfo } from '../output/formatter.js';
 import { AuthError, InputError } from '../utils/errors.js';
@@ -107,6 +107,19 @@ export default class Login extends BaseCommand {
     // connection test — undici otherwise fails first with an opaque
     // NetworkError and the user never sees the real reason.
     validateDashboardUrl(normalizedUrl, { rejectUserinfo: true });
+
+    // Cross-check the env credential against its declared Dashboard.
+    //
+    // login names its own destination with --url, so it does not require
+    // MAINWP_DASHBOARD_URL the way later authenticated commands do (there is no
+    // profile yet, and demanding the same URL twice would break the documented
+    // non-interactive flow). But when the operator has declared one, sending
+    // the password anywhere else is not what they asked for: in CI, where this
+    // env var is the documented credential path, the --url in a workflow file
+    // is easier to change than the secret store.
+    if (!flags.password && envPassword) {
+      assertEnvCredentialDeclaredFor(normalizedUrl, '--url', false);
+    }
 
     // Generate profile name from URL if not provided
     const profileName = flags.name ?? new URL(normalizedUrl).hostname;

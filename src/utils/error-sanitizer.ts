@@ -21,10 +21,26 @@ const PATH_PATTERNS = [
  */
 const MAX_ERROR_MESSAGE_LENGTH = 16384;
 
+/**
+ * Truncate without cutting through the middle of a token.
+ *
+ * Cutting mid-token hides credentials instead of redacting them: the patterns
+ * below need the whole `user:pass@host` construct to match, so a URL sliced
+ * before its `@` stops matching and the userinfo is emitted as plain text.
+ * Ending on a whitespace boundary guarantees every token that survives is
+ * complete. A single token longer than the limit carries no diagnostic value
+ * and is dropped entirely rather than half-emitted.
+ */
+function truncateAtTokenBoundary(text: string, limit: number): string {
+  const cut = text.slice(0, limit);
+  const lastBoundary = cut.search(/\s\S*$/);
+  return lastBoundary > 0 ? cut.slice(0, lastBoundary) : '';
+}
+
 export function sanitizeErrorMessage(message: string): string {
   let sanitized =
     message.length > MAX_ERROR_MESSAGE_LENGTH
-      ? `${message.slice(0, MAX_ERROR_MESSAGE_LENGTH)}... [truncated]`
+      ? `${truncateAtTokenBoundary(message, MAX_ERROR_MESSAGE_LENGTH)}... [truncated]`
       : message;
 
   for (const pattern of PATH_PATTERNS) {

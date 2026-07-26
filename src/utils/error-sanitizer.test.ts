@@ -97,6 +97,19 @@ describe('sanitizeErrorMessage input bounding (F11)', () => {
     expect(Date.now() - start).toBeLessThan(500);
   });
 
+  it('does not emit a credential that straddles the truncation boundary', () => {
+    // Cutting mid-URL removes the "@" the credential pattern needs, so the
+    // retained prefix stopped matching and the userinfo was emitted verbatim.
+    const url = 'https://leakeduser:leakedpassword@dash.example.com/path';
+    for (const offset of [30, 20, 10, 5]) {
+      const message = `${'x'.repeat(16384 - offset)}${url}`;
+      const result = sanitizeErrorMessage(message);
+
+      expect(result, `offset ${offset}`).not.toContain('leakeduser');
+      expect(result, `offset ${offset}`).not.toContain('leakedpass');
+    }
+  });
+
   it('truncates over-long messages with a visible marker', () => {
     const result = sanitizeErrorMessage('x'.repeat(20_000));
 

@@ -119,6 +119,58 @@ async function loadKeytar(): Promise<typeof import('keytar') | null> {
  * Profile names are user-facing selectors, not an authorization boundary
  * (AGENTS.md) — this is the boundary.
  */
+/**
+ * Refuse the env credential unless the operator declared the same Dashboard it
+ * is about to be sent to. Fails closed on a missing or unparseable declaration.
+ *
+ * @param expectedDashboardUrl - Where the credential would be sent
+ * @param destinationLabel - How to name that destination in the error
+ * @param requireDeclaration - When false, an absent MAINWP_DASHBOARD_URL is
+ * allowed and only a mismatch throws. `login` uses that form: it names its
+ * destination with `--url` and has no profile yet, so requiring the operator to
+ * repeat the URL would break the documented non-interactive flow. Every other
+ * authenticated path takes its destination from profiles.json, which an
+ * attacker may be able to write, so there the declaration is mandatory.
+ */
+export function assertEnvCredentialDeclaredFor(
+  expectedDashboardUrl: string,
+  destinationLabel: string,
+  requireDeclaration = true
+): void {
+  const declaredUrl = process.env[ENV_URL_VAR];
+
+  if (!declaredUrl) {
+    if (!requireDeclaration) {
+      return;
+    }
+    throw new AuthError(
+      `${ENV_VAR} is set but ${ENV_URL_VAR} is not, so the destination cannot be verified. Refusing to send the credential.`,
+      undefined,
+      `Set ${ENV_URL_VAR} to the Dashboard URL the credential belongs to, or run \`mainwpcontrol login\` to store it in the keychain.`
+    );
+  }
+
+  const expected = canonicalDashboardIdentity(expectedDashboardUrl);
+  let declared: string;
+  try {
+    declared = canonicalDashboardIdentity(declaredUrl);
+  } catch {
+    throw new AuthError(
+      `${ENV_URL_VAR} is not a valid URL, so the destination cannot be verified. Refusing to send the credential.`,
+      undefined,
+      `Set ${ENV_URL_VAR} to the full Dashboard URL, for example https://dashboard.example.com.`
+    );
+  }
+
+  if (declared !== expected) {
+    throw new AuthError(
+      `${ENV_VAR} is declared for ${declared}, but ${destinationLabel} points to ${expected}. Refusing to send it.`,
+      undefined,
+      `Point ${ENV_URL_VAR} at ${expected}, or target a Dashboard at ${declared}.`
+    );
+  }
+}
+
 export function canonicalDashboardIdentity(dashboardUrl: string): string {
   const parsed = new URL(dashboardUrl);
   const path = parsed.pathname.replace(/\/+$/, '');
@@ -327,48 +379,12 @@ export class Keychain {
     const envPassword = process.env[ENV_VAR];
     if (envPassword) {
       if (expectedDashboardUrl) {
-        this.assertEnvCredentialIsForProfile(expectedDashboardUrl);
+        assertEnvCredentialDeclaredFor(expectedDashboardUrl, 'the profile');
       }
       return envPassword;
     }
 
     return undefined;
-  }
-
-  /**
-   * Refuse the env credential unless the operator named the same Dashboard the
-   * profile points at. Fails closed on a missing or unparseable declaration.
-   */
-  private assertEnvCredentialIsForProfile(expectedDashboardUrl: string): void {
-    const declaredUrl = process.env[ENV_URL_VAR];
-
-    if (!declaredUrl) {
-      throw new AuthError(
-        `${ENV_VAR} is set but ${ENV_URL_VAR} is not, so the destination cannot be verified. Refusing to send the credential.`,
-        undefined,
-        `Set ${ENV_URL_VAR} to the Dashboard URL the credential belongs to, or run \`mainwpcontrol login\` to store it in the keychain.`
-      );
-    }
-
-    const expected = canonicalDashboardIdentity(expectedDashboardUrl);
-    let declared: string;
-    try {
-      declared = canonicalDashboardIdentity(declaredUrl);
-    } catch {
-      throw new AuthError(
-        `${ENV_URL_VAR} is not a valid URL, so the destination cannot be verified. Refusing to send the credential.`,
-        undefined,
-        `Set ${ENV_URL_VAR} to the full Dashboard URL, for example https://dashboard.example.com.`
-      );
-    }
-
-    if (declared !== expected) {
-      throw new AuthError(
-        `${ENV_VAR} is declared for ${declared}, but the profile points to ${expected}. Refusing to send it.`,
-        undefined,
-        `Point ${ENV_URL_VAR} at the profile's Dashboard URL, or switch to a profile for ${declared}.`
-      );
-    }
   }
 
   /**
