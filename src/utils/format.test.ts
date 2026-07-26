@@ -264,6 +264,23 @@ describe('maskUrlUserinfoInText', () => {
     expect(maskUrlUserinfoInText('file:u:p@h/x')).toBe('file:u:p@h/x');
   });
 
+  it('does not run an authority through surrounding JSON', () => {
+    // Without `"` as a terminator the authority ran from the URL through the
+    // rest of the object to the address's `@`, rewriting the span between them.
+    const body = '{"url":"https://h.test","user":"a@b"}';
+    expect(maskUrlUserinfoInText(body)).toBe(body);
+  });
+
+  it('still masks a password containing sub-delimiters', () => {
+    // `,` and `;` are legal in userinfo, so they must not end the authority.
+    expect(maskUrlUserinfoInText('https://user:pa,ss@host.example.com/x')).toBe(
+      'https://***:***@host.example.com/x'
+    );
+    expect(maskUrlUserinfoInText("https://user:pa;s's@host.example.com/x")).toBe(
+      'https://***:***@host.example.com/x'
+    );
+  });
+
   it('stays linear when many short authorities follow a distant @', () => {
     // A backward lastIndexOf for the authority's @ made this quadratic.
     const hostile = `@${' http:x/'.repeat(50_000)}`;

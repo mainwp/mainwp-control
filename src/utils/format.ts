@@ -163,11 +163,23 @@ const SPECIAL_SCHEMES = new Set(['http', 'https', 'ws', 'wss', 'ftp']);
 const MAX_SCHEME_LENGTH = 32;
 
 /**
- * Characters that end an authority. Backslash is included because the parser
- * treats it as a path separator for special schemes, so in `https://h\path@x`
- * the `@` belongs to the path and there is no userinfo to mask.
+ * Characters that end an authority.
+ *
+ * Backslash is included because the parser treats it as a path separator for
+ * special schemes, so in `https://h\path@x` the `@` belongs to the path. The
+ * rest are characters a URI cannot contain unencoded, which stops an authority
+ * from running through surrounding text: without `"`, the URL in
+ * `{"url":"https://h.test","user":"a@b"}` swallowed the JSON up to the later
+ * `@` and rewrote the whole span.
+ *
+ * Sub-delimiters (`, ; ' ( ) $ & + = ! *`) are deliberately absent: they are
+ * legal in userinfo, so ending an authority on one would cut `pa,ss@host`
+ * short of its `@` and let a real credential through.
  */
-const AUTHORITY_TERMINATORS = new Set(['/', '?', '#', ' ', '\t', '\n', '\r', '\\']);
+const AUTHORITY_TERMINATORS = new Set([
+  '/', '?', '#', ' ', '\t', '\n', '\r', '\\',
+  '"', '<', '>', '`', '{', '}', '|', '^',
+]);
 
 function isSchemeChar(code: number, first: boolean): boolean {
   const isAlpha = (code >= 97 && code <= 122) || (code >= 65 && code <= 90);
