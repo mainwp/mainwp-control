@@ -264,6 +264,21 @@ describe('maskUrlUserinfoInText', () => {
     expect(maskUrlUserinfoInText('file:u:p@h/x')).toBe('file:u:p@h/x');
   });
 
+  it('leaves an empty userinfo alone', () => {
+    // The parser reports no credentials for these, so masking would claim one
+    // had been there.
+    expect(maskUrlUserinfoInText('https://@h.example.com/x')).toBe(
+      'https://@h.example.com/x'
+    );
+    expect(maskUrlUserinfoInText('https://\t\t@h.example.com/x')).toBe(
+      'https://\t\t@h.example.com/x'
+    );
+    // A username on its own is still a credential.
+    expect(maskUrlUserinfoInText('https://alice@h.example.com/x')).toBe(
+      'https://***:***@h.example.com/x'
+    );
+  });
+
   it('does not let scheme-like text inside userinfo split the URL', () => {
     // `http:` sitting in a password looked like a new URL starting, which closed
     // the authority it actually belonged to and left part of it in the output.

@@ -248,7 +248,10 @@ export function maskUrlUserinfoInText(text: string): string {
   let lastAt = -1;
 
   const closeAuthority = (): void => {
-    if (authorityStart >= 0 && lastAt >= 0) {
+    // `lastAt > authorityStart`, not `>= 0`: an empty userinfo (`https://@host`,
+    // or one the parser emptied by dropping control characters) carries no
+    // credentials, so masking it would claim one had been there.
+    if (authorityStart >= 0 && lastAt > authorityStart) {
       // Only the userinfo is rewritten. Replacing from the scheme instead let a
       // span whose offsets had shifted swallow the prose in front of it, so
       // `PRE\nhttps://u:p@h` lost `PRE` as well as the credential.
