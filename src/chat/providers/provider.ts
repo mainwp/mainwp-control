@@ -108,6 +108,26 @@ export interface ChatOptions {
 export const MAX_TOOL_ARGUMENTS_LENGTH = 1_048_576;
 
 /**
+ * Distinct tool calls one streamed response may accumulate inside a provider.
+ *
+ * The OpenAI-compatible stream keys partial calls by index and yields nothing
+ * until the finish event, so the chat engine's own tool-call cap cannot engage
+ * while the stream is open: a hostile endpoint opens fresh indices for the
+ * whole multi-minute SSE window. The envelope accepts exactly one call, so this
+ * only has to sit above what a real parallel-tool response sends.
+ */
+export const MAX_STREAMED_TOOL_CALLS = 8;
+
+/**
+ * Aggregate tool-call argument bytes one streamed response may accumulate.
+ *
+ * The per-call cap bounds a single index; without an aggregate, N indices each
+ * just under it multiply the same memory by N. Mirrors the chat engine's
+ * aggregate cap for the response it will eventually see.
+ */
+export const MAX_TOTAL_TOOL_ARGUMENTS_LENGTH = 1_048_576;
+
+/**
  * Stream chunk for streaming responses
  */
 export interface StreamChunk {

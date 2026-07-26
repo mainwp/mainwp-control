@@ -164,9 +164,33 @@ export function maskUrlUserinfo(url: string): string {
 const URL_PARAMETER = /([?&#])([^=&#\s]{1,64})=([^&#\s]*)/g;
 
 /**
+ * Classify a URL parameter key by its decoded spelling.
+ *
+ * The raw key is what a reader sees, but not what the parameter is named:
+ * `api%5Fkey` normalizes to `api%5fkey`, matches nothing on the shared
+ * sensitive list, and the secret goes out in full. Decoding cannot hide a term
+ * the raw key already showed — it only collapses `%XX` triplets, never inserts
+ * characters between literals — so the decoded form is the stricter test on its
+ * own.
+ *
+ * An undecodable key (lone `%`, truncated escape, invalid UTF-8 sequence)
+ * counts as sensitive. Redacting a value that was not a credential costs
+ * display fidelity; failing open costs the credential.
+ */
+function isSensitiveParameterKey(key: string): boolean {
+  let decoded: string;
+  try {
+    decoded = decodeURIComponent(key);
+  } catch {
+    return true;
+  }
+  return isSensitiveKey(decoded);
+}
+
+/**
  * Mask everything credential-shaped in a URL for display: userinfo, plus the
- * value of any query or fragment parameter whose key is on the shared
- * sensitive list.
+ * value of any query or fragment parameter whose key — percent-decoded first —
+ * is on the shared sensitive list.
  *
  * SECURITY: userinfo is rejected at intake, but profiles saved before that
  * check — and before query strings were rejected — can still carry
@@ -183,8 +207,10 @@ export function maskUrlCredentials(url: string): string {
   if (masked === REDACTED_SENTINEL) {
     return masked;
   }
+  // The original key spelling is preserved in the output; only classification
+  // sees the decoded form.
   return masked.replace(URL_PARAMETER, (match, separator: string, key: string) =>
-    isSensitiveKey(key) ? `${separator}${key}=[REDACTED]` : match
+    isSensitiveParameterKey(key) ? `${separator}${key}=[REDACTED]` : match
   );
 }
 

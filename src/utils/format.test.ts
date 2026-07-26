@@ -231,6 +231,53 @@ describe('maskUrlCredentials', () => {
     const url = 'not a valid URL';
     expect(maskUrlCredentials(url)).toBe(url);
   });
+
+  // Key classification strips `-`/`_`, so encoding just the separator is enough
+  // to walk a known sensitive name past a raw-key test.
+  it('redacts a query key whose separator is percent-encoded', () => {
+    expect(maskUrlCredentials('https://dashboard.example.com/?api%5Fkey=TOPSECRET')).toBe(
+      'https://dashboard.example.com/?api%5Fkey=[REDACTED]'
+    );
+  });
+
+  it('redacts a fragment key whose separator is percent-encoded', () => {
+    expect(maskUrlCredentials('https://dashboard.example.com/#api%5Fkey=TOPSECRET')).toBe(
+      'https://dashboard.example.com/#api%5Fkey=[REDACTED]'
+    );
+  });
+
+  it('redacts a percent-encoded hyphen separator', () => {
+    expect(maskUrlCredentials('https://dashboard.example.com/?api%2Dkey=TOPSECRET')).toBe(
+      'https://dashboard.example.com/?api%2Dkey=[REDACTED]'
+    );
+  });
+
+  it('redacts a key whose sensitive term itself is percent-encoded', () => {
+    expect(maskUrlCredentials('https://dashboard.example.com/?%61ccess_token=TOPSECRET')).toBe(
+      'https://dashboard.example.com/?%61ccess_token=[REDACTED]'
+    );
+    expect(maskUrlCredentials('https://dashboard.example.com/wp#p%61ssword=TOPSECRET')).toBe(
+      'https://dashboard.example.com/wp#p%61ssword=[REDACTED]'
+    );
+  });
+
+  it('redacts encoded and plain sensitive keys in one URL and keeps the rest', () => {
+    expect(
+      maskUrlCredentials('https://dashboard.example.com/wp?page=2&api%5Fkey=a#p%61ssword=b')
+    ).toBe('https://dashboard.example.com/wp?page=2&api%5Fkey=[REDACTED]#p%61ssword=[REDACTED]');
+  });
+
+  // A key that cannot be decoded is not a key that can be cleared: fail closed
+  // rather than echo whatever it carries.
+  it('redacts an undecodable key instead of throwing', () => {
+    expect(maskUrlCredentials('https://dashboard.example.com/?api%ZZkey=TOPSECRET')).toBe(
+      'https://dashboard.example.com/?api%ZZkey=[REDACTED]'
+    );
+    // Over-redaction of a harmless-looking key is the accepted cost.
+    expect(maskUrlCredentials('https://dashboard.example.com/#page%2=2')).toBe(
+      'https://dashboard.example.com/#page%2=[REDACTED]'
+    );
+  });
 });
 
 describe('maskUrlUserinfoInText', () => {

@@ -14,7 +14,9 @@ import {
   type ProviderCapabilities,
   type StreamChunk,
   type ToolCall,
+  MAX_STREAMED_TOOL_CALLS,
   MAX_TOOL_ARGUMENTS_LENGTH,
+  MAX_TOTAL_TOOL_ARGUMENTS_LENGTH,
 } from './provider.js';
 import { readSSEStream } from './sse-reader.js';
 import {
@@ -213,11 +215,13 @@ export abstract class OpenAICompatibleProvider implements LLMProvider {
       number,
       { id: string; name: string; arguments: string }
     >();
+    let totalArgumentsLength = 0;
 
     // Set inside the try below, thrown after it: the catch there swallows
     // everything as a malformed chunk, so throwing inside would turn the cap
     // breach into a silently skipped event and let accumulation continue.
     let argumentsOverflow = false;
+    let toolCallOverflow = false;
 
     for await (const data of readSSEStream({
       url: `${this.baseUrl}/chat/completions`,
@@ -230,6 +234,11 @@ export abstract class OpenAICompatibleProvider implements LLMProvider {
         yield { done: true };
         return;
       }
+
+      // Recorded inside the try, acted on after it, for the same reason the
+      // overflow flags are: the finish event must not be turned into yields
+      // from inside a catch that swallows everything as a malformed chunk.
+      let finished = false;
 
       try {
         const chunk = JSON.parse(data) as OpenAICompatibleStreamChunk;
@@ -247,50 +256,44 @@ export abstract class OpenAICompatibleProvider implements LLMProvider {
         if (delta.tool_calls) {
           for (const tc of delta.tool_calls) {
             const existing = toolCalls.get(tc.index);
-            if (!existing) {
+            const fragment = tc.function?.arguments ?? '';
+
+            // Every budget is enforced provider-side: nothing is yielded until
+            // the finish event, so the chat engine's own count and byte caps
+            // cannot engage while a hostile endpoint keeps the stream open.
+            if (!existing && toolCalls.size >= MAX_STREAMED_TOOL_CALLS) {
+              toolCallOverflow = true;
+              break;
+            }
+            // Per call, the deltas for one index are concatenated across an
+            // unbounded number of events, which the SSE line cap does not
+            // bound; the aggregate stops N indices each just under that cap
+            // from multiplying the same memory.
+            const accumulated = existing ? existing.arguments.length : 0;
+            if (
+              accumulated + fragment.length > MAX_TOOL_ARGUMENTS_LENGTH ||
+              totalArgumentsLength + fragment.length > MAX_TOTAL_TOOL_ARGUMENTS_LENGTH
+            ) {
+              argumentsOverflow = true;
+              break;
+            }
+
+            totalArgumentsLength += fragment.length;
+            if (existing) {
+              existing.arguments += fragment;
+            } else {
               toolCalls.set(tc.index, {
                 id: tc.id ?? this.getStreamToolCallId(tc.index),
                 name: tc.function?.name ?? '',
-                arguments: tc.function?.arguments ?? '',
+                arguments: fragment,
               });
-            } else if (tc.function?.arguments) {
-              // Per call: the deltas for one index are concatenated across an
-              // unbounded number of events, which the SSE line cap does not
-              // bound.
-              if (
-                existing.arguments.length + tc.function.arguments.length >
-                MAX_TOOL_ARGUMENTS_LENGTH
-              ) {
-                argumentsOverflow = true;
-              } else {
-                existing.arguments += tc.function.arguments;
-              }
             }
           }
         }
 
         // Final chunk
         if (choice.finish_reason === 'tool_calls') {
-          for (const [, tc] of toolCalls) {
-            let args: unknown = tc.arguments;
-            try {
-              args = JSON.parse(tc.arguments) as unknown;
-            } catch {
-              // Preserve the raw accumulated string. The shared tool envelope
-              // rejects non-object arguments as a protocol error without
-              // executing the proposed call.
-            }
-            yield {
-              toolCall: {
-                id: tc.id,
-                name: tc.name,
-                arguments: args,
-              },
-              done: false,
-            };
-          }
-          yield { done: true };
-          return;
+          finished = true;
         }
       } catch {
         // Invalid JSON, skip line — a systematically malformed stream would
@@ -300,8 +303,38 @@ export abstract class OpenAICompatibleProvider implements LLMProvider {
         }
       }
 
+      // Before the finish event is honored and before anything is yielded: the
+      // delta that breaches a cap can be the one carrying finish_reason, and
+      // yielding first would hand the engine a call this provider truncated,
+      // followed by a completion marker saying the response was whole.
+      if (toolCallOverflow) {
+        throw new Error(`${this.name} tool call count limit exceeded`);
+      }
       if (argumentsOverflow) {
         throw new Error(`${this.name} tool call argument limit exceeded`);
+      }
+
+      if (finished) {
+        for (const [, tc] of toolCalls) {
+          let args: unknown = tc.arguments;
+          try {
+            args = JSON.parse(tc.arguments) as unknown;
+          } catch {
+            // Preserve the raw accumulated string. The shared tool envelope
+            // rejects non-object arguments as a protocol error without
+            // executing the proposed call.
+          }
+          yield {
+            toolCall: {
+              id: tc.id,
+              name: tc.name,
+              arguments: args,
+            },
+            done: false,
+          };
+        }
+        yield { done: true };
+        return;
       }
     }
 
