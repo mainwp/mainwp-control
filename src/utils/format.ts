@@ -191,11 +191,34 @@ function isAlphaCode(code: number): boolean {
 const PLAUSIBLE_HOST = /^[A-Za-z0-9._~%:[\]-]+$/;
 
 /**
- * Single character form of the same set, minus the brackets: those are only
- * host characters around an IPv6 literal, and treating a stray `]` as one made
- * `[https://u:p@h.t]` ask the parser about the host `h.t]`, which it rejects.
+ * True for a character that can appear in a host.
+ *
+ * The bracket characters are excluded: they belong to a host only around an
+ * IPv6 literal, which `hostEnd` handles separately, and treating a stray `]` as
+ * a host character made `[https://u:p@h.t]` ask the parser about the host
+ * `h.t]`, which it rejects outright.
+ *
+ * Anything above ASCII counts, because the parser punycodes internationalized
+ * hosts rather than rejecting them. Stopping at the first such character
+ * truncated `https://u:p@\u043f\u0440\u0438\u043c\u0435\u0440.example.com`
+ * to `https://u:p@`, which does not parse, and the credential stayed visible.
  */
-const HOST_CHAR = /[A-Za-z0-9._~%:-]/;
+function isHostChar(char: string): boolean {
+  const code = char.charCodeAt(0);
+  if (code > 127) return true;
+  const isAlpha = (code >= 97 && code <= 122) || (code >= 65 && code <= 90);
+  const isDigit = code >= 48 && code <= 57;
+  return (
+    isAlpha ||
+    isDigit ||
+    code === 46 || // .
+    code === 95 || // _
+    code === 126 || // ~
+    code === 37 || // %
+    code === 58 || // :
+    code === 45 // -
+  );
+}
 
 /**
  * True when `candidate` parses as a URL carrying a username or password, and
@@ -216,7 +239,7 @@ function hostEnd(text: string, from: number, limit: number): number {
     while (end < limit && text[end] !== ']') end++;
     if (end < limit) end++;
   }
-  while (end < limit && HOST_CHAR.test(text[end]!)) end++;
+  while (end < limit && isHostChar(text[end]!)) end++;
   return end;
 }
 

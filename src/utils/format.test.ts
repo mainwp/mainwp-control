@@ -339,6 +339,27 @@ describe('maskUrlUserinfoInText', () => {
     }
   });
 
+  it('masks credentials on an internationalized host', () => {
+    // The parser punycodes these rather than rejecting them, so stopping the
+    // host scan at the first non-ASCII character truncated the candidate to
+    // `https://u:p@`, which does not parse, and the credential survived.
+    expect(maskUrlUserinfoInText('https://u:p@пример.example.com/x')).toBe(
+      'https://***:***@пример.example.com/x'
+    );
+    expect(maskUrlUserinfoInText('https://u:p@xn--e1afmkfd.example.com/x')).toBe(
+      'https://***:***@xn--e1afmkfd.example.com/x'
+    );
+  });
+
+  it('keeps ports and IPv6 literals intact while masking', () => {
+    expect(maskUrlUserinfoInText('https://u:p@host.example.com:8443/x')).toBe(
+      'https://***:***@host.example.com:8443/x'
+    );
+    expect(maskUrlUserinfoInText('https://u:p@[2001:db8::1]:8443/x')).toBe(
+      'https://***:***@[2001:db8::1]:8443/x'
+    );
+  });
+
   it('recognises a scheme of any length', () => {
     // A bounded backward walk missed schemes longer than its limit whenever the
     // character at the boundary was a digit.
