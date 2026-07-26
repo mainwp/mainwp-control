@@ -264,6 +264,44 @@ describe('maskUrlUserinfoInText', () => {
     expect(maskUrlUserinfoInText('file:u:p@h/x')).toBe('file:u:p@h/x');
   });
 
+  it('does not let scheme-like text inside userinfo split the URL', () => {
+    // `http:` sitting in a password looked like a new URL starting, which closed
+    // the authority it actually belonged to and left part of it in the output.
+    expect(maskUrlUserinfoInText('https://u:http:p@h.example.com/x')).toBe(
+      'https://***:***@h.example.com/x'
+    );
+  });
+
+  it('requires a real // for schemes the parser does not treat as special', () => {
+    // `custom:/…` and `file:/…` are paths, so their `@` is not userinfo.
+    expect(maskUrlUserinfoInText('custom:/u:p@h.example.com/x')).toBe(
+      'custom:/u:p@h.example.com/x'
+    );
+    expect(maskUrlUserinfoInText('file:/u:p@h.example.com/x')).toBe(
+      'file:/u:p@h.example.com/x'
+    );
+    expect(maskUrlUserinfoInText('custom://u:p@h.example.com/x')).toBe(
+      'custom://***:***@h.example.com/x'
+    );
+  });
+
+  it('keeps text in front of a URL whose offsets shifted', () => {
+    // Removing the newline joined "PRE" to the scheme, and replacing from the
+    // scheme then deleted the preceding line along with the credential.
+    expect(maskUrlUserinfoInText('PRE\nhttps://u:p@h.example.com/x POST')).toBe(
+      'PRE\nhttps://***:***@h.example.com/x POST'
+    );
+  });
+
+  it('fails closed on obscured userinfo without discarding its surroundings', () => {
+    const result = maskUrlUserinfoInText('before https://u:se\ncret@h.example.com/x after');
+
+    expect(result).toContain('before ');
+    expect(result).toContain(' after');
+    expect(result).toContain('[URL_WITH_CREDENTIALS_REDACTED]');
+    expect(result).not.toContain('cret@');
+  });
+
   it('does not run an authority through surrounding JSON', () => {
     // Without `"` as a terminator the authority ran from the URL through the
     // rest of the object to the address's `@`, rewriting the span between them.

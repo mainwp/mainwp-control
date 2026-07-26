@@ -239,32 +239,26 @@ export function maskUrlUserinfoInText(text: string): string {
     sourceIndex.push(index);
   }
 
-  const spans: { start: number; end: number; obscured: boolean; prefix: string }[] = [];
+  const spans: { start: number; end: number; obscured: boolean }[] = [];
 
   // One forward pass. Authority state is carried in these, so each character is
   // visited once: a per-colon loop with a backward lastIndexOf for the `@` is
   // quadratic when many short authorities sit after a distant `@`.
-  let schemeStart = -1;
   let authorityStart = -1;
   let lastAt = -1;
 
-  const closeAuthority = (scanEnd: number): void => {
+  const closeAuthority = (): void => {
     if (authorityStart >= 0 && lastAt >= 0) {
-      // Only `scheme://userinfo@` is rewritten, leaving the host in place. A
-      // span the parser reshaped cannot be rewritten without guessing where the
-      // credential sat, so that one fails closed over the whole authority.
-      const scanStop = lastAt + 1;
-      const start = sourceIndex[schemeStart]!;
-      const stop = sourceIndex[scanStop - 1]! + 1;
-      const obscured = stop - start !== scanStop - schemeStart;
-      spans.push({
-        start,
-        end: obscured ? sourceIndex[scanEnd - 1]! + 1 : stop,
-        obscured,
-        prefix: scan.slice(schemeStart, authorityStart),
-      });
+      // Only the userinfo is rewritten. Replacing from the scheme instead let a
+      // span whose offsets had shifted swallow the prose in front of it, so
+      // `PRE\nhttps://u:p@h` lost `PRE` as well as the credential.
+      const start = sourceIndex[authorityStart]!;
+      const stop = sourceIndex[lastAt]! + 1;
+      // Characters the parser dropped sit inside this userinfo, so it cannot be
+      // rewritten in place without guessing where the credential sat.
+      const obscured = stop - start !== lastAt + 1 - authorityStart;
+      spans.push({ start, end: stop, obscured });
     }
-    schemeStart = -1;
     authorityStart = -1;
     lastAt = -1;
   };
@@ -281,11 +275,18 @@ export function maskUrlUserinfoInText(text: string): string {
         let after = index + 1;
         while (after < scan.length && (scan[after] === '/' || scan[after] === '\\')) after++;
         const scheme = scan.slice(candidate, index).toLowerCase();
-        if (after > index + 1 || SPECIAL_SCHEMES.has(scheme)) {
+        const slashes = after - (index + 1);
+        // Special schemes get an authority after any slash run, and after none
+        // at all — but only when no authority is already open, or `http:` sitting
+        // inside a password would close the URL it belongs to. Other schemes
+        // need a real `//`; `custom:/u:p@h` is a path, not an authority.
+        const opensAuthority = SPECIAL_SCHEMES.has(scheme)
+          ? slashes > 0 || authorityStart < 0
+          : slashes >= 2;
+        if (opensAuthority) {
           // A new URL begins, so whatever authority was open ends here. This is
           // what keeps `https://safe,https://u:p@h` from swallowing the second.
-          closeAuthority(candidate);
-          schemeStart = candidate;
+          closeAuthority();
           authorityStart = after;
           index = after;
           continue;
@@ -297,7 +298,7 @@ export function maskUrlUserinfoInText(text: string): string {
 
     if (authorityStart >= 0) {
       if (AUTHORITY_TERMINATORS.has(char)) {
-        closeAuthority(index);
+        closeAuthority();
         index++;
         continue;
       }
@@ -305,7 +306,7 @@ export function maskUrlUserinfoInText(text: string): string {
     }
     index++;
   }
-  closeAuthority(scan.length);
+  closeAuthority();
 
   if (spans.length === 0) {
     return text;
@@ -317,7 +318,7 @@ export function maskUrlUserinfoInText(text: string): string {
     // A fail-closed span can extend over a later one; skip what it covered.
     if (span.start < cursor) continue;
     output += text.slice(cursor, span.start);
-    output += span.obscured ? '[URL_WITH_CREDENTIALS_REDACTED]' : `${span.prefix}***:***@`;
+    output += span.obscured ? '[URL_WITH_CREDENTIALS_REDACTED]' : '***:***@';
     cursor = span.end;
   }
   return output + text.slice(cursor);
