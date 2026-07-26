@@ -12,10 +12,68 @@ import { describe, it, expect } from 'vitest';
 import {
   stripControlChars,
   sanitizeSingleLine,
+  sanitizeMultiLine,
   sanitizeForTerminal,
   safeString,
   containsEscapeSequences,
 } from './terminal-sanitizer.js';
+
+describe('stripControlChars input bounding (F6)', () => {
+  it('completes quickly on unterminated OSC sequences', () => {
+    // Each "ESC ]" is a valid start with no terminator; the old lazy body
+    // rescanned to end-of-input from every one of them (quadratic).
+    const hostile = '\x1b]'.repeat(200_000);
+    const start = Date.now();
+
+    const result = stripControlChars(hostile);
+
+    expect(Date.now() - start).toBeLessThan(500);
+    expect(result).not.toContain('\x1b');
+  });
+
+  it('completes quickly on unterminated DCS sequences', () => {
+    const hostile = '\x1bP'.repeat(200_000);
+    const start = Date.now();
+
+    stripControlChars(hostile);
+
+    expect(Date.now() - start).toBeLessThan(500);
+  });
+
+  it('still strips a well-formed OSC sequence', () => {
+    expect(stripControlChars('before\x1b]0;window title\x07after')).toBe('beforeafter');
+  });
+
+  it('still strips a well-formed DCS sequence', () => {
+    expect(stripControlChars('a\x1bPq body\x1b\\b')).toBe('ab');
+  });
+});
+
+describe('sanitizeMultiLine', () => {
+  it('preserves legitimate newlines so multi-line text still renders across lines', () => {
+    expect(sanitizeMultiLine('line one\nline two\nline three')).toBe(
+      'line one\nline two\nline three'
+    );
+  });
+
+  it('strips escape and control sequences', () => {
+    expect(sanitizeMultiLine('\x1b[2Jclean\x1b]0;title\x07 text')).toBe('clean text');
+  });
+
+  it('collapses a lone carriage return to a newline so it cannot overwrite the line', () => {
+    // A hostile \r with no following \n would otherwise return the cursor to
+    // column 0 and overwrite what was already printed on that line.
+    expect(sanitizeMultiLine('real\rfake')).toBe('real\nfake');
+  });
+
+  it('normalizes CRLF to a single newline', () => {
+    expect(sanitizeMultiLine('a\r\nb')).toBe('a\nb');
+  });
+
+  it('returns empty string for non-string input', () => {
+    expect(sanitizeMultiLine(undefined as unknown as string)).toBe('');
+  });
+});
 
 describe('sanitizeSingleLine', () => {
   it('strips terminal escapes and collapses CR, LF, and tabs to one space', () => {

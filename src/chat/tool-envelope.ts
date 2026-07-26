@@ -63,7 +63,30 @@ const JSON_PATTERNS = [
   /```\s*\n?([\s\S]*?)\n?```/,
 ];
 
-function extractFirstJsonObject(text: string): string | null {
+/**
+ * Bounds on the balanced-brace scan below.
+ *
+ * The scan restarts from every `{`, so an adversarial LLM response made of
+ * unclosed braces costs O(n²). Both bounds are far above any real tool
+ * envelope: the JSON the model is asked to emit is a few hundred bytes.
+ *
+ * - LENGTH bounds how much content is scanned. Only the scan is bounded; the
+ *   caller still returns the full content on the answer path, so a long
+ *   legitimate answer is never truncated.
+ * - STEPS bounds total inner-loop work, which keeps pathological input cheap
+ *   even when it fits inside the length bound. Exhausting the budget returns
+ *   null (no envelope found), which falls through to the caller's retry path.
+ */
+const MAX_JSON_SCAN_LENGTH = 65536;
+const MAX_JSON_SCAN_STEPS = 2_000_000;
+
+function extractFirstJsonObject(fullText: string): string | null {
+  const text =
+    fullText.length > MAX_JSON_SCAN_LENGTH
+      ? fullText.slice(0, MAX_JSON_SCAN_LENGTH)
+      : fullText;
+  let steps = 0;
+
   for (let start = 0; start < text.length; start++) {
     if (text[start] !== '{') {
       continue;
@@ -74,6 +97,9 @@ function extractFirstJsonObject(text: string): string | null {
     let escaped = false;
 
     for (let index = start; index < text.length; index++) {
+      if (++steps > MAX_JSON_SCAN_STEPS) {
+        return null;
+      }
       const character = text[index];
 
       if (inString) {

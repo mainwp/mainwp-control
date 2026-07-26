@@ -11,16 +11,32 @@ const PATH_PATTERNS = [
   /\.config\/mainwpcontrol/g,
 ];
 
+/**
+ * Longest error text scanned by the patterns below.
+ *
+ * Error strings reach here from hostile Dashboard response bodies, where the
+ * transport's byte cap (10MB) is far too coarse to keep the credential scan
+ * cheap. Any genuine error message is orders of magnitude shorter than this, so
+ * truncating first bounds the work without losing real diagnostics.
+ */
+const MAX_ERROR_MESSAGE_LENGTH = 16384;
+
 export function sanitizeErrorMessage(message: string): string {
-  let sanitized = message;
+  let sanitized =
+    message.length > MAX_ERROR_MESSAGE_LENGTH
+      ? `${message.slice(0, MAX_ERROR_MESSAGE_LENGTH)}... [truncated]`
+      : message;
 
   for (const pattern of PATH_PATTERNS) {
     sanitized = sanitized.replace(pattern, '[PATH]');
   }
 
   // Password is optional: `https://alice@host` still leaks a username.
+  // The host class excludes ":" so it cannot overlap the optional password
+  // group — an ambiguous split would make a credential-less URL backtrack
+  // quadratically before failing.
   sanitized = sanitized.replace(
-    /https?:\/\/[^\s@/]+(?::[^\s@]*)?@[^\s]+/g,
+    /https?:\/\/[^\s@/:]+(?::[^\s@]*)?@[^\s]+/g,
     '[URL_WITH_CREDENTIALS]'
   );
   sanitized = sanitized.replace(

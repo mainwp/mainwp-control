@@ -456,9 +456,12 @@ export default class DoctorCommand extends BaseCommand {
       this.log(`     ${color(sanitizeSingleLine(check.message), statusColor)}`);
 
       if (verbose && check.details) {
+        // Split on real newlines to keep multi-line details, then collapse any
+        // remaining CR/tab per line (sanitizeSingleLine) so a lone \r cannot
+        // return the cursor and overwrite the line, matching the message path above.
         const detailLines = stripControlChars(check.details).split('\n');
         for (const line of detailLines) {
-          this.log(`     ${color(line, colors.gray)}`);
+          this.log(`     ${color(sanitizeSingleLine(line), colors.gray)}`);
         }
       }
     }

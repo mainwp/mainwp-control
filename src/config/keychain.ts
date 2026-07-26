@@ -24,6 +24,15 @@ const SERVICE_NAME = 'mainwpcontrol';
 const ENV_VAR = 'MAINWP_APP_PASSWORD';
 
 /**
+ * Environment variable naming the Dashboard the env credential is for.
+ *
+ * Required alongside ENV_VAR for authenticated use: the credential is released
+ * only when this matches the profile's canonical identity, so a tampered
+ * profiles.json cannot redirect the password to another host.
+ */
+const ENV_URL_VAR = 'MAINWP_DASHBOARD_URL';
+
+/**
  * Timeout for keytar operations (ms). If macOS shows a blocking keychain
  * dialog, this prevents the CLI from hanging indefinitely.
  */
@@ -273,8 +282,14 @@ export class Keychain {
    * a hand-edited profiles.json must not redirect a stored credential to a
    * different host. Legacy (unbound) entries are refused for authenticated
    * use when an expected URL is provided; a one-time `login` re-binds them.
-   * Without an expected URL they still read, for display paths. The env var
-   * is per-invocation operator input and is not identity-checked.
+   * Without an expected URL they still read, for display paths.
+   *
+   * The MAINWP_APP_PASSWORD fallback is identity-bound the same way: for
+   * authenticated use the operator must also set MAINWP_DASHBOARD_URL, and it
+   * must canonically match the profile. Without that, a profiles.json an
+   * attacker can write (shared or committed in CI, where this env var is the
+   * documented credential path) would silently redirect the password to a host
+   * of their choosing. Display paths pass no expected URL and still read it.
    */
   async get(
     profileName: string,
@@ -311,10 +326,49 @@ export class Keychain {
     // Fallback to environment variable
     const envPassword = process.env[ENV_VAR];
     if (envPassword) {
+      if (expectedDashboardUrl) {
+        this.assertEnvCredentialIsForProfile(expectedDashboardUrl);
+      }
       return envPassword;
     }
 
     return undefined;
+  }
+
+  /**
+   * Refuse the env credential unless the operator named the same Dashboard the
+   * profile points at. Fails closed on a missing or unparseable declaration.
+   */
+  private assertEnvCredentialIsForProfile(expectedDashboardUrl: string): void {
+    const declaredUrl = process.env[ENV_URL_VAR];
+
+    if (!declaredUrl) {
+      throw new AuthError(
+        `${ENV_VAR} is set but ${ENV_URL_VAR} is not, so the destination cannot be verified. Refusing to send the credential.`,
+        undefined,
+        `Set ${ENV_URL_VAR} to the Dashboard URL the credential belongs to, or run \`mainwpcontrol login\` to store it in the keychain.`
+      );
+    }
+
+    const expected = canonicalDashboardIdentity(expectedDashboardUrl);
+    let declared: string;
+    try {
+      declared = canonicalDashboardIdentity(declaredUrl);
+    } catch {
+      throw new AuthError(
+        `${ENV_URL_VAR} is not a valid URL, so the destination cannot be verified. Refusing to send the credential.`,
+        undefined,
+        `Set ${ENV_URL_VAR} to the full Dashboard URL, for example https://dashboard.example.com.`
+      );
+    }
+
+    if (declared !== expected) {
+      throw new AuthError(
+        `${ENV_VAR} is declared for ${declared}, but the profile points to ${expected}. Refusing to send it.`,
+        undefined,
+        `Point ${ENV_URL_VAR} at the profile's Dashboard URL, or switch to a profile for ${declared}.`
+      );
+    }
   }
 
   /**

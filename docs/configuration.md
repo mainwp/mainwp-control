@@ -19,7 +19,17 @@ export MAINWP_APP_PASSWORD='xxxx xxxx xxxx xxxx xxxx xxxx'
 mainwpcontrol login --url https://dashboard.example.com --username admin
 ```
 
-When no keychain is available, the password is never written to disk; keep `MAINWP_APP_PASSWORD` set for each run. The profile file is still written and records the Dashboard URL and username, as it does in every mode. If keytar is installed but broken, set `MAINWPCONTROL_NO_KEYTAR=1` to skip loading it.
+When no keychain is available, the password is never written to disk; keep `MAINWP_APP_PASSWORD` set for each run, together with `MAINWP_DASHBOARD_URL`:
+
+```bash
+export MAINWP_APP_PASSWORD='xxxx xxxx xxxx xxxx xxxx xxxx'
+export MAINWP_DASHBOARD_URL='https://dashboard.example.com'
+mainwpcontrol abilities list
+```
+
+`login` takes the destination as `--url`, so it needs only the password. Every later command reads the credential back, and the CLI hands it over only when `MAINWP_DASHBOARD_URL` matches the profile it is about to authenticate against; otherwise the command fails instead of sending the password. That way a `profiles.json` that someone else can write cannot point your credential at their server. Keychain-stored credentials carry the same binding internally and need no extra variable. `doctor` and `config show` only display configuration, so they are unaffected.
+
+The profile file is still written and records the Dashboard URL and username, as it does in every mode. If keytar is installed but broken, set `MAINWPCONTROL_NO_KEYTAR=1` to skip loading it.
 
 ## Profiles
 
@@ -68,6 +78,7 @@ Inspect the active values with `mainwpcontrol config show`.
 | Variable | Description |
 |----------|-------------|
 | `MAINWP_APP_PASSWORD` | Application Password for non-interactive login, and for commands when no keychain is available |
+| `MAINWP_DASHBOARD_URL` | The Dashboard `MAINWP_APP_PASSWORD` belongs to. Required whenever a command authenticates using that fallback |
 | `MAINWPCONTROL_NO_KEYTAR` | Set to `1` to skip keytar (keychain) loading entirely |
 | `MAINWP_ALLOW_HTTP` | Set to `1` to allow insecure HTTP Dashboard URLs |
 

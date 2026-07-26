@@ -111,6 +111,9 @@ export class CLIInvoker {
       HOME: this.configDir.xdgHome,
       MAINWPCONTROL_NO_KEYTAR: '1',
       MAINWP_APP_PASSWORD: this.credentials.appPassword,
+      // The env credential is identity-bound: it is released only when this
+      // names the same Dashboard the profile points at.
+      MAINWP_DASHBOARD_URL: this.credentials.dashboardUrl,
     };
 
     if (new URL(this.credentials.dashboardUrl).protocol === 'http:') {

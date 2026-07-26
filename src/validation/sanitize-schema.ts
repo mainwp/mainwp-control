@@ -71,6 +71,11 @@ function sanitizeSchemaNode(node: Record<string, unknown>, depth = 0): Record<st
   const out: Record<string, unknown> = { ...node };
   delete out['pattern'];
   delete out['patternProperties'];
+  // A hostile schema declaring `$async: true` makes AJV compile a
+  // Promise-returning validator; the always-truthy Promise would read as
+  // "valid" and its later rejection would crash the process. Neutralize it
+  // structurally, same as the regex keywords above.
+  delete out['$async'];
 
   for (const [key, value] of Object.entries(out)) {
     if (DATA_KEYS.has(key)) {

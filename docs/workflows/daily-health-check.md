@@ -123,7 +123,7 @@ You will be prompted for three pieces of information:
 2. **Username:** Your WordPress admin username on the Dashboard site.
 3. **Application Password:** The password you created in Step 1. Paste it in when prompted. The spaces in the password are fine; include them or omit them, both work.
 
-After entering these, MainWP Control stores your credentials in your system's keychain when one is available (macOS Keychain, Linux secret service, or Windows Credential Manager). If the machine cannot use a keychain, keep `MAINWP_APP_PASSWORD` available in the environment for future runs.
+After entering these, MainWP Control stores your credentials in your system's keychain when one is available (macOS Keychain, Linux secret service, or Windows Credential Manager). If the machine cannot use a keychain, keep `MAINWP_APP_PASSWORD` and `MAINWP_DASHBOARD_URL` available in the environment for future runs.
 
 ### Verify authentication
 
@@ -662,10 +662,11 @@ mkdir -p ~/.config/mainwpcontrol
 nano ~/.config/mainwpcontrol/cron.env
 ```
 
-Add this line, using the Application Password from Step 1 (spaces removed):
+Add these lines, using the Application Password from Step 1 (spaces removed) and your Dashboard URL. The CLI releases the password only to the Dashboard named here, so both are required:
 
 ```bash
 export MAINWP_APP_PASSWORD='your-app-password'
+export MAINWP_DASHBOARD_URL='https://dashboard.example.com'
 ```
 
 Save the file, then restrict its permissions so only you can read it:

@@ -35,7 +35,7 @@ mainwpcontrol login --url https://dashboard.example.com --username admin
 | `--password <pw>` | Application Password; prefer `MAINWP_APP_PASSWORD` or the prompt, since flags are visible in the process list |
 | `--skip-ssl-verify` | Accept a self-signed certificate for this profile (not for production) |
 
-When no OS keychain is available, credentials are not stored on disk; keep `MAINWP_APP_PASSWORD` set for each run.
+When no OS keychain is available, credentials are not stored on disk; keep `MAINWP_APP_PASSWORD` set for each run, along with `MAINWP_DASHBOARD_URL` naming the Dashboard it belongs to. Commands that authenticate release the password only when the two match the profile they are about to contact.
 
 ## `abilities list`
 

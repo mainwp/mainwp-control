@@ -67,3 +67,40 @@ describe('BaseCommand debug-context redaction', () => {
     expect(result).toEqual({ count: 3, ok: true, note: 'short', missing: null });
   });
 });
+
+describe('BaseCommand debug-context URL credential masking', () => {
+  it('masks embedded userinfo in a dashboard URL', () => {
+    // loadProfile() debug-logs the profile URL; a legacy profile may carry
+    // user:pass@, which would otherwise land in stderr and CI logs.
+    const result = redact({ dashboardUrl: 'https://admin:s3cr3t@dashboard.example.com' });
+
+    expect(result['dashboardUrl']).toBe('https://***:***@dashboard.example.com');
+  });
+
+  it('masks credentialed URLs nested in objects and arrays', () => {
+    const result = redact({
+      config: { baseUrl: 'https://admin:s3cr3t@dashboard.example.com' },
+      urls: ['https://u:p@one.example.com'],
+    });
+
+    expect(JSON.stringify(result)).not.toContain('s3cr3t');
+    expect(JSON.stringify(result)).not.toContain('u:p@');
+  });
+
+  it('masks credentials before truncating, so a long value cannot leak them', () => {
+    // Truncation keeps the first 297 chars; masking must happen first or a
+    // credential sitting inside that prefix survives.
+    const long = `https://admin:s3cr3t@dashboard.example.com/${'a'.repeat(400)}`;
+    const result = redact({ body: long });
+
+    expect(result['body']).not.toContain('s3cr3t');
+    expect(String(result['body'])).toContain('***:***@');
+    expect(String(result['body'])).toMatch(/\.\.\.$/);
+  });
+
+  it('leaves URLs without credentials unchanged', () => {
+    const result = redact({ dashboardUrl: 'https://dashboard.example.com/wp-json' });
+
+    expect(result['dashboardUrl']).toBe('https://dashboard.example.com/wp-json');
+  });
+});

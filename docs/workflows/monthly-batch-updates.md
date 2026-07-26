@@ -104,7 +104,7 @@ MainWP Control will prompt you for three pieces of information:
 2. **Username:** Your WordPress admin username on that site.
 3. **Application Password:** The password you created in Step 1.
 
-After entering your credentials, MainWP Control stores them in a local profile so you do not need to re-enter them each time. If the machine cannot use the OS keychain, keep `MAINWP_APP_PASSWORD` available in the environment for future runs.
+After entering your credentials, MainWP Control stores them in a local profile so you do not need to re-enter them each time. If the machine cannot use the OS keychain, keep `MAINWP_APP_PASSWORD` and `MAINWP_DASHBOARD_URL` available in the environment for future runs.
 
 Verify that authentication is working:
 

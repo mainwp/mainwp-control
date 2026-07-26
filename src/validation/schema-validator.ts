@@ -68,7 +68,7 @@ export class SchemaValidator {
     const validate = this.getCompiledSchema(schema, schemaId);
     // Clone input so AJV coerceTypes/useDefaults mutates the clone, not the caller's object
     const coerced = structuredClone(input);
-    const valid = validate(coerced);
+    const valid = this.assertSyncResult(validate(coerced), schemaId);
 
     if (valid) {
       return { valid: true, coerced };
@@ -114,7 +114,30 @@ export class SchemaValidator {
     schemaId?: string
   ): boolean {
     const validate = this.getCompiledSchema(schema, schemaId);
-    return validate(structuredClone(input)) as boolean;
+    return this.assertSyncResult(validate(structuredClone(input)), schemaId);
+  }
+
+  /**
+   * Fail closed if a compiled validator returns anything other than a boolean.
+   *
+   * `sanitize-schema` strips `$async`, so a compiled validator is always
+   * synchronous in normal operation. This guard is defense in depth: should any
+   * future async keyword slip past the sanitizer, AJV would return a
+   * Promise, whose truthiness would otherwise be read as "valid" and whose
+   * rejection would crash the process. Reject it as an unusable schema instead.
+   */
+  private assertSyncResult(result: unknown, schemaId?: string): boolean {
+    if (typeof result !== 'boolean') {
+      const schemaName = schemaId ? `"${schemaId}"` : '(unnamed)';
+      throw new APIError(
+        'ABILITY_SCHEMA_INVALID',
+        `Input schema for ability ${schemaName} produced a non-boolean validation result`,
+        undefined,
+        undefined,
+        'The Dashboard served an input schema that validates asynchronously, which is not supported'
+      );
+    }
+    return result;
   }
 
   /**

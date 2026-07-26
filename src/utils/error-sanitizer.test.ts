@@ -84,3 +84,35 @@ describe('sanitizeErrorValue', () => {
     expect(sanitizeErrorValue(true)).toBe(true);
   });
 });
+
+describe('sanitizeErrorMessage input bounding (F11)', () => {
+  it('completes quickly on an adversarial credential-URL payload', () => {
+    // Repeated "http://a" gives the credentials pattern many valid start
+    // prefixes that each fail only at end-of-input: quadratic before the cap.
+    const hostile = 'http://a'.repeat(200_000); // 1.6MB
+    const start = Date.now();
+
+    sanitizeErrorMessage(hostile);
+
+    expect(Date.now() - start).toBeLessThan(500);
+  });
+
+  it('truncates over-long messages with a visible marker', () => {
+    const result = sanitizeErrorMessage('x'.repeat(20_000));
+
+    expect(result).toContain('[truncated]');
+    expect(result.length).toBeLessThan(20_000);
+  });
+
+  it('still redacts credentials in a normal-length message', () => {
+    expect(sanitizeErrorMessage('failed at https://alice:pw@host/x')).toContain(
+      '[URL_WITH_CREDENTIALS]'
+    );
+  });
+
+  it('still redacts a username-only credential URL', () => {
+    expect(sanitizeErrorMessage('failed at https://alice@host/x')).toContain(
+      '[URL_WITH_CREDENTIALS]'
+    );
+  });
+});

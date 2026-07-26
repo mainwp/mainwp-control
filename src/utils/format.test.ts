@@ -199,4 +199,30 @@ describe('maskUrlUserinfoInText', () => {
       maskUrlUserinfoInText('fetch failed: https://legacy:p@ss@dashboard.example.com/wp-json timed out')
     ).toBe('fetch failed: https://***:***@dashboard.example.com/wp-json timed out');
   });
+
+  it('fails closed on a credentialed URL only the WHATWG parser can detect', () => {
+    // new URL() strips \n before detecting credentials, so a raw string
+    // carrying one slips past a whitespace-excluding replace. Previously this
+    // returned the text untouched (fail open) and leaked the password.
+    const result = maskUrlUserinfoInText(
+      'fetch failed: https://legacy:sec\nret@dashboard.example.com/wp-json'
+    );
+
+    expect(result).not.toContain('sec\nret');
+    expect(result).not.toContain('ret@dashboard');
+    expect(result).toContain('[URL_WITH_CREDENTIALS_REDACTED]');
+  });
+
+  it('fails closed on a tab-obscured credentialed URL', () => {
+    const result = maskUrlUserinfoInText('at https://legacy:sec\tret@dashboard.example.com');
+
+    expect(result).not.toContain('sec\tret');
+    expect(result).toContain('[URL_WITH_CREDENTIALS_REDACTED]');
+  });
+
+  it('masks several credentialed URLs in one string', () => {
+    expect(
+      maskUrlUserinfoInText('first https://a:b@one.example.com then https://c:d@two.example.com')
+    ).toBe('first https://***:***@one.example.com then https://***:***@two.example.com');
+  });
 });

@@ -15,7 +15,9 @@ import { colors, color } from '../utils/colors.js';
  * Format a success message
  */
 export function formatSuccess(message: string): string {
-  return color('✓ ', colors.green) + message;
+  // Single-line: the message may interpolate untrusted values (ability names,
+  // job status), so collapse escapes and line breaks like the other terminal fields.
+  return color('✓ ', colors.green) + sanitizeSingleLine(message);
 }
 
 /**
@@ -57,14 +59,19 @@ export function formatWarning(message: string): string {
  * Format an info message
  */
 export function formatInfo(message: string): string {
-  return color('ℹ ', colors.blue) + message;
+  return color('ℹ ', colors.blue) + sanitizeSingleLine(message);
 }
 
 /**
  * Format a heading
+ *
+ * Headings render untrusted Dashboard metadata (ability category, label) on the
+ * human output path, which the JSON envelope sanitizes but the human path does
+ * not. Sanitize here so every call site is safe rather than relying on each to
+ * opt in.
  */
 export function formatHeading(text: string): string {
-  return color(text, colors.bold, colors.cyan);
+  return color(sanitizeSingleLine(text), colors.bold, colors.cyan);
 }
 
 /**
@@ -118,9 +125,12 @@ export function formatSection(title: string, rows: string[]): string {
  * Format a key-value pair
  */
 export function formatKeyValue(key: string, value: unknown): string {
-  // Sanitize both key and value (may contain untrusted API data)
+  // Sanitize both key and value (may contain untrusted API data).
+  // The value is collapsed to one row as well: safeString() strips escape
+  // sequences but deliberately preserves \r, which on its own returns the
+  // cursor to column 0 and overwrites the row that was just printed.
   const safeKey = sanitizeSingleLine(key);
-  const valueStr = safeString(value);
+  const valueStr = sanitizeSingleLine(safeString(value));
   return color(safeKey + ': ', colors.dim) + valueStr;
 }
 

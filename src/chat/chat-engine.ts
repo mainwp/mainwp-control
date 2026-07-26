@@ -50,6 +50,15 @@ import { redactSensitiveKeys } from '../utils/redaction.js';
 import { executeAbilityWithPolicy } from '../core/execute-ability-with-policy.js';
 
 /**
+ * Largest streamed response body accumulated into a single LLM response.
+ *
+ * The provider stream is unbounded on its own and the SSE window runs for
+ * minutes, so this is the size cap for the non-streaming path's equivalent.
+ * 1MB is far beyond any real tool envelope or chat answer.
+ */
+const MAX_STREAM_CONTENT_LENGTH = 1_048_576;
+
+/**
  * Chat response types
  */
 export type ChatResponse =
@@ -771,7 +780,16 @@ export class ChatEngine {
       for await (const chunk of stream) {
         // Handle content chunks
         if (chunk.content) {
-          content += chunk.content;
+          // Bound the accumulation: the SSE window is minutes long and the
+          // provider stream has no size cap of its own, so an oversized
+          // response would otherwise grow unbounded in memory and feed the
+          // downstream envelope scan. Display still streams every chunk.
+          if (content.length < MAX_STREAM_CONTENT_LENGTH) {
+            content += chunk.content;
+            if (content.length > MAX_STREAM_CONTENT_LENGTH) {
+              content = content.slice(0, MAX_STREAM_CONTENT_LENGTH);
+            }
+          }
           // Call callback for progressive display
           if (this.onStreamChunk) {
             this.onStreamChunk(chunk.content);

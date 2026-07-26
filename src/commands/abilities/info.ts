@@ -7,6 +7,7 @@
 import { Args } from '@oclif/core';
 import { BaseCommand, commonFlags } from '../../lib/base-command.js';
 import { formatHeading, formatKeyValue } from '../../output/formatter.js';
+import { sanitizeMultiLine } from '../../utils/terminal-sanitizer.js';
 import { InputError } from '../../utils/errors.js';
 
 export default class AbilitiesInfo extends BaseCommand {
@@ -55,7 +56,9 @@ export default class AbilitiesInfo extends BaseCommand {
         const lines = [
           formatHeading(ability.label || ability.name),
           '',
-          ability.description,
+          // Free-text from the Dashboard; strip escapes but keep newlines so a
+          // legitimate multi-paragraph description still renders across lines.
+          sanitizeMultiLine(ability.description),
           '',
           formatKeyValue('Name', ability.name),
           formatKeyValue('Category', ability.category),
@@ -72,7 +75,7 @@ export default class AbilitiesInfo extends BaseCommand {
           if (annotations.instructions) {
             lines.push('');
             lines.push(formatHeading('Instructions'));
-            lines.push(annotations.instructions);
+            lines.push(sanitizeMultiLine(annotations.instructions));
           }
         } else {
           lines.push('  (no annotations)');

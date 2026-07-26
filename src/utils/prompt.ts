@@ -91,25 +91,35 @@ export async function promptForPassword(question: string): Promise<string> {
     return '';
   }
 
-  const rl = readline.createInterface({
-    input: process.stdin,
-    output: process.stdout,
-  });
-
-  // Hide input
+  // No readline interface is created here. A terminal-mode interface
+  // (`output: process.stdout`) makes the terminal echo keystrokes itself, so
+  // the password could appear on screen alongside the asterisks written below.
+  // This function reads raw stdin directly and never needed one: the old
+  // interface was only ever closed, never read from.
   const stdin = process.stdin;
+  // Captured before any mode change, so the original state is what gets restored.
   const originalRawMode = stdin.isRaw;
 
   return new Promise((resolve) => {
+    // Raw mode first, then the prompt: raw mode is what suppresses the
+    // terminal's own echo, so it must be on before any keystroke can arrive.
+    if (stdin.isTTY && stdin.setRawMode) {
+      stdin.setRawMode(true);
+    }
+
     const prompt = color('? ', colors.yellow) + question + ' ';
     process.stdout.write(prompt);
 
     let input = '';
 
-    // Enable raw mode to capture individual keystrokes
-    if (stdin.isTTY && stdin.setRawMode) {
-      stdin.setRawMode(true);
-    }
+    const restoreTerminal = (): void => {
+      if (stdin.isTTY && stdin.setRawMode) {
+        stdin.setRawMode(originalRawMode ?? false);
+      }
+      stdin.removeListener('data', onData);
+      stdin.pause();
+      process.stdout.write('\n');
+    };
 
     const onData = (char: Buffer): void => {
       const c = char.toString('utf8');
@@ -118,24 +128,12 @@ export async function promptForPassword(question: string): Promise<string> {
         case '\n':
         case '\r':
         case '\u0004': // Ctrl-D
-          // Restore raw mode and cleanup
-          if (stdin.isTTY && stdin.setRawMode) {
-            stdin.setRawMode(originalRawMode ?? false);
-          }
-          stdin.removeListener('data', onData);
-          rl.close();
-          process.stdout.write('\n');
+          restoreTerminal();
           resolve(input);
           break;
 
         case '\u0003': // Ctrl-C
-          // Restore raw mode and exit
-          if (stdin.isTTY && stdin.setRawMode) {
-            stdin.setRawMode(originalRawMode ?? false);
-          }
-          stdin.removeListener('data', onData);
-          rl.close();
-          process.stdout.write('\n');
+          restoreTerminal();
           // 130 = 128 + SIGINT(2), the standard Unix convention for Ctrl-C.
           // Intentionally outside the documented 0-5 exit code contract —
           // see README's Exit Codes table for the carve-out.

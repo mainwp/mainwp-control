@@ -14,6 +14,9 @@ import {
   formatSection,
   formatStatusIcon,
   getStatusColor,
+  formatHeading,
+  formatSuccess,
+  formatInfo,
 } from './formatter.js';
 import { colors } from '../utils/colors.js';
 import { InputError } from '../utils/errors.js';
@@ -83,6 +86,40 @@ describe('single-row formatter sanitization', () => {
     expect(formatTable(['head\ner'], [['cell\r\nvalue']])).toContain('cell value');
     expect(formatList(['list\nitem'])).toContain('list item');
     expect(formatPreview('delete\nsite', [])).toContain('delete site');
+  });
+
+  it('collapses a lone carriage return in a key-value value', () => {
+    // stripControlChars preserves \r by design, so a value carrying one would
+    // return the cursor to column 0 and overwrite the row already printed.
+    const result = formatKeyValue('Category', 'EvilCategory\rOVERWRITTEN');
+
+    expect(result).not.toContain('\r');
+    expect(result).toContain('EvilCategory OVERWRITTEN');
+  });
+});
+
+describe('heading/success/info sanitization (F2/F5/F7)', () => {
+  it('strips escape sequences and collapses newlines in headings', () => {
+    // Untrusted ability category/label reaches formatHeading on the human path.
+    const malicious = '\x1b[2JCategory\r\nInjected line\x1b]0;title\x07';
+    const result = formatHeading(malicious);
+
+    expect(result).not.toContain('\x1b');
+    expect(result).not.toContain('\r');
+    expect(result).not.toContain('\n');
+    expect(result).toContain('Category Injected line');
+  });
+
+  it('strips escape sequences from success messages', () => {
+    const result = formatSuccess('\x1b[2JDone\r\nfaked');
+    expect(result).not.toContain('\x1b');
+    expect(result).toContain('Done faked');
+  });
+
+  it('strips escape sequences from info messages', () => {
+    const result = formatInfo('\x1b]0;pwn\x07Heads up\nsecond');
+    expect(result).not.toContain('\x1b');
+    expect(result).toContain('Heads up second');
   });
 });
 

@@ -140,16 +140,32 @@ export function maskUrlUserinfo(url: string): string {
 }
 
 /**
+ * Candidate URL spans inside free text.
+ *
+ * Tab/CR/LF are allowed *inside* a candidate (when followed by more non-space
+ * text) because the WHATWG parser strips them before detecting credentials —
+ * `https://user:sec\nret@host` carries userinfo even though a
+ * whitespace-excluding pattern cannot see it. The two alternatives match
+ * disjoint character sets, so matching stays linear.
+ */
+const URL_CANDIDATE = /[a-z][a-z0-9+.-]*:\/\/(?:[^\s]|[\t\n\r](?=[^\s]))*/gi;
+
+/**
  * Mask userinfo in any URLs embedded within arbitrary text.
  *
  * SECURITY: Error messages (e.g. fetch failures) can echo a full request URL
  * including embedded credentials from a legacy profile.
  *
+ * Each candidate URL is delegated to `maskUrlUserinfo`, so this shares that
+ * function's fail-closed behavior: a credentialed URL the replacement cannot
+ * isolate collapses to `[URL_WITH_CREDENTIALS_REDACTED]` instead of passing
+ * through untouched.
+ *
  * @param text - Text that may contain credentialed URLs
- * @returns The text with each `scheme://user:pass@` replaced by `scheme://***:***@`
+ * @returns The text with each `scheme://user:pass@` replaced by `scheme://***:***@`,
+ * or the candidate replaced by `[URL_WITH_CREDENTIALS_REDACTED]` when its
+ * credentials could not be isolated
  */
 export function maskUrlUserinfoInText(text: string): string {
-  // Greedy through the LAST @ before a path/query/fragment or whitespace, so
-  // passwords containing "@" mask fully instead of leaking after the first @.
-  return text.replace(/([a-z][a-z0-9+.-]*:\/\/)[^\s/?#]+@/gi, '$1***:***@');
+  return text.replace(URL_CANDIDATE, (candidate) => maskUrlUserinfo(candidate));
 }

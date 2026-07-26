@@ -167,6 +167,7 @@ Interactive use needs no configuration beyond `mainwpcontrol login`. For CI, Doc
 | Variable | Description |
 |----------|-------------|
 | `MAINWP_APP_PASSWORD` | Application Password for non-interactive login, and for commands when no OS keychain is available |
+| `MAINWP_DASHBOARD_URL` | The Dashboard `MAINWP_APP_PASSWORD` belongs to. Required whenever a command authenticates using that fallback |
 | `MAINWPCONTROL_NO_KEYTAR` | Set to `1` to skip keychain loading entirely |
 | `MAINWP_ALLOW_HTTP` | Set to `1` to allow insecure `http://` Dashboard URLs |
 
@@ -174,6 +175,22 @@ Interactive use needs no configuration beyond `mainwpcontrol login`. For CI, Doc
 export MAINWP_APP_PASSWORD='xxxx xxxx xxxx xxxx xxxx xxxx'
 mainwpcontrol login --url https://dashboard.example.com --username admin
 ```
+
+`login` names the Dashboard with `--url`, so it needs nothing further. Commands that
+authenticate later read the credential back, and the CLI releases it only when
+`MAINWP_DASHBOARD_URL` matches the profile it is about to send to:
+
+```bash
+export MAINWP_APP_PASSWORD='xxxx xxxx xxxx xxxx xxxx xxxx'
+export MAINWP_DASHBOARD_URL='https://dashboard.example.com'
+mainwpcontrol abilities list
+```
+
+Without the second variable those commands fail rather than send the password, so a
+`profiles.json` someone else can write cannot redirect it to a host of their choosing.
+Credentials in the OS keychain are bound to their Dashboard the same way and need no
+extra variable. Commands that only display configuration, like `doctor` and
+`config show`, send nothing and are unaffected.
 
 Optional defaults (JSON output, timeouts, chat provider) live in `~/.config/mainwpcontrol/settings.json`. The full list of settings, chat provider keys, and the credential storage model are in the [Configuration guide](docs/configuration.md).
 
@@ -212,6 +229,7 @@ CI runs lint, type check, tests, and build on every pull request.
 export MAINWP_API_URL=https://your-dashboard.example.com
 export MAINWP_USER=your-admin-username
 export MAINWP_APP_PASSWORD='your-application-password'
+export MAINWP_DASHBOARD_URL="$MAINWP_API_URL"
 
 npm run test:live
 ```

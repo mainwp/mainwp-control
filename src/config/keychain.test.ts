@@ -272,15 +272,74 @@ describe('Keychain identity binding', () => {
     expect(vi.mocked(keytar.setPassword)).not.toHaveBeenCalled();
   });
 
-  it('get() falls back to MAINWP_APP_PASSWORD without identity-checking the env var', async () => {
-    vi.mocked(keytar.getPassword).mockResolvedValue(null);
-    vi.stubEnv('MAINWP_APP_PASSWORD', 'env-secret');
+  describe('env-var credential identity binding', () => {
+    beforeEach(() => {
+      vi.mocked(keytar.getPassword).mockResolvedValue(null);
+    });
 
-    await expect(
-      new Keychain().get('default', 'https://dash.example.com')
-    ).resolves.toBe('env-secret');
+    afterEach(() => {
+      vi.unstubAllEnvs();
+    });
 
-    vi.unstubAllEnvs();
+    it('releases the env password when MAINWP_DASHBOARD_URL matches the profile', async () => {
+      vi.stubEnv('MAINWP_APP_PASSWORD', 'env-secret');
+      vi.stubEnv('MAINWP_DASHBOARD_URL', 'https://dash.example.com');
+
+      await expect(
+        new Keychain().get('default', 'https://dash.example.com')
+      ).resolves.toBe('env-secret');
+    });
+
+    it('matches on canonical identity, not raw string', async () => {
+      vi.stubEnv('MAINWP_APP_PASSWORD', 'env-secret');
+      vi.stubEnv('MAINWP_DASHBOARD_URL', 'https://dash.example.com/');
+
+      await expect(
+        new Keychain().get('default', 'https://dash.example.com')
+      ).resolves.toBe('env-secret');
+    });
+
+    it('refuses when MAINWP_DASHBOARD_URL is absent', async () => {
+      // A tampered profiles.json could otherwise redirect the env credential
+      // to an attacker host without the operator ever naming a destination.
+      vi.stubEnv('MAINWP_APP_PASSWORD', 'env-secret');
+
+      await expect(
+        new Keychain().get('default', 'https://dash.example.com')
+      ).rejects.toBeInstanceOf(AuthError);
+    });
+
+    it('refuses when MAINWP_DASHBOARD_URL points somewhere else', async () => {
+      vi.stubEnv('MAINWP_APP_PASSWORD', 'env-secret');
+      vi.stubEnv('MAINWP_DASHBOARD_URL', 'https://attacker.example.com');
+
+      const keychain = new Keychain();
+      await expect(
+        keychain.get('default', 'https://dash.example.com')
+      ).rejects.toBeInstanceOf(AuthError);
+      await expect(
+        keychain.get('default', 'https://dash.example.com')
+      ).rejects.toMatchObject({
+        message: expect.stringContaining('https://attacker.example.com'),
+      });
+    });
+
+    it('refuses when MAINWP_DASHBOARD_URL is not a parseable URL', async () => {
+      vi.stubEnv('MAINWP_APP_PASSWORD', 'env-secret');
+      vi.stubEnv('MAINWP_DASHBOARD_URL', 'not-a-url');
+
+      await expect(
+        new Keychain().get('default', 'https://dash.example.com')
+      ).rejects.toBeInstanceOf(AuthError);
+    });
+
+    it('still reads the env password for display paths with no expected URL', async () => {
+      // Display paths (config show, doctor) pass no expected URL and send
+      // nothing to a Dashboard, so the binding does not apply.
+      vi.stubEnv('MAINWP_APP_PASSWORD', 'env-secret');
+
+      await expect(new Keychain().get('default')).resolves.toBe('env-secret');
+    });
   });
 
   it('get() treats a "{"-prefixed non-envelope payload as a legacy raw password', async () => {

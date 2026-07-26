@@ -8,6 +8,7 @@ import { Args } from '@oclif/core';
 import { BaseCommand, commonFlags } from '../../lib/base-command.js';
 import { getProfileStore } from '../../config/profile-store.js';
 import { formatSuccess } from '../../output/formatter.js';
+import { maskUrlUserinfo } from '../../utils/format.js';
 import { ConfigError } from '../../utils/errors.js';
 
 export default class ProfileUse extends BaseCommand {
@@ -52,7 +53,9 @@ export default class ProfileUse extends BaseCommand {
     this.output(
       {
         profile: args.name,
-        url: profile.dashboardUrl,
+        // Legacy profiles may carry user:pass@ in the stored URL; every
+        // display path must mask it.
+        url: maskUrlUserinfo(profile.dashboardUrl),
         username: profile.username,
       },
       () => formatSuccess(`Switched to profile: ${args.name}`)
