@@ -426,11 +426,59 @@ describe('maskUrlUserinfoInText', () => {
     expect(maskUrlUserinfoInText(once)).toBe(once);
   });
 
-  it('adjudicates when a terminator sits exactly at the authority-span cap', () => {
-    // The oversized-authority fail-closed path must not swallow an authority
-    // whose genuine structural end lands on the window boundary.
-    const input = `https://u:p@[${'a'.repeat(1023)} tail`;
-    expect(maskUrlUserinfoInText(input)).toBe(input);
+  it('masks userinfo the parser cannot rule on, at any authority length', () => {
+    // An unterminated IPv6 host rejects every candidate extent, so the parser
+    // never gets to rule on the credential. "No verdict" is not "no
+    // credential", so this fails closed — at the window edge, past it, and at
+    // end of input, all of which previously left the userinfo in place.
+    for (const input of [
+      'https://u:p@[',
+      `https://u:p@[${'a'.repeat(1023)} tail`,
+      `https://u:p@[${'a'.repeat(1023)}`,
+      `https://u:p@[${'a'.repeat(4000)} tail`,
+    ]) {
+      const result = maskUrlUserinfoInText(input);
+      expect(result).not.toContain('u:p@');
+      expect(result.startsWith('https://***:***@')).toBe(true);
+    }
+  });
+
+  it('keeps a spaced credential whole when its run crosses the look-ahead cap', () => {
+    // The span has to cover every byte the parser read as the credential. A
+    // run-extension bounded by the look-ahead window ended the span mid-run,
+    // which both left password bytes in the output and made a second pass
+    // mask further than the first.
+    const run = 'a'.repeat(1021);
+    const once = maskUrlUserinfoInText(`https://admin:AbCD x@${run}@host/x`);
+
+    expect(once).toBe('https://***:***@host/x');
+    expect(maskUrlUserinfoInText(once)).toBe(once);
+  });
+
+  it('ends the authority at a backslash for special schemes', () => {
+    // The parser treats `\` as `/` for special schemes, so an `@` after it is
+    // in the path. Letting the scan run past it replaced the real host and
+    // part of the path along with the userinfo.
+    expect(maskUrlUserinfoInText('https://u:p@h\\path@x')).toBe('https://***:***@h\\path@x');
+  });
+
+  it('finds a scheme hidden by glue on either side', () => {
+    // Stripping a control character joins the preceding word to the scheme,
+    // and ordinary text can run straight into one. Both readings are offered
+    // to the parser; only the scanned one used to be.
+    expect(maskUrlUserinfoInText('1\nhttps://u:p@h/x')).toBe('1\nhttps://***:***@h/x');
+    expect(maskUrlUserinfoInText('PRE\nftp:/u:p@h.test/x')).toBe('PRE\nftp:/***:***@h.test/x');
+    expect(maskUrlUserinfoInText('9a1111://u:p@h.test/x')).toBe('9a1111://***:***@h.test/x');
+    expect(maskUrlUserinfoInText('/xhttps:/u:p@h.test/x')).toBe('/xhttps:/***:***@h.test/x');
+  });
+
+  it('masks a digit-first spaced password a wrapper hides from the fallback', () => {
+    // `https://u:1234` parses alone as host and port, so the look-ahead
+    // declined and the whole-value fallback could not fire through the
+    // brackets. The dotless "host" is the signal that it is really a username.
+    expect(maskUrlUserinfoInText('[https://u:1234 5678@h.test/x]')).toBe(
+      '[https://***:***@h.test/x]'
+    );
   });
 
   it('over-masks an unparseable-port URL followed by prose and an email', () => {
