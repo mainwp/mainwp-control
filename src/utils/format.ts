@@ -256,11 +256,23 @@ function hostEnd(text: string, from: number, limit: number): number {
   return end;
 }
 
+/**
+ * How many single-character steps back from the structural end are offered as
+ * extra candidates. A host made entirely of characters outside the host table
+ * defeats every table-derived extent when a wrapper follows
+ * (`<https://u:p@!>`): the conservative and trimmed extents collapse to
+ * nothing and the structural extent swallows the `>`. Wrappers are short, so
+ * a bounded backward walk covers them without unbounded parsing.
+ */
+const MAX_TRIM_STEPS = 8;
+
 function hasCredentials(scan: string, schemeStart: number, hostStart: number): boolean {
   const limit = Math.min(scan.length, hostStart + MAX_AUTHORITY_SPAN);
   const structEnd = authorityEnd(scan, hostStart, limit);
-  if (structEnd === limit && limit < scan.length) {
+  if (structEnd === limit && limit < scan.length && !AUTHORITY_TERMINATORS.has(scan[limit]!)) {
     // No structural end within the window: fail closed (see MAX_AUTHORITY_SPAN).
+    // A terminator sitting exactly at the window's edge is a genuine end and
+    // falls through to adjudication instead.
     return true;
   }
   // Three candidate extents, cheapest first. The conservative host stops at the
@@ -275,6 +287,7 @@ function hasCredentials(scan: string, schemeStart: number, hostStart: number): b
   let trimmedEnd = structEnd;
   while (trimmedEnd > hostStart && !isHostChar(scan[trimmedEnd - 1]!)) trimmedEnd--;
   const ends = [hostEnd(scan, hostStart, structEnd), trimmedEnd, structEnd];
+  for (let step = 1; step <= MAX_TRIM_STEPS; step++) ends.push(structEnd - step);
   for (let i = 0; i < ends.length; i++) {
     const end = ends[i]!;
     if (end <= hostStart || ends.indexOf(end) !== i) continue;
@@ -314,12 +327,16 @@ const MAX_LOOKAHEAD_ATS = 8;
  * followed by prose and an email and stays untouched; `https://admin:AbCD`
  * does not parse (its "port" is not a number), so the text after the space is
  * offered to the parser as userinfo continuation. Candidates stop at `/?#`
- * (raw slashes cannot sit in userinfo) and at MAX_AUTHORITY_SPAN, and the
- * SHORTEST credentialed extent wins so a bare-host URL followed by an email
- * never swallows the email. Residuals accepted and documented in
- * REVIEW_DECISIONS.md: a password whose first chunk is all digits parses as a
- * valid port and is indistinguishable from `host:port`, and a spaced password
- * that itself contains `@` masks only up to its first credentialed extent.
+ * (raw slashes cannot sit in userinfo) and at MAX_AUTHORITY_SPAN. The first
+ * credentialed `@` decides — so a bare-host credential followed by prose and
+ * an email never swallows the email — and the span then extends through the
+ * rest of that whitespace-free run exactly as the main scan's greedy-to-last-@
+ * rule would on a second pass, so the output is a fixed point. Residuals
+ * accepted and documented in REVIEW_DECISIONS.md: a password whose first
+ * chunk is all digits parses as a valid port and is indistinguishable from
+ * `host:port`, a spaced password containing `@ ` (at plus space) masks only
+ * its first credentialed extent, and a URL with an unparseable port followed
+ * by prose and an email over-masks.
  *
  * @returns The scan index of the `@` ending the spaced userinfo, or -1.
  */
@@ -331,12 +348,8 @@ function spacedUserinfoEnd(
 ): number {
   // An empty authority (`https:// admin@e.com`) offers nothing to continue.
   if (closePos <= authorityStart) return -1;
-  const token = scan.slice(schemeStart, closePos);
-  // Our own sentinel makes any token unparseable; treating what follows it as
-  // userinfo would break masking idempotency.
-  if (token.includes(REDACTED_SENTINEL)) return -1;
   try {
-    new URL(token);
+    new URL(scan.slice(schemeStart, closePos));
     return -1; // A complete URL on its own; the space really ends it.
   } catch {
     // Not a URL alone — the space may sit inside its userinfo.
@@ -348,7 +361,16 @@ function spacedUserinfoEnd(
     if (char === '/' || char === '?' || char === '#') break;
     if (char !== '@') continue;
     if (++tried > MAX_LOOKAHEAD_ATS) break;
-    if (hasCredentials(scan, schemeStart, i + 1)) return i;
+    if (hasCredentials(scan, schemeStart, i + 1)) {
+      // Greedy through the rest of this whitespace-free run: `1234@chunk@host`
+      // re-parses as one authority whose userinfo ends at the LAST @, so
+      // stopping here would make the second pass mask further than the first.
+      let end = i;
+      for (let j = i + 1; j < limit && !AUTHORITY_TERMINATORS.has(scan[j]!); j++) {
+        if (scan[j] === '@') end = j;
+      }
+      return end;
+    }
   }
   return -1;
 }
@@ -367,9 +389,10 @@ function spacedUserinfoEnd(
  * back so only the matching span is rewritten and surrounding lines survive.
  *
  * @param text - Text that may contain credentialed URLs
- * @returns The text with each URL's userinfo replaced by `***:***@`, or that
- * span replaced by `[URL_WITH_CREDENTIALS_REDACTED]` when control characters
- * obscured it and it cannot be safely rewritten
+ * @returns The text with each URL's userinfo replaced by `***:***@`. The
+ * replacement is uniform on purpose: it re-parses as ordinary userinfo, so
+ * masking is idempotent without trusting any marker string that hostile text
+ * could also contain.
  */
 export function maskUrlUserinfoInText(text: string): string {
   if (!text.includes('@')) {
@@ -386,7 +409,7 @@ export function maskUrlUserinfoInText(text: string): string {
     sourceIndex.push(index);
   }
 
-  const spans: { start: number; end: number; obscured: boolean }[] = [];
+  const spans: { start: number; end: number }[] = [];
 
   // One forward pass. Authority state is carried in these, so each character is
   // visited once: a per-colon loop with a backward lastIndexOf for the `@` is
@@ -417,10 +440,15 @@ export function maskUrlUserinfoInText(text: string): string {
       // `PRE\nhttps://u:p@h` lost `PRE` as well as the credential.
       const start = sourceIndex[authorityStart]!;
       const stop = sourceIndex[lastAt]! + 1;
-      // Characters the parser dropped sit inside this userinfo, so it cannot be
-      // rewritten in place without guessing where the credential sat.
-      const obscured = stop - start !== lastAt + 1 - authorityStart;
-      spans.push({ start, end: stop, obscured });
+      // Rewriting in place is complete even when the parser dropped characters
+      // inside this userinfo: the original span runs from the first userinfo
+      // character through the `@`, so every credential byte — dropped controls
+      // included — sits inside [start, stop). A distinct sentinel marker here
+      // needed guards to stay idempotent, and those guards keyed on a string
+      // hostile text can also contain, which suppressed masking outright.
+      // `***:***@` re-parses as ordinary userinfo, so a second pass reproduces
+      // it byte for byte with no marker trusted anywhere.
+      spans.push({ start, end: stop });
     }
     authorityStart = -1;
     schemeStart = -1;
@@ -481,8 +509,7 @@ export function maskUrlUserinfoInText(text: string): string {
         if (at >= 0) {
           const start = sourceIndex[openAuthority]!;
           const stop = sourceIndex[at]! + 1;
-          const obscured = stop - start !== at + 1 - openAuthority;
-          spans.push({ start, end: stop, obscured });
+          spans.push({ start, end: stop });
           index = at + 1;
           tokenStart = index;
           continue;
@@ -508,10 +535,7 @@ export function maskUrlUserinfoInText(text: string): string {
     // Running this only as a fallback keeps multi-URL text with the scan, which
     // masks every URL rather than just the first.
     const trimmed = text.trim();
-    // A sentinel in the value means a prior pass already masked it; the
-    // sentinel cannot leak, and offering it to the parser as userinfo made a
-    // second pass collapse the whole value (masking must be idempotent).
-    if (trimmed && !trimmed.includes(REDACTED_SENTINEL) && parsesWithCredentials(trimmed)) {
+    if (trimmed && parsesWithCredentials(trimmed)) {
       const at = text.indexOf(trimmed);
       return text.slice(0, at) + maskUrlUserinfo(trimmed) + text.slice(at + trimmed.length);
     }
@@ -521,10 +545,10 @@ export function maskUrlUserinfoInText(text: string): string {
   let output = '';
   let cursor = 0;
   for (const span of spans) {
-    // A fail-closed span can extend over a later one; skip what it covered.
+    // Defensive: never let a span reach back over text already emitted.
     if (span.start < cursor) continue;
     output += text.slice(cursor, span.start);
-    output += span.obscured ? REDACTED_SENTINEL : '***:***@';
+    output += '***:***@';
     cursor = span.end;
   }
   return output + text.slice(cursor);

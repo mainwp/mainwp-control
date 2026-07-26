@@ -200,24 +200,27 @@ describe('maskUrlUserinfoInText', () => {
     ).toBe('fetch failed: https://***:***@dashboard.example.com/wp-json timed out');
   });
 
-  it('fails closed on a credentialed URL only the WHATWG parser can detect', () => {
+  it('masks a credentialed URL only the WHATWG parser can detect', () => {
     // new URL() strips \n before detecting credentials, so a raw string
     // carrying one slips past a whitespace-excluding replace. Previously this
-    // returned the text untouched (fail open) and leaked the password.
+    // returned the text untouched (fail open) and leaked the password. The
+    // span from the first userinfo character through the @ contains every
+    // credential byte, dropped controls included, so masking in place is
+    // complete.
     const result = maskUrlUserinfoInText(
       'fetch failed: https://legacy:sec\nret@dashboard.example.com/wp-json'
     );
 
     expect(result).not.toContain('sec\nret');
     expect(result).not.toContain('ret@dashboard');
-    expect(result).toContain('[URL_WITH_CREDENTIALS_REDACTED]');
+    expect(result).toBe('fetch failed: https://***:***@dashboard.example.com/wp-json');
   });
 
-  it('fails closed on a tab-obscured credentialed URL', () => {
+  it('masks a tab-obscured credentialed URL in place', () => {
     const result = maskUrlUserinfoInText('at https://legacy:sec\tret@dashboard.example.com');
 
     expect(result).not.toContain('sec\tret');
-    expect(result).toContain('[URL_WITH_CREDENTIALS_REDACTED]');
+    expect(result).toBe('at https://***:***@dashboard.example.com');
   });
 
   it('masks a credentialed URL wrapped in brackets or angle brackets', () => {
@@ -308,13 +311,11 @@ describe('maskUrlUserinfoInText', () => {
     );
   });
 
-  it('fails closed on obscured userinfo without discarding its surroundings', () => {
+  it('masks obscured userinfo in place without discarding its surroundings', () => {
     const result = maskUrlUserinfoInText('before https://u:se\ncret@h.example.com/x after');
 
-    expect(result).toContain('before ');
-    expect(result).toContain(' after');
-    expect(result).toContain('[URL_WITH_CREDENTIALS_REDACTED]');
     expect(result).not.toContain('cret@');
+    expect(result).toBe('before https://***:***@h.example.com/x after');
   });
 
   it('over-masks rather than under-masks when a URL sits in JSON', () => {
@@ -391,11 +392,55 @@ describe('maskUrlUserinfoInText', () => {
     );
   });
 
-  it('fails closed on a wrapped, control-obscured URL with a sub-delimiter host', () => {
+  it('masks a wrapped, control-obscured URL with a sub-delimiter host', () => {
     const result = maskUrlUserinfoInText('<https://u:se\ncret@!host>');
 
     expect(result).not.toContain('cret@');
-    expect(result).toBe('<https://[URL_WITH_CREDENTIALS_REDACTED]!host>');
+    expect(result).toBe('<https://***:***@!host>');
+  });
+
+  it('masks a wrapped URL whose whole host is outside the character table', () => {
+    // The conservative and trimmed extents collapse to nothing when every
+    // host character is outside the table, and the structural extent
+    // swallowed the closing `>`; the bounded backward walk offers the extent
+    // just inside the wrapper and the parser confirms the credential.
+    expect(maskUrlUserinfoInText('<https://u:p@!>')).toBe('<https://***:***@!>');
+  });
+
+  it('does not trust its own sentinel when hostile text embeds it', () => {
+    // The look-ahead and fallback briefly keyed on the sentinel string to stay
+    // idempotent, and hostile text containing that literal suppressed masking
+    // entirely. Idempotency now comes from the uniform in-place replacement,
+    // which re-parses as ordinary userinfo, so no marker is trusted.
+    expect(
+      maskUrlUserinfoInText('https://admin:[URL_WITH_CREDENTIALS_REDACTED] secret@host/x')
+    ).toBe('https://***:***@host/x');
+  });
+
+  it('extends a spaced credential through its whitespace-free run', () => {
+    // Stopping at the first credentialed @ made the second pass mask further
+    // than the first: `***:***@chunk@host` re-parses with userinfo up to the
+    // LAST @. The look-ahead mirrors that greedy rule within the run.
+    const once = maskUrlUserinfoInText('https://admin:AbCD 1234@chunk@host/x');
+    expect(once).toBe('https://***:***@host/x');
+    expect(maskUrlUserinfoInText(once)).toBe(once);
+  });
+
+  it('adjudicates when a terminator sits exactly at the authority-span cap', () => {
+    // The oversized-authority fail-closed path must not swallow an authority
+    // whose genuine structural end lands on the window boundary.
+    const input = `https://u:p@[${'a'.repeat(1023)} tail`;
+    expect(maskUrlUserinfoInText(input)).toBe(input);
+  });
+
+  it('over-masks an unparseable-port URL followed by prose and an email', () => {
+    // Documented direction (REVIEW_DECISIONS.md): `https://host.test:bad` is
+    // byte-shape-identical to `https://admin:AbCD`, so refusing to extend it
+    // would reopen the spaced Application Password leak. A typo'd port plus a
+    // later email over-masks; a valid port (test above) never does.
+    expect(
+      maskUrlUserinfoInText('Connection to https://host.test:bad failed for admin@example.com')
+    ).toBe('Connection to https://***:***@example.com');
   });
 
   it('masks hosts the parser accepts but a character set would not', () => {
@@ -501,13 +546,15 @@ describe('maskUrlUserinfoInText', () => {
     expect(maskUrlUserinfoInText(once)).toBe(once);
   });
 
-  it('is idempotent when the first pass emitted the sentinel', () => {
-    // The whole-value fallback offered the sentinel to the parser as userinfo
-    // on the second pass and collapsed the surrounding prose; a sentinel means
-    // a prior pass already masked, and the sentinel itself cannot leak.
+  it('is idempotent for control-obscured and spaced credentials', () => {
+    // Every span is replaced with the same `***:***@`, which re-parses as
+    // ordinary userinfo, so a second pass reproduces the first byte for byte
+    // without any marker being trusted.
     for (const text of [
       'https://u:se\ncret@h contact admin@e.com',
       'https://admin:AbCD 1234@host/x https://u:se\ncret@h/x',
+      'https://admin:AbCD 1234@chunk@host/x',
+      '<https://u:se\ncret@!>',
     ]) {
       const once = maskUrlUserinfoInText(text);
       expect(maskUrlUserinfoInText(once)).toBe(once);
