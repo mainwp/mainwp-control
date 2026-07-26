@@ -184,13 +184,6 @@ function isAlphaCode(code: number): boolean {
 }
 
 /**
- * Characters a host can actually be made of. Quotes, braces and the like are
- * not forbidden host code points, so the parser will accept them, but their
- * presence means the "authority" is really surrounding text.
- */
-const PLAUSIBLE_HOST = /^[A-Za-z0-9._~%:[\]-]+$/;
-
-/**
  * True for a character that can appear in a host.
  *
  * The bracket characters are excluded: they belong to a host only around an
@@ -231,6 +224,13 @@ function isHostChar(char: string): boolean {
  * sits inside a JSON error body, so the host it produced has to be believable
  * before the match counts.
  */
+/** Where the authority starting at `from` ends: the next structural character. */
+function authorityEnd(text: string, from: number): number {
+  let end = from;
+  while (end < text.length && !AUTHORITY_TERMINATORS.has(text[end]!)) end++;
+  return end;
+}
+
 /** Where the host starting at `from` stops, bounded by `limit`. */
 function hostEnd(text: string, from: number, limit: number): number {
   let end = from;
@@ -243,11 +243,15 @@ function hostEnd(text: string, from: number, limit: number): number {
   return end;
 }
 
+function hasCredentials(scan: string, schemeStart: number, hostStart: number): boolean {
+  const ends = [hostEnd(scan, hostStart, scan.length), authorityEnd(scan, hostStart)];
+  return ends.some((end) => end > hostStart && parsesWithCredentials(scan.slice(schemeStart, end)));
+}
+
 function parsesWithCredentials(candidate: string): boolean {
   try {
     const parsed = new URL(candidate);
-    if (!parsed.username && !parsed.password) return false;
-    return PLAUSIBLE_HOST.test(parsed.host);
+    return Boolean(parsed.username || parsed.password);
   } catch {
     return false;
   }
@@ -299,19 +303,23 @@ export function maskUrlUserinfoInText(text: string): string {
   // missed schemes longer than its limit, and an unbounded one is quadratic.
   let tokenStart = 0;
 
-  const closeAuthority = (scanEnd: number): void => {
+  const closeAuthority = (): void => {
     // `lastAt > authorityStart`, not `>= 0`: an empty userinfo (`https://@host`,
     // or one the parser emptied by dropping control characters) carries no
     // credentials, so masking it would claim one had been there.
     if (
       authorityStart >= 0 &&
       lastAt > authorityStart &&
-      // Ask the parser rather than trusting the scan: it accepts characters in
-      // userinfo that no hand-written terminator set gets right. The candidate
-      // stops where the host stops, so a trailing delimiter cannot follow it in
-      // — `<https://u:p@h.t>` would otherwise ask the parser about a host of
-      // `h.t>`, which it rejects outright, and the credential would survive.
-      parsesWithCredentials(scan.slice(schemeStart, hostEnd(scan, lastAt + 1, scanEnd)))
+      // Ask the parser, not the scan, whether this is a credential. Two
+      // candidate extents are offered because neither alone is right: the
+      // conservative host stops at the first character that is definitely not
+      // one, which separates `one.t,https://…` into two URLs, while the
+      // structural end runs to the next `/?#` or space, which is what accepts
+      // the many host characters the parser allows and a character set keeps
+      // getting wrong (`!example`, `%21example`, `,example`). Either verdict is
+      // safe: only the userinfo is rewritten, so the host extent affects the
+      // decision, never the output.
+      hasCredentials(scan, schemeStart, lastAt + 1)
     ) {
       // Only the userinfo is rewritten. Replacing from the scheme instead let a
       // span whose offsets had shifted swallow the prose in front of it, so
@@ -355,7 +363,7 @@ export function maskUrlUserinfoInText(text: string): string {
         if (opensAuthority) {
           // A new URL begins, so whatever authority was open ends here. This is
           // what keeps `https://safe,https://u:p@h` from swallowing the second.
-          closeAuthority(tokenStart);
+          closeAuthority();
           schemeStart = tokenStart;
           authorityStart = after;
           index = after;
@@ -369,7 +377,7 @@ export function maskUrlUserinfoInText(text: string): string {
     }
 
     if (authorityStart >= 0 && AUTHORITY_TERMINATORS.has(char)) {
-      closeAuthority(index);
+      closeAuthority();
       index++;
       tokenStart = index;
       continue;
@@ -378,9 +386,22 @@ export function maskUrlUserinfoInText(text: string): string {
     if (!isSchemeChar(scan.charCodeAt(index))) tokenStart = index + 1;
     index++;
   }
-  closeAuthority(scan.length);
+  closeAuthority();
 
   if (spans.length === 0) {
+    // Nothing found by token. Before giving up, check whether the whole value
+    // is itself one URL: the scan has to treat a space as the end of a URL,
+    // because in free text it almost always is, but the parser percent-encodes
+    // spaces inside userinfo and a WordPress Application Password contains
+    // them. `https://admin:AbCD 1234@host` is a credential the scan cannot see,
+    // and a stored dashboardUrl reaching the debug redactor is that shape.
+    // Running this only as a fallback keeps multi-URL text with the scan, which
+    // masks every URL rather than just the first.
+    const trimmed = text.trim();
+    if (trimmed && parsesWithCredentials(trimmed)) {
+      const at = text.indexOf(trimmed);
+      return text.slice(0, at) + maskUrlUserinfo(trimmed) + text.slice(at + trimmed.length);
+    }
     return text;
   }
 

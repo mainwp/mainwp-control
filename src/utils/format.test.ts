@@ -339,6 +339,36 @@ describe('maskUrlUserinfoInText', () => {
     }
   });
 
+  it('does not leak a password containing spaces, as WordPress passwords do', () => {
+    // The scan has to treat a space as the end of a URL because in free text it
+    // almost always is, but the parser percent-encodes spaces inside userinfo,
+    // and an Application Password is exactly this shape. The whole-value
+    // fallback catches it; masking in place is not possible without guessing
+    // where the credential ended, so it fails closed to the sentinel.
+    const result = maskUrlUserinfoInText('https://admin:AbCD 1234 efGH@host.example.com/x');
+
+    expect(result).not.toContain('AbCD');
+    expect(result).toBe('[URL_WITH_CREDENTIALS_REDACTED]');
+  });
+
+  it('masks hosts the parser accepts but a character set would not', () => {
+    // Sub-delimiters and their percent-encoded forms are legal in a host, so
+    // deciding the host extent from a character table left these unmasked.
+    for (const host of ['!example', ',example', '%21example', '%2Cexample']) {
+      expect(maskUrlUserinfoInText(`https://u:p@${host}/x`)).toBe(
+        `https://***:***@${host}/x`
+      );
+    }
+  });
+
+  it('masks when a scheme-like suffix follows the host', () => {
+    // Opening the next URL closed this authority before its host, so the
+    // candidate handed to the parser had no host to validate.
+    expect(maskUrlUserinfoInText('https://a:b@onehttps://safe/x')).toBe(
+      'https://***:***@onehttps://safe/x'
+    );
+  });
+
   it('masks credentials on an internationalized host', () => {
     // The parser punycodes these rather than rejecting them, so stopping the
     // host scan at the first non-ASCII character truncated the candidate to
