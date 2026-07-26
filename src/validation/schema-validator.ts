@@ -131,8 +131,24 @@ export class SchemaValidator {
       // Adopt a thenable before throwing. An async validator's promise rejects
       // on invalid input, and with nothing attached that rejection is unhandled
       // and kills the process — the exact crash this guard exists to prevent.
-      if (typeof (result as PromiseLike<unknown> | null)?.then === 'function') {
-        void Promise.resolve(result as PromiseLike<unknown>).catch(() => undefined);
+      // The result comes from a compiled remote schema, so `then` may be a
+      // throwing getter, may throw when called, or may itself return a rejected
+      // promise; none of those may replace the schema error below.
+      try {
+        const thenable = result as { then?: unknown } | null;
+        const then = thenable?.then;
+        if (typeof then === 'function') {
+          const chained: unknown = then.call(
+            thenable,
+            () => undefined,
+            () => undefined
+          );
+          if (typeof (chained as PromiseLike<unknown> | null)?.then === 'function') {
+            void Promise.resolve(chained as PromiseLike<unknown>).catch(() => undefined);
+          }
+        }
+      } catch {
+        // Containing the rejection is best effort; the schema error is what matters.
       }
       const schemaName = schemaId ? `"${schemaId}"` : '(unnamed)';
       throw new APIError(

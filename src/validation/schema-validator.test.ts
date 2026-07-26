@@ -208,6 +208,38 @@ describe('SchemaValidator', () => {
       expect(thrown).toMatchObject({ code: 'ABILITY_SCHEMA_INVALID' });
     });
 
+    it('contains hostile thenables without letting them replace the schema error', async () => {
+      // A compiled remote schema can return anything. A throwing `then` getter
+      // must not escape in place of APIError, and a `then` that hands back a
+      // rejected promise must not become an unhandled rejection.
+      const throwingGetter = Object.defineProperty({}, 'then', {
+        get() {
+          throw new Error('hostile getter');
+        },
+      });
+      const rejectingThen = {
+        then() {
+          return Promise.reject(new Error('hostile rejection'));
+        },
+      };
+
+      for (const hostile of [throwingGetter, rejectingThen]) {
+        const validator2 = new SchemaValidator();
+        vi.spyOn(
+          (validator2 as unknown as { ajv: { compile: unknown } }).ajv,
+          'compile'
+        ).mockReturnValue(Object.assign(() => hostile, { errors: null }));
+
+        expect(() => validator2.validate({}, { type: 'object' }, 'mainwp/hostile-v1')).toThrow(
+          APIError
+        );
+        vi.restoreAllMocks();
+      }
+
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      expect(unhandled).toEqual([]);
+    });
+
     it('isValid also fails closed on a non-boolean validation result', () => {
       const asyncValidator = Object.assign(() => Promise.resolve(true), { errors: null });
       vi.spyOn(

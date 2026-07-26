@@ -153,15 +153,21 @@ export function maskUrlUserinfo(url: string): string {
 
 /**
  * Schemes the WHATWG parser gives an authority even without `//`, so
- * `https:user:pass@host` carries real userinfo.
+ * `https:user:pass@host` carries real userinfo. `file:` is excluded on purpose:
+ * it takes no credentials, and treating it as special rewrote `file:u:p@h/x`,
+ * which is a local path.
  */
-const SPECIAL_SCHEMES = new Set(['http', 'https', 'ws', 'wss', 'ftp', 'file']);
+const SPECIAL_SCHEMES = new Set(['http', 'https', 'ws', 'wss', 'ftp']);
 
 /** Longest scheme this scanner will look back for. */
 const MAX_SCHEME_LENGTH = 32;
 
-/** Characters that end an authority. */
-const AUTHORITY_TERMINATORS = new Set(['/', '?', '#', ' ', '\t', '\n', '\r']);
+/**
+ * Characters that end an authority. Backslash is included because the parser
+ * treats it as a path separator for special schemes, so in `https://h\path@x`
+ * the `@` belongs to the path and there is no userinfo to mask.
+ */
+const AUTHORITY_TERMINATORS = new Set(['/', '?', '#', ' ', '\t', '\n', '\r', '\\']);
 
 function isSchemeChar(code: number, first: boolean): boolean {
   const isAlpha = (code >= 97 && code <= 122) || (code >= 65 && code <= 90);
@@ -222,54 +228,72 @@ export function maskUrlUserinfoInText(text: string): string {
   }
 
   const spans: { start: number; end: number; obscured: boolean; prefix: string }[] = [];
-  let colon = scan.indexOf(':');
 
-  while (colon !== -1) {
-    const schemeStart = findSchemeStart(scan, colon);
-    if (schemeStart === -1) {
-      colon = scan.indexOf(':', colon + 1);
+  // One forward pass. Authority state is carried in these, so each character is
+  // visited once: a per-colon loop with a backward lastIndexOf for the `@` is
+  // quadratic when many short authorities sit after a distant `@`.
+  let schemeStart = -1;
+  let authorityStart = -1;
+  let lastAt = -1;
+
+  const closeAuthority = (scanEnd: number): void => {
+    if (authorityStart >= 0 && lastAt >= 0) {
+      // Only `scheme://userinfo@` is rewritten, leaving the host in place. A
+      // span the parser reshaped cannot be rewritten without guessing where the
+      // credential sat, so that one fails closed over the whole authority.
+      const scanStop = lastAt + 1;
+      const start = sourceIndex[schemeStart]!;
+      const stop = sourceIndex[scanStop - 1]! + 1;
+      const obscured = stop - start !== scanStop - schemeStart;
+      spans.push({
+        start,
+        end: obscured ? sourceIndex[scanEnd - 1]! + 1 : stop,
+        obscured,
+        prefix: scan.slice(schemeStart, authorityStart),
+      });
+    }
+    schemeStart = -1;
+    authorityStart = -1;
+    lastAt = -1;
+  };
+
+  let index = 0;
+  while (index < scan.length) {
+    const char = scan[index]!;
+
+    if (char === ':') {
+      const candidate = findSchemeStart(scan, index);
+      if (candidate !== -1) {
+        // The parser tolerates any run of slashes or backslashes here, so
+        // `https:/u:p@h` and `https:///u:p@h` are authorities too.
+        let after = index + 1;
+        while (after < scan.length && (scan[after] === '/' || scan[after] === '\\')) after++;
+        const scheme = scan.slice(candidate, index).toLowerCase();
+        if (after > index + 1 || SPECIAL_SCHEMES.has(scheme)) {
+          // A new URL begins, so whatever authority was open ends here. This is
+          // what keeps `https://safe,https://u:p@h` from swallowing the second.
+          closeAuthority(candidate);
+          schemeStart = candidate;
+          authorityStart = after;
+          index = after;
+          continue;
+        }
+      }
+      index++;
       continue;
     }
 
-    const scheme = scan.slice(schemeStart, colon).toLowerCase();
-    let authorityStart = colon + 1;
-    if (scan.startsWith('//', authorityStart)) {
-      authorityStart += 2;
-    } else if (!SPECIAL_SCHEMES.has(scheme)) {
-      // `mailto:user@host` and friends have no authority, so the `@` is data.
-      colon = scan.indexOf(':', colon + 1);
-      continue;
+    if (authorityStart >= 0) {
+      if (AUTHORITY_TERMINATORS.has(char)) {
+        closeAuthority(index);
+        index++;
+        continue;
+      }
+      if (char === '@') lastAt = index;
     }
-
-    let end = authorityStart;
-    while (end < scan.length && !AUTHORITY_TERMINATORS.has(scan[end]!)) end++;
-
-    // Greedy to the LAST `@` in the authority, so a password containing `@`
-    // masks completely. Resuming just past it (rather than past the whole
-    // authority) is what lets a second URL sharing this run still be found,
-    // while still visiting each character a bounded number of times.
-    const lastAt = scan.lastIndexOf('@', end - 1);
-    if (lastAt < authorityStart) {
-      colon = scan.indexOf(':', Math.max(end, colon + 1));
-      continue;
-    }
-    colon = scan.indexOf(':', lastAt + 1);
-
-    // Normally only `scheme://userinfo@` is rewritten, leaving the host in
-    // place. A span the parser reshaped cannot be rewritten in place without
-    // guessing where the credential sat, so that one fails closed over the
-    // whole authority.
-    const scanStop = lastAt + 1;
-    const start = sourceIndex[schemeStart]!;
-    const stop = sourceIndex[scanStop - 1]! + 1;
-    const obscured = stop - start !== scanStop - schemeStart;
-    spans.push({
-      start,
-      end: obscured ? sourceIndex[end - 1]! + 1 : stop,
-      obscured,
-      prefix: scan.slice(schemeStart, authorityStart),
-    });
+    index++;
   }
+  closeAuthority(scan.length);
 
   if (spans.length === 0) {
     return text;

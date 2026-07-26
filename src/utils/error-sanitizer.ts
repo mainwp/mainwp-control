@@ -22,6 +22,16 @@ const PATH_PATTERNS = [
 const MAX_ERROR_MESSAGE_LENGTH = 16384;
 
 /**
+ * Whitespace that may end a retained token, excluding tab/CR/LF.
+ *
+ * Those three are not boundaries here: the URL parser discards them, so
+ * `https://user:secret\n...@host` is a single credential to it even though it
+ * looks like two tokens. Cutting on the newline would keep
+ * `https://user:secret`, which the credential pattern can no longer recognize.
+ */
+const SAFE_BOUNDARY = /[^\S\t\n\r]/;
+
+/**
  * Truncate without cutting through the middle of a token.
  *
  * Cutting mid-token hides credentials instead of redacting them: the patterns
@@ -37,9 +47,15 @@ function truncateAtTokenBoundary(text: string, limit: number): string {
   // `https://user:secret\n...@host` is one credential to the parser even though
   // it looks like two tokens here. Cutting on the newline would keep
   // `https://user:secret`, which the pattern below can no longer recognize.
-  // [^\S\t\n\r] is "whitespace, excluding tab/CR/LF".
-  const lastBoundary = cut.search(/[^\S\t\n\r]\S*$/);
-  return lastBoundary > 0 ? cut.slice(0, lastBoundary) : '';
+  // Scan back for the last usable boundary directly. A trailing-anchored
+  // pattern cannot cross tabs or newlines that appear after it, so a message
+  // ending in a long run of them discarded an otherwise fine prefix.
+  for (let index = cut.length - 1; index >= 0; index--) {
+    if (SAFE_BOUNDARY.test(cut[index]!)) {
+      return cut.slice(0, index);
+    }
+  }
+  return '';
 }
 
 export function sanitizeErrorMessage(message: string): string {

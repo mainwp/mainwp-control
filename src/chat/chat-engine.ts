@@ -794,6 +794,7 @@ export class ChatEngine {
     const toolCalls: ToolCall[] = [];
     // A response we cut short must not be reported as a complete answer.
     let contentTruncated = false;
+    let capReached = false;
 
     try {
       for await (const chunk of stream) {
@@ -803,14 +804,18 @@ export class ChatEngine {
           // provider stream has no size cap of its own, so an oversized
           // response would otherwise grow unbounded in memory and feed the
           // downstream envelope scan. Display still streams every chunk.
-          if (content.length >= MAX_STREAM_CONTENT_LENGTH) {
-            // Already full; this chunk is being dropped.
+          if (capReached) {
+            // Full already; this chunk is dropped. Tracked separately from
+            // content.length because trimming an orphaned high surrogate puts
+            // the length back under the cap, and testing the length alone would
+            // then admit the next chunk, appending its unpaired low half.
             contentTruncated = true;
           } else {
             const combined = content + chunk.content;
             // >= not >: a surrogate pair split across chunks can land exactly on
             // the cap, and a `>` test would never trim the orphaned half.
             if (combined.length >= MAX_STREAM_CONTENT_LENGTH) {
+              capReached = true;
               content = truncateWholeCodePoints(combined, MAX_STREAM_CONTENT_LENGTH);
               if (combined.length > content.length) {
                 contentTruncated = true;

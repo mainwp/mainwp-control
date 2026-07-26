@@ -110,6 +110,15 @@ describe('sanitizeErrorMessage input bounding (F11)', () => {
     }
   });
 
+  it('keeps a usable prefix when the tail is a long run of tabs', () => {
+    // A trailing-anchored search cannot cross the tabs that follow the space,
+    // so it found no boundary and discarded the whole message.
+    const result = sanitizeErrorMessage(`useful context ${'\t'.repeat(17_000)}tail`);
+
+    expect(result).toContain('useful context');
+    expect(result).toContain('[truncated]');
+  });
+
   it('truncates over-long messages with a visible marker', () => {
     const result = sanitizeErrorMessage('x'.repeat(20_000));
 

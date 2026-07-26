@@ -235,6 +235,45 @@ describe('maskUrlUserinfoInText', () => {
     );
   });
 
+  it('masks special-scheme URLs with an irregular slash run', () => {
+    // The parser tolerates any number of slashes after a special scheme, so
+    // these all carry real userinfo.
+    expect(maskUrlUserinfoInText('https:/u:p@h.example.com/x')).toBe(
+      'https:/***:***@h.example.com/x'
+    );
+    expect(maskUrlUserinfoInText('https:///u:p@h.example.com/x')).toBe(
+      'https:///***:***@h.example.com/x'
+    );
+  });
+
+  it('does not let a credential-free URL hide the next one', () => {
+    // The first authority runs through ",https:" to the slash. Resuming the
+    // scan past it skipped the second URL's scheme entirely.
+    expect(maskUrlUserinfoInText('https://safe,https://u:p@h.example.com/x')).toBe(
+      'https://safe,https://***:***@h.example.com/x'
+    );
+  });
+
+  it('leaves an @ that belongs to a path rather than an authority', () => {
+    // A backslash ends the authority for special schemes, so the @ here is in
+    // the path and there is no userinfo to mask.
+    expect(maskUrlUserinfoInText(String.raw`https://h\path@x`)).toBe(
+      String.raw`https://h\path@x`
+    );
+    // file: takes no credentials; this is a local path.
+    expect(maskUrlUserinfoInText('file:u:p@h/x')).toBe('file:u:p@h/x');
+  });
+
+  it('stays linear when many short authorities follow a distant @', () => {
+    // A backward lastIndexOf for the authority's @ made this quadratic.
+    const hostile = `@${' http:x/'.repeat(50_000)}`;
+    const start = Date.now();
+
+    maskUrlUserinfoInText(hostile);
+
+    expect(Date.now() - start).toBeLessThan(500);
+  });
+
   it('masks both URLs when they are adjacent with no whitespace between', () => {
     expect(
       maskUrlUserinfoInText('https://a:b@one.example.com,https://c:d@two.example.com')
