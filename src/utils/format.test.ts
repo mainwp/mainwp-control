@@ -317,11 +317,40 @@ describe('maskUrlUserinfoInText', () => {
     expect(result).not.toContain('cret@');
   });
 
-  it('does not run an authority through surrounding JSON', () => {
-    // Without `"` as a terminator the authority ran from the URL through the
-    // rest of the object to the address's `@`, rewriting the span between them.
-    const body = '{"url":"https://h.test","user":"a@b"}';
-    expect(maskUrlUserinfoInText(body)).toBe(body);
+  it('over-masks rather than under-masks when a URL sits in JSON', () => {
+    // The parser reads `h.test","user":"a` as userinfo and `b` as the host
+    // here, and that is textually identical to a password containing a quote
+    // (`https://user:pa"ss@host`), which is a real credential. There is no way
+    // to tell them apart, so this errs toward masking: a mangled error body
+    // costs diagnostics, the other direction costs a credential.
+    const result = maskUrlUserinfoInText('{"url":"https://h.test","user":"a@b"}');
+
+    expect(result).toContain('***:***@');
+    expect(result).not.toContain('"user":"a@');
+  });
+
+  it('masks a password containing characters the parser percent-encodes', () => {
+    // These are legal in userinfo (the parser encodes them), so treating them
+    // as authority terminators walked straight past the `@` and leaked.
+    for (const char of ['"', '<', '>', '`', '{', '}', '|', '^']) {
+      expect(maskUrlUserinfoInText(`https://user:pa${char}ss@host.example.com/x`)).toBe(
+        'https://***:***@host.example.com/x'
+      );
+    }
+  });
+
+  it('recognises a scheme of any length', () => {
+    // A bounded backward walk missed schemes longer than its limit whenever the
+    // character at the boundary was a digit.
+    expect(maskUrlUserinfoInText(`a${'1'.repeat(40)}://u:p@h.example.com/x`)).toBe(
+      `a${'1'.repeat(40)}://***:***@h.example.com/x`
+    );
+  });
+
+  it('treats backslashes as slashes only for special schemes', () => {
+    expect(maskUrlUserinfoInText('custom:\\\\u:p@h.example.com/x')).toBe(
+      'custom:\\\\u:p@h.example.com/x'
+    );
   });
 
   it('still masks a password containing sub-delimiters', () => {

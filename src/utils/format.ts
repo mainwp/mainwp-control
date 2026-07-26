@@ -159,51 +159,75 @@ export function maskUrlUserinfo(url: string): string {
  */
 const SPECIAL_SCHEMES = new Set(['http', 'https', 'ws', 'wss', 'ftp']);
 
-/** Longest scheme this scanner will look back for. */
-const MAX_SCHEME_LENGTH = 32;
-
 /**
- * Characters that end an authority.
+ * Characters that end an authority: only those the parser itself treats as
+ * structural.
  *
- * Backslash is included because the parser treats it as a path separator for
- * special schemes, so in `https://h\path@x` the `@` belongs to the path. The
- * rest are characters a URI cannot contain unencoded, which stops an authority
- * from running through surrounding text: without `"`, the URL in
- * `{"url":"https://h.test","user":"a@b"}` swallowed the JSON up to the later
- * `@` and rewrote the whole span.
- *
- * Sub-delimiters (`, ; ' ( ) $ & + = ! *`) are deliberately absent: they are
- * legal in userinfo, so ending an authority on one would cut `pa,ss@host`
- * short of its `@` and let a real credential through.
+ * Nothing else belongs here. `" < > ` { } | ^` were briefly included on the
+ * grounds that RFC 3986 forbids them, which is true but irrelevant: the WHATWG
+ * parser percent-encodes them inside userinfo rather than rejecting, so
+ * `https://user:pa"ss@host` really does carry a password and ending the
+ * authority at the quote walked straight past its `@`. Sub-delimiters are out
+ * for the same reason. Deciding what is credentialed is left to the parser
+ * below; this set only finds candidates.
  */
-const AUTHORITY_TERMINATORS = new Set([
-  '/', '?', '#', ' ', '\t', '\n', '\r', '\\',
-  '"', '<', '>', '`', '{', '}', '|', '^',
-]);
+const AUTHORITY_TERMINATORS = new Set(['/', '?', '#', ' ', '\t', '\n', '\r']);
 
-function isSchemeChar(code: number, first: boolean): boolean {
+function isSchemeChar(code: number): boolean {
   const isAlpha = (code >= 97 && code <= 122) || (code >= 65 && code <= 90);
-  if (first) return isAlpha;
   const isDigit = code >= 48 && code <= 57;
   return isAlpha || isDigit || code === 43 || code === 46 || code === 45; // + . -
 }
 
+function isAlphaCode(code: number): boolean {
+  return (code >= 97 && code <= 122) || (code >= 65 && code <= 90);
+}
+
 /**
- * Walk back from a colon over scheme characters. Returns where the scheme
- * starts, or -1 if what precedes the colon is not one. Bounded by
- * MAX_SCHEME_LENGTH so this stays linear over the whole string: an unanchored
- * `[a-z][a-z0-9+.-]*:` regex rescans long letter runs from every position and
- * measures quadratic.
+ * Characters a host can actually be made of. Quotes, braces and the like are
+ * not forbidden host code points, so the parser will accept them, but their
+ * presence means the "authority" is really surrounding text.
  */
-function findSchemeStart(text: string, colon: number): number {
-  const floor = Math.max(0, colon - MAX_SCHEME_LENGTH);
-  let index = colon - 1;
-  while (index >= floor && isSchemeChar(text.charCodeAt(index), false)) {
-    index--;
+const PLAUSIBLE_HOST = /^[A-Za-z0-9._~%:[\]-]+$/;
+
+/**
+ * Single character form of the same set, minus the brackets: those are only
+ * host characters around an IPv6 literal, and treating a stray `]` as one made
+ * `[https://u:p@h.t]` ask the parser about the host `h.t]`, which it rejects.
+ */
+const HOST_CHAR = /[A-Za-z0-9._~%:-]/;
+
+/**
+ * True when `candidate` parses as a URL carrying a username or password, and
+ * what it parsed as the host could be one.
+ *
+ * The parser decides whether userinfo is present, because no character table
+ * gets that right: it percent-encodes `"` inside userinfo, so
+ * `https://user:pa"ss@host` really does carry a password. But it is equally
+ * happy to read `h.test","user":"a` as userinfo and `b"}` as the host when a URL
+ * sits inside a JSON error body, so the host it produced has to be believable
+ * before the match counts.
+ */
+/** Where the host starting at `from` stops, bounded by `limit`. */
+function hostEnd(text: string, from: number, limit: number): number {
+  let end = from;
+  // An IPv6 literal is the one place brackets belong; take the whole `[...]`.
+  if (text[end] === '[') {
+    while (end < limit && text[end] !== ']') end++;
+    if (end < limit) end++;
   }
-  const start = index + 1;
-  if (start >= colon) return -1;
-  return isSchemeChar(text.charCodeAt(start), true) ? start : -1;
+  while (end < limit && HOST_CHAR.test(text[end]!)) end++;
+  return end;
+}
+
+function parsesWithCredentials(candidate: string): boolean {
+  try {
+    const parsed = new URL(candidate);
+    if (!parsed.username && !parsed.password) return false;
+    return PLAUSIBLE_HOST.test(parsed.host);
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -245,13 +269,27 @@ export function maskUrlUserinfoInText(text: string): string {
   // visited once: a per-colon loop with a backward lastIndexOf for the `@` is
   // quadratic when many short authorities sit after a distant `@`.
   let authorityStart = -1;
+  let schemeStart = -1;
   let lastAt = -1;
+  // Start of the current run of scheme-legal characters, maintained forward so
+  // a scheme of any length is recognised in O(1); a bounded backward walk
+  // missed schemes longer than its limit, and an unbounded one is quadratic.
+  let tokenStart = 0;
 
-  const closeAuthority = (): void => {
+  const closeAuthority = (scanEnd: number): void => {
     // `lastAt > authorityStart`, not `>= 0`: an empty userinfo (`https://@host`,
     // or one the parser emptied by dropping control characters) carries no
     // credentials, so masking it would claim one had been there.
-    if (authorityStart >= 0 && lastAt > authorityStart) {
+    if (
+      authorityStart >= 0 &&
+      lastAt > authorityStart &&
+      // Ask the parser rather than trusting the scan: it accepts characters in
+      // userinfo that no hand-written terminator set gets right. The candidate
+      // stops where the host stops, so a trailing delimiter cannot follow it in
+      // — `<https://u:p@h.t>` would otherwise ask the parser about a host of
+      // `h.t>`, which it rejects outright, and the credential would survive.
+      parsesWithCredentials(scan.slice(schemeStart, hostEnd(scan, lastAt + 1, scanEnd)))
+    ) {
       // Only the userinfo is rewritten. Replacing from the scheme instead let a
       // span whose offsets had shifted swallow the prose in front of it, so
       // `PRE\nhttps://u:p@h` lost `PRE` as well as the credential.
@@ -263,6 +301,7 @@ export function maskUrlUserinfoInText(text: string): string {
       spans.push({ start, end: stop, obscured });
     }
     authorityStart = -1;
+    schemeStart = -1;
     lastAt = -1;
   };
 
@@ -271,45 +310,52 @@ export function maskUrlUserinfoInText(text: string): string {
     const char = scan[index]!;
 
     if (char === ':') {
-      const candidate = findSchemeStart(scan, index);
-      if (candidate !== -1) {
-        // The parser tolerates any run of slashes or backslashes here, so
-        // `https:/u:p@h` and `https:///u:p@h` are authorities too.
+      const isScheme = tokenStart < index && isAlphaCode(scan.charCodeAt(tokenStart));
+      if (isScheme) {
+        const scheme = scan.slice(tokenStart, index).toLowerCase();
+        const special = SPECIAL_SCHEMES.has(scheme);
+        // A special scheme treats backslashes as slashes; others do not, so
+        // `custom:\\u:p@h` is a path and carries no userinfo.
         let after = index + 1;
-        while (after < scan.length && (scan[after] === '/' || scan[after] === '\\')) after++;
-        const scheme = scan.slice(candidate, index).toLowerCase();
+        while (
+          after < scan.length &&
+          (scan[after] === '/' || (special && scan[after] === '\\'))
+        ) {
+          after++;
+        }
         const slashes = after - (index + 1);
         // Special schemes get an authority after any slash run, and after none
         // at all — but only when no authority is already open, or `http:` sitting
         // inside a password would close the URL it belongs to. Other schemes
         // need a real `//`; `custom:/u:p@h` is a path, not an authority.
-        const opensAuthority = SPECIAL_SCHEMES.has(scheme)
-          ? slashes > 0 || authorityStart < 0
-          : slashes >= 2;
+        const opensAuthority = special ? slashes > 0 || authorityStart < 0 : slashes >= 2;
         if (opensAuthority) {
           // A new URL begins, so whatever authority was open ends here. This is
           // what keeps `https://safe,https://u:p@h` from swallowing the second.
-          closeAuthority();
+          closeAuthority(tokenStart);
+          schemeStart = tokenStart;
           authorityStart = after;
           index = after;
+          tokenStart = after;
           continue;
         }
       }
       index++;
+      tokenStart = index;
       continue;
     }
 
-    if (authorityStart >= 0) {
-      if (AUTHORITY_TERMINATORS.has(char)) {
-        closeAuthority();
-        index++;
-        continue;
-      }
-      if (char === '@') lastAt = index;
+    if (authorityStart >= 0 && AUTHORITY_TERMINATORS.has(char)) {
+      closeAuthority(index);
+      index++;
+      tokenStart = index;
+      continue;
     }
+    if (authorityStart >= 0 && char === '@') lastAt = index;
+    if (!isSchemeChar(scan.charCodeAt(index))) tokenStart = index + 1;
     index++;
   }
-  closeAuthority();
+  closeAuthority(scan.length);
 
   if (spans.length === 0) {
     return text;
