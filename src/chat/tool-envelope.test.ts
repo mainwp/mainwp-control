@@ -146,8 +146,9 @@ describe('JSON scan bounding (F19)', () => {
 
     expect(Date.now() - start).toBeLessThan(500);
     // Bounded scan finds no envelope; content that leads with prose but
-    // carries no envelope key is still surfaced as an answer.
-    expect(result.response.type).toBe('answer');
+    // carries no envelope key is still surfaced as an answer — whole, so a
+    // scan bound can never be met by silently dropping the payload.
+    expect(result.response).toEqual({ type: 'answer', answer: hostile });
   });
 
   it('still extracts an envelope embedded in surrounding prose', () => {

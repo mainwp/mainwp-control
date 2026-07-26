@@ -78,6 +78,33 @@ describe('sanitizeErrorMessage', () => {
       'https://dash.example/wp?page=2#api_key=[REDACTED]'
     );
   });
+
+  // The display masker decodes before classifying; an error message carrying
+  // the same URL has to reach the same verdict, or the encoding picks which
+  // output path leaks.
+  it('redacts a percent-encoded sensitive key in a query', () => {
+    expect(sanitizeErrorMessage('failed: https://dash.example/wp?api%5Fkey=TOPSECRET')).toBe(
+      'failed: https://dash.example/wp?api%5Fkey=[REDACTED]'
+    );
+  });
+
+  it('redacts a percent-encoded sensitive key in a fragment', () => {
+    expect(sanitizeErrorMessage('https://dash.example/wp#%61ccess_token=TOPSECRET')).toBe(
+      'https://dash.example/wp#%61ccess_token=[REDACTED]'
+    );
+  });
+
+  it('redacts an undecodable key rather than failing open', () => {
+    expect(sanitizeErrorMessage('https://dash.example/wp?api%ZZkey=TOPSECRET')).toBe(
+      'https://dash.example/wp?api%ZZkey=[REDACTED]'
+    );
+  });
+
+  it('leaves a harmless parameter untouched', () => {
+    expect(sanitizeErrorMessage('https://dash.example/wp?page=2')).toBe(
+      'https://dash.example/wp?page=2'
+    );
+  });
 });
 
 describe('sanitizeErrorValue', () => {

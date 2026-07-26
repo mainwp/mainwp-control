@@ -177,7 +177,7 @@ const URL_PARAMETER = /([?&#])([^=&#\s]{1,64})=([^&#\s]*)/g;
  * counts as sensitive. Redacting a value that was not a credential costs
  * display fidelity; failing open costs the credential.
  */
-function isSensitiveParameterKey(key: string): boolean {
+export function isSensitiveParameterKey(key: string): boolean {
   let decoded: string;
   try {
     decoded = decodeURIComponent(key);

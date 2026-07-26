@@ -2,8 +2,8 @@
  * Pure sanitizers for error messages and structured error details.
  */
 
-import { maskUrlUserinfoInText } from './format.js';
 import { isSensitiveKey } from './redaction.js';
+import { isSensitiveParameterKey, maskUrlUserinfoInText } from './format.js';
 
 const PATH_PATTERNS = [
   /\/Users\/[^/\s]+/g,
@@ -95,10 +95,17 @@ export function sanitizeErrorMessage(message: string): string {
   // fragment-carried key never reaches a server but does reach the terminal.
   // `#` also has to leave the key/value classes, or a preceding harmless
   // parameter's value swallows `#api_key=...` and the scan never sees it.
+  //
+  // Classification is shared with the URL masker rather than calling
+  // isSensitiveKey directly: the raw key is not the parameter's name, so
+  // `api%5Fkey` would otherwise pass through with its value intact here even
+  // though the same URL masks correctly on the display path. The character
+  // classes stay local — this scans free prose, where quotes terminate a
+  // value, not a whole URL.
   sanitized = sanitized.replace(
     /([?&#])([^=&#\s"']{1,64})=([^&#\s"']+)/g,
     (match, sep: string, key: string) =>
-      isSensitiveKey(key) ? `${sep}${key}=[REDACTED]` : match
+      isSensitiveParameterKey(key) ? `${sep}${key}=[REDACTED]` : match
   );
 
   return sanitized;
