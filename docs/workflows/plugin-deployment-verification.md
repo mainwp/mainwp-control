@@ -228,6 +228,8 @@ jobs:
       DASHBOARD_URL: ${{ secrets.DASHBOARD_URL }}
       DASHBOARD_USER: ${{ secrets.DASHBOARD_USER }}
       MAINWP_APP_PASSWORD: ${{ secrets.MAINWP_APP_PASSWORD }}
+      # Binds the password to one Dashboard; the CLI refuses to send it elsewhere.
+      MAINWP_DASHBOARD_URL: ${{ secrets.DASHBOARD_URL }}
     steps:
       - uses: actions/setup-node@v4
         with:
@@ -255,7 +257,7 @@ jobs:
           --username $DASHBOARD_USER
 ```
 
-- `env:` sets job-level environment variables so every `mainwpcontrol` step can authenticate. GitHub runners often do not persist credentials in an OS keychain between steps, so `MAINWP_APP_PASSWORD` must stay available for the whole job.
+- `env:` sets job-level environment variables so every `mainwpcontrol` step can authenticate. GitHub runners often do not persist credentials in an OS keychain between steps, so `MAINWP_APP_PASSWORD` must stay available for the whole job, together with `MAINWP_DASHBOARD_URL`, which pins the Dashboard it may be sent to.
 - `${{ secrets.NAME }}` is GitHub Actions syntax for reading a secret. GitHub replaces this with the actual value at runtime and automatically masks it in logs.
 - `run: >` uses a YAML feature called **folding**. The `>` character means "join the following indented lines into a single line." This lets you split a long command across multiple lines for readability. The actual command that runs is: `mainwpcontrol login --url $DASHBOARD_URL --username $DASHBOARD_USER`
 - The `--url` and `--username` flags provide credentials non-interactively, which is necessary because GitHub Actions runs without a terminal and cannot prompt for input.
@@ -326,6 +328,8 @@ jobs:
       DASHBOARD_URL: ${{ secrets.DASHBOARD_URL }}
       DASHBOARD_USER: ${{ secrets.DASHBOARD_USER }}
       MAINWP_APP_PASSWORD: ${{ secrets.MAINWP_APP_PASSWORD }}
+      # Binds the password to one Dashboard; the CLI refuses to send it elsewhere.
+      MAINWP_DASHBOARD_URL: ${{ secrets.DASHBOARD_URL }}
     steps:
       - uses: actions/setup-node@v4
         with:

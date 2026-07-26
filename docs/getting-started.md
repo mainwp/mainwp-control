@@ -37,10 +37,15 @@ An environment variable is a named value that programs can read. They're commonl
 ```bash
 # macOS / Linux / Git Bash (lasts until you close the terminal)
 export MAINWP_APP_PASSWORD='xxxx xxxx xxxx xxxx xxxx xxxx'
+export MAINWP_DASHBOARD_URL='https://dashboard.example.com'
 
 # Windows PowerShell (lasts until you close the window)
 $env:MAINWP_APP_PASSWORD = 'xxxx xxxx xxxx xxxx xxxx xxxx'
+$env:MAINWP_DASHBOARD_URL = 'https://dashboard.example.com'
 ```
+
+Set both. The second names the Dashboard the password belongs to, and the CLI
+refuses to send it anywhere else.
 
 For long-term storage, use the OS keychain (the default when you run `mainwpcontrol login`) or a restricted-permission `.env` file rather than pasting credentials into shell profile files. Note that `mainwpcontrol` does not read `.env` files itself: source the file (or export the variable another way) before running the CLI.
 

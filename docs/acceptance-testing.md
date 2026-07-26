@@ -39,7 +39,7 @@ Live credentials are resolved in this order:
 
 The environment file maps `LLM_DASH_URL` to the Dashboard URL and reads `MAINWP_USER` and `MAINWP_APP_PASSWORD`.
 
-The agent runner creates one temporary XDG configuration directory per scenario. Its profile contains the Dashboard URL and username. The Application Password exists only in the Claude child environment as `MAINWP_APP_PASSWORD`; it is not written to the profile, consumer, transcript, command record, or result files. `MAINWPCONTROL_NO_KEYTAR=1` keeps the run independent of the OS keychain.
+The agent runner creates one temporary XDG configuration directory per scenario. Its profile contains the Dashboard URL and username. The Application Password exists only in the Claude child environment as `MAINWP_APP_PASSWORD`; it is not written to the profile, consumer, transcript, command record, or result files. The runner also sets `MAINWP_DASHBOARD_URL` to the scenario's Dashboard, which the CLI requires before it will send an environment-supplied password. `MAINWPCONTROL_NO_KEYTAR=1` keeps the run independent of the OS keychain.
 
 `MAINWP_CONTROL_ACCEPTANCE_TOGGLE_PLUGIN` can select the plugin slug preferred by the `agent-plugin-active` scenario and the reversible deterministic plugin scenario.
 

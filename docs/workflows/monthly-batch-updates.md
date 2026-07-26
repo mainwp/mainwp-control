@@ -524,6 +524,8 @@ jobs:
       DASHBOARD_URL: ${{ secrets.DASHBOARD_URL }}
       DASHBOARD_USER: ${{ secrets.DASHBOARD_USER }}
       MAINWP_APP_PASSWORD: ${{ secrets.MAINWP_APP_PASSWORD }}
+      # Binds the password to one Dashboard; the CLI refuses to send it elsewhere.
+      MAINWP_DASHBOARD_URL: ${{ secrets.DASHBOARD_URL }}
     steps:
       - uses: actions/setup-node@v4
         with:
@@ -546,7 +548,7 @@ jobs:
           --username $DASHBOARD_USER
 ```
 
-- `env`: Sets job-level environment variables so every `mainwpcontrol` step can authenticate. GitHub runners often do not persist credentials in an OS keychain between steps, so `MAINWP_APP_PASSWORD` must stay available for the whole job.
+- `env`: Sets job-level environment variables so every `mainwpcontrol` step can authenticate. GitHub runners often do not persist credentials in an OS keychain between steps, so `MAINWP_APP_PASSWORD` must stay available for the whole job, together with `MAINWP_DASHBOARD_URL`, which pins the Dashboard it may be sent to.
 - `${{ secrets.DASHBOARD_URL }}`: GitHub replaces this with the encrypted secret value at runtime. The actual value never appears in logs.
 - The `>` after `run:` is YAML syntax for a folded string. It joins the following indented lines into a single command, which makes long commands easier to read.
 
@@ -612,6 +614,8 @@ jobs:
       DASHBOARD_URL: ${{ secrets.DASHBOARD_URL }}
       DASHBOARD_USER: ${{ secrets.DASHBOARD_USER }}
       MAINWP_APP_PASSWORD: ${{ secrets.MAINWP_APP_PASSWORD }}
+      # Binds the password to one Dashboard; the CLI refuses to send it elsewhere.
+      MAINWP_DASHBOARD_URL: ${{ secrets.DASHBOARD_URL }}
     steps:
       - uses: actions/setup-node@v4
         with:
