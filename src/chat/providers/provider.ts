@@ -115,6 +115,13 @@ export const MAX_TOOL_ARGUMENTS_LENGTH = 1_048_576;
  * while the stream is open: a hostile endpoint opens fresh indices for the
  * whole multi-minute SSE window. The envelope accepts exactly one call, so this
  * only has to sit above what a real parallel-tool response sends.
+ *
+ * Intentionally distinct from the chat engine's MAX_STREAM_TOOL_CALLS (2) and
+ * the tool envelope's exactly-one protocol limit: this value is a memory bound
+ * on the provider stream, 2 is the minimum the engine needs to report "received
+ * N > 1" as a protocol error instead of silently taking the first call, and 1
+ * is the protocol contract. Deriving one from another would couple layers that
+ * fail independently.
  */
 export const MAX_STREAMED_TOOL_CALLS = 8;
 

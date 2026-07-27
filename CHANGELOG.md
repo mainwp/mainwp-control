@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Breaking:** `MAINWP_APP_PASSWORD` is now identity-bound the same way keychain credentials are: every authenticated command, `login` included, requires `MAINWP_DASHBOARD_URL` to be set and to match the profile's canonical Dashboard identity before the password is sent. Without it the command refuses to send the credential, with a hint naming the fix. This closes a redirect where an edited or committed `profiles.json` could silently point the environment password at a different host (CI, where the env var is the documented credential path, is exactly where `profiles.json` is easiest to tamper with). Interactive login with a prompted password and display-only commands (`doctor`, `config show`) are unaffected
+
+### Security
+
+- Dashboard URLs carrying credentials in the query string or fragment (`?access_token=...`, `#api_key=...`, including percent-encoded key variants) are rejected when a profile is created; profiles already on disk with such URLs have the sensitive parameter values masked on every display path, including error messages
+- Streamed chat tool calls are bounded at every layer (provider stream buffer, engine collection, tool-call envelope), so a hostile or malfunctioning provider stream cannot grow memory or dispatch work without limit
+- `abilities info` renders Dashboard-supplied ability descriptions and annotation instructions inside a visibly quoted block, so remote metadata cannot pose as CLI output or smuggle formatting into the terminal
+
 ## [1.1.0] - 2026-07-22
 
 ### Fixed
