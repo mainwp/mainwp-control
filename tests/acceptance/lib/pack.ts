@@ -100,6 +100,23 @@ export async function packAndInstall(
       env: { ...process.env, npm_config_cache: npmCache },
     });
 
+    // The stub registry serves only the versions pinned in the repo lock, and
+    // npm overrides do not propagate to dependents, so a bare consumer resolves
+    // ranges the lock has overridden away (filelist -> minimatch@^5) and the
+    // install 404s. Mirror the root overrides into the consumer manifest so its
+    // resolution stays inside what the stub can serve.
+    const repoManifest = JSON.parse(
+      fs.readFileSync(path.join(repoRoot, 'package.json'), 'utf8'),
+    ) as { overrides?: Record<string, unknown> };
+    if (repoManifest.overrides) {
+      const consumerManifestPath = path.join(consumerDir, 'package.json');
+      const consumerManifest = JSON.parse(
+        fs.readFileSync(consumerManifestPath, 'utf8'),
+      ) as Record<string, unknown>;
+      consumerManifest['overrides'] = repoManifest.overrides;
+      fs.writeFileSync(consumerManifestPath, `${JSON.stringify(consumerManifest, null, 2)}\n`);
+    }
+
     const registry = await startLocalDependencyRegistry(repoRoot, tempRoot, runner);
     try {
       await runner.run(
