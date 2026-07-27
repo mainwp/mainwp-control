@@ -24,7 +24,7 @@ import {
   maskPassword,
   maskApiKey,
   maskUrlCredentials,
-  maskUrlUserinfoInText,
+  maskUrlCredentialsInText,
 } from '../utils/format.js';
 import { color, colors } from '../utils/colors.js';
 import { formatDivider, formatStatusIcon, getStatusColor } from '../output/formatter.js';
@@ -304,8 +304,9 @@ export default class DoctorCommand extends BaseCommand {
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
 
-      // Fetch errors can echo the full request URL, credentials included
-      let details = maskUrlUserinfoInText(message);
+      // Fetch errors can echo the full request URL, credentials included:
+      // both `user:pass@` userinfo and `?access_token=` / `#api_key=` params.
+      let details = maskUrlCredentialsInText(message);
       if (message.includes('ECONNREFUSED')) {
         details = 'Connection refused. Is the Dashboard running?';
       } else if (message.includes('ENOTFOUND')) {

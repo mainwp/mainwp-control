@@ -103,7 +103,7 @@ export function sanitizeErrorMessage(message: string): string {
   // classes stay local — this scans free prose, where quotes terminate a
   // value, not a whole URL.
   sanitized = sanitized.replace(
-    /([?&#])([^=&#\s"']{1,64})=([^&#\s"']+)/g,
+    /([?&#])([^=&#\s"']+)=([^&#\s"']+)/g,
     (match, sep: string, key: string) =>
       isSensitiveParameterKey(key) ? `${sep}${key}=[REDACTED]` : match
   );

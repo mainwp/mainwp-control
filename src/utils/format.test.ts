@@ -8,6 +8,7 @@ import {
   maskPassword,
   maskApiKey,
   maskUrlCredentials,
+  maskUrlCredentialsInText,
   maskUrlUserinfo,
   maskUrlUserinfoInText,
   type MaskOptions,
@@ -277,6 +278,39 @@ describe('maskUrlCredentials', () => {
     expect(maskUrlCredentials('https://dashboard.example.com/#page%2=2')).toBe(
       'https://dashboard.example.com/#page%2=[REDACTED]'
     );
+  });
+
+  // A length bound on the key class fails open: the key cannot match, so the
+  // pattern skips the parameter and its value goes out verbatim.
+  it('redacts a sensitive key longer than 64 characters', () => {
+    const key = `${'p'.repeat(70)}api_key`;
+    expect(maskUrlCredentials(`https://dashboard.example.com/wp?${key}=TOPSECRET`)).toBe(
+      `https://dashboard.example.com/wp?${key}=[REDACTED]`
+    );
+  });
+});
+
+describe('maskUrlCredentialsInText', () => {
+  it('masks userinfo and sensitive parameters in embedded URLs', () => {
+    expect(
+      maskUrlCredentialsInText(
+        'Loaded profile https://admin:secret@dashboard.example.com/wp-json?access_token=abc123&page=2'
+      )
+    ).toBe(
+      'Loaded profile https://***:***@dashboard.example.com/wp-json?access_token=[REDACTED]&page=2'
+    );
+  });
+
+  it('redacts a sensitive key longer than 64 characters', () => {
+    const key = `${'p'.repeat(70)}api_key`;
+    expect(maskUrlCredentialsInText(`failed: https://dashboard.example.com/wp?${key}=TOPSECRET`)).toBe(
+      `failed: https://dashboard.example.com/wp?${key}=[REDACTED]`
+    );
+  });
+
+  it('leaves text without credentials unchanged', () => {
+    const text = 'Connection refused for https://dashboard.example.com/wp-json?page=1';
+    expect(maskUrlCredentialsInText(text)).toBe(text);
   });
 });
 

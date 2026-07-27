@@ -98,6 +98,30 @@ describe('BaseCommand debug-context URL credential masking', () => {
     expect(String(result['body'])).toMatch(/\.\.\.$/);
   });
 
+  it('redacts a sensitive query parameter in a debug-logged URL', () => {
+    // A profile saved before query strings were rejected can still carry
+    // ?access_token=; the debug path masked userinfo only and shipped this
+    // credential to stderr in full.
+    const result = redact({
+      dashboardUrl: 'https://dashboard.example.com/wp-json?access_token=SECRET',
+    });
+
+    expect(result['dashboardUrl']).toBe(
+      'https://dashboard.example.com/wp-json?access_token=[REDACTED]'
+    );
+  });
+
+  it('redacts a percent-encoded sensitive key in a debug-logged URL', () => {
+    const result = redact({
+      dashboardUrl: 'https://dashboard.example.com/wp-json?api%5Fkey=SECRET',
+    });
+
+    expect(result['dashboardUrl']).toBe(
+      'https://dashboard.example.com/wp-json?api%5Fkey=[REDACTED]'
+    );
+    expect(JSON.stringify(result)).not.toContain('SECRET');
+  });
+
   it('leaves URLs without credentials unchanged', () => {
     const result = redact({ dashboardUrl: 'https://dashboard.example.com/wp-json' });
 

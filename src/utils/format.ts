@@ -161,7 +161,7 @@ export function maskUrlUserinfo(url: string): string {
  * classes: without that, a harmless leading parameter's value swallows
  * `#api_key=...` and the fragment is never examined.
  */
-const URL_PARAMETER = /([?&#])([^=&#\s]{1,64})=([^&#\s]*)/g;
+const URL_PARAMETER = /([?&#])([^=&#\s]+)=([^&#\s]*)/g;
 
 /**
  * Classify a URL parameter key by its decoded spelling.
@@ -747,4 +747,28 @@ export function maskUrlUserinfoInText(text: string): string {
     cursor = span.end;
   }
   return output + text.slice(cursor);
+}
+
+/**
+ * Mask everything credential-shaped in arbitrary text: embedded userinfo, plus
+ * the value of any query or fragment parameter whose key — percent-decoded
+ * first — is on the shared sensitive list.
+ *
+ * SECURITY: this is the free-text counterpart of maskUrlCredentials. A URL
+ * reaching a display path inside a longer string carries the same legacy
+ * credential forms as a bare one, so both `user:pass@` and `?access_token=`
+ * have to be masked wherever the string is emitted.
+ *
+ * @param text - Text that may contain credentialed URLs
+ * @returns The text with userinfo replaced by `***:***@` and sensitive
+ * parameter values replaced by `[REDACTED]`, with the original key spelling
+ * preserved
+ */
+export function maskUrlCredentialsInText(text: string): string {
+  const masked = maskUrlUserinfoInText(text);
+  // The original key spelling is preserved in the output; only classification
+  // sees the decoded form.
+  return masked.replace(URL_PARAMETER, (match, separator: string, key: string) =>
+    isSensitiveParameterKey(key) ? `${separator}${key}=[REDACTED]` : match
+  );
 }

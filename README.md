@@ -186,9 +186,9 @@ next to the secret is what stops an edited pipeline from redirecting it. It also
 a `profiles.json` someone else can write cannot point your credential at their server.
 
 Credentials in the OS keychain are bound to their Dashboard the same way and need no
-extra variable. Interactive `login`, which prompts for the password, does not use the
-env var and is unaffected, as are commands that only display configuration such as
-`doctor` and `config show`.
+extra variable. `login` only prompts for the password when `MAINWP_APP_PASSWORD` is
+unset; when it is set, the same binding applies. Commands that only display
+configuration, such as `doctor` and `config show`, are unaffected.
 
 Optional defaults (JSON output, timeouts, chat provider) live in `~/.config/mainwpcontrol/settings.json`. The full list of settings, chat provider keys, and the credential storage model are in the [Configuration guide](docs/configuration.md).
 

@@ -100,6 +100,15 @@ describe('sanitizeErrorMessage', () => {
     );
   });
 
+  // A length bound on the key class fails open: the key cannot match, so the
+  // pattern skips the parameter and its value goes out verbatim.
+  it('redacts a sensitive key longer than 64 characters', () => {
+    const key = `${'p'.repeat(70)}api_key`;
+    expect(sanitizeErrorMessage(`failed: https://dash.example/wp?${key}=TOPSECRET`)).toBe(
+      `failed: https://dash.example/wp?${key}=[REDACTED]`
+    );
+  });
+
   it('leaves a harmless parameter untouched', () => {
     expect(sanitizeErrorMessage('https://dash.example/wp?page=2')).toBe(
       'https://dash.example/wp?page=2'

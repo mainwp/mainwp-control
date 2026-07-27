@@ -28,7 +28,7 @@ export MAINWP_DASHBOARD_URL='https://dashboard.example.com'
 mainwpcontrol abilities list
 ```
 
-Any command that authenticates with `MAINWP_APP_PASSWORD`, `login` included, sends it only to the Dashboard named in `MAINWP_DASHBOARD_URL` and fails rather than sending it anywhere else. Two things follow: a `profiles.json` that someone else can write cannot point your credential at their server, and in CI, where the password usually comes from a protected secret store and command arguments do not, an edited pipeline cannot redirect it either. Keychain-stored credentials carry the same binding internally and need no extra variable. Interactive `login` prompts for the password and does not use the env var; `doctor` and `config show` only display configuration, so all three are unaffected.
+Any command that authenticates with `MAINWP_APP_PASSWORD`, `login` included, sends it only to the Dashboard named in `MAINWP_DASHBOARD_URL` and fails rather than sending it anywhere else. Two things follow: a `profiles.json` that someone else can write cannot point your credential at their server, and in CI, where the password usually comes from a protected secret store and command arguments do not, an edited pipeline cannot redirect it either. Keychain-stored credentials carry the same binding internally and need no extra variable. `login` only prompts for the password when `MAINWP_APP_PASSWORD` is unset; when it is set, the same binding applies. `doctor` and `config show` only display configuration, so they are unaffected.
 
 The profile file is still written and records the Dashboard URL and username, as it does in every mode. If keytar is installed but broken, set `MAINWPCONTROL_NO_KEYTAR=1` to skip loading it.
 

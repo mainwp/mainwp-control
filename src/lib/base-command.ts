@@ -24,7 +24,7 @@ import { successOutput, errorOutput } from '../output/json-envelope.js';
 import { ExitCode } from '../utils/exit-codes.js';
 import { formatError, formatWarning } from '../output/formatter.js';
 import { isSensitiveKey } from '../utils/redaction.js';
-import { maskUrlUserinfoInText } from '../utils/format.js';
+import { maskUrlCredentialsInText } from '../utils/format.js';
 
 /**
  * Common flags available to all commands
@@ -337,10 +337,12 @@ export abstract class BaseCommand extends Command {
    */
   private redactDebugValue(value: unknown, depth = 0, ancestors = new WeakSet<object>()): unknown {
     if (typeof value === 'string') {
-      // Mask credentialed URLs (legacy profiles may carry user:pass@ in the
-      // stored dashboard URL) before truncating, so a credential sitting inside
-      // the kept prefix cannot survive into stderr, CI logs, or bug reports.
-      const masked = maskUrlUserinfoInText(value);
+      // Mask credentialed URLs before truncating, so a credential sitting
+      // inside the kept prefix cannot survive into stderr, CI logs, or bug
+      // reports. Legacy profiles predate both intake checks, so the stored
+      // dashboard URL can carry `user:pass@` or `?access_token=` / `#api_key=`;
+      // masking has to cover both forms.
+      const masked = maskUrlCredentialsInText(value);
       return masked.length > 300 ? `${masked.slice(0, 297)}...` : masked;
     }
 
