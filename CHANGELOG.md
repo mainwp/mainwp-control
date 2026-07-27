@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.1.1] - 2026-07-27
+
 ### Changed
 
 - **Breaking:** `MAINWP_APP_PASSWORD` is now identity-bound the same way keychain credentials are: every authenticated command, `login` included, requires `MAINWP_DASHBOARD_URL` to be set and to match the profile's canonical Dashboard identity before the password is sent. Without it the command refuses to send the credential, with a hint naming the fix. This closes a redirect where an edited or committed `profiles.json` could silently point the environment password at a different host (CI, where the env var is the documented credential path, is exactly where `profiles.json` is easiest to tamper with). Interactive login with a prompted password and display-only commands (`doctor`, `config show`) are unaffected
@@ -143,7 +145,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Unimplemented `cancelJob` and `listJobs` from BatchManager
 
-[Unreleased]: https://github.com/mainwp/mainwp-control/compare/v1.1.0...HEAD
+[Unreleased]: https://github.com/mainwp/mainwp-control/compare/v1.1.1...HEAD
+[1.1.1]: https://github.com/mainwp/mainwp-control/compare/v1.1.0...v1.1.1
 [1.1.0]: https://github.com/mainwp/mainwp-control/compare/v1.1.0-beta.1...v1.1.0
 [1.1.0-beta.1]: https://github.com/mainwp/mainwp-control/compare/v1.0.1...v1.1.0-beta.1
 [1.0.1]: https://github.com/mainwp/mainwp-control/compare/v1.0.0...v1.0.1
