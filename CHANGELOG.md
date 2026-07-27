@@ -7,15 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.1.1] - 2026-07-27
+
 ### Changed
 
 - **Breaking:** `MAINWP_APP_PASSWORD` is now identity-bound the same way keychain credentials are: every authenticated command, `login` included, requires `MAINWP_DASHBOARD_URL` to be set and to match the profile's canonical Dashboard identity before the password is sent. Without it the command refuses to send the credential, with a hint naming the fix. This closes a redirect where an edited or committed `profiles.json` could silently point the environment password at a different host (CI, where the env var is the documented credential path, is exactly where `profiles.json` is easiest to tamper with). Interactive login with a prompted password and display-only commands (`doctor`, `config show`) are unaffected
 
 ### Security
 
-- Dashboard URLs carrying credentials in the query string or fragment (`?access_token=...`, `#api_key=...`, including percent-encoded key variants) are rejected when a profile is created; profiles already on disk with such URLs have the sensitive parameter values masked on every display path, including error messages
-- Streamed chat tool calls are bounded at every layer (provider stream buffer, engine collection, tool-call envelope), so a hostile or malfunctioning provider stream cannot grow memory or dispatch work without limit
-- `abilities info` renders Dashboard-supplied ability descriptions and annotation instructions inside a visibly quoted block, so remote metadata cannot pose as CLI output or smuggle formatting into the terminal
+- The interactive password prompt no longer echoes the typed password. `promptForPassword` opened a terminal-mode readline interface it never read from, and that interface made the terminal print each typed character in cleartext alongside the masking asterisks. Verified on a real pty: the prompt now shows only asterisks
+- A hostile ability `inputSchema` can no longer bypass validation by declaring `$async`: the schema sanitizer strips the keyword, and the validator fails closed on any non-boolean result, so ajv cannot compile a Promise-returning validator whose truthy result read as "valid" and whose later rejection crashed the process
+- Dashboard URLs carrying credentials in the query string or fragment (`?access_token=...`, `#api_key=...`, including percent-encoded key variants) are rejected when a profile is created; profiles already on disk with such URLs have the sensitive parameter values masked on every display path, including error messages. `profile list` and `profile use` mask embedded URL credentials in both the JSON envelope and the human table, and debug context is masked centrally before truncation so no debug value can carry a credentialed URL to stderr
+- Terminal escape sequences are stripped in the output layer rather than per call site: `formatHeading`, `formatSuccess`, `formatInfo`, and `formatKeyValue` collapse to sanitized rows, doctor's verbose details and `jobs watch` result labels are sanitized, and `abilities info` renders Dashboard-supplied descriptions and annotation instructions inside a visibly quoted block through a sanitizer that strips escapes but keeps real newlines. Remote metadata cannot pose as CLI output or forge status lines anywhere the CLI prints
+- Pathological inputs can no longer stall the CLI in regex or scanning work: the escape-sequence patterns use negated classes that fail linearly, error messages are length-capped before the credential scan, the tool-envelope brace scan is bounded by both length and a step budget, and streamed chat content and tool calls are bounded at every layer (provider stream buffer, engine collection, tool-call envelope), so a hostile or malfunctioning provider stream cannot grow memory or dispatch work without limit
+- The production dependency tree resolves brace-expansion at the patched 5.0.8 (GHSA-mh99-v99m-4gvg) via a minimatch override. npm overrides do not reach consumer installs, so `npm install` may still report the advisory for the copies under ejs's jake and filelist chain; those parse only local build globs
 
 ## [1.1.0] - 2026-07-22
 
@@ -143,7 +148,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Unimplemented `cancelJob` and `listJobs` from BatchManager
 
-[Unreleased]: https://github.com/mainwp/mainwp-control/compare/v1.1.0...HEAD
+[Unreleased]: https://github.com/mainwp/mainwp-control/compare/v1.1.1...HEAD
+[1.1.1]: https://github.com/mainwp/mainwp-control/compare/v1.1.0...v1.1.1
 [1.1.0]: https://github.com/mainwp/mainwp-control/compare/v1.1.0-beta.1...v1.1.0
 [1.1.0-beta.1]: https://github.com/mainwp/mainwp-control/compare/v1.0.1...v1.1.0-beta.1
 [1.0.1]: https://github.com/mainwp/mainwp-control/compare/v1.0.0...v1.0.1

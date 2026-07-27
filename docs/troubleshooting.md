@@ -52,7 +52,7 @@ On Windows, the npm global directory is usually already in PATH after installing
 
 ## Authentication fails after upgrading
 
-Version 1.1.0 binds stored credentials to the Dashboard identity they were created for, and refuses credentials saved by earlier beta versions. If commands that worked before the upgrade now fail with an authentication error, run:
+Version 1.1.1 binds stored credentials to the Dashboard identity they were created for, and refuses credentials saved by earlier beta versions. If commands that worked before the upgrade now fail with an authentication error, run:
 
 ```bash
 mainwpcontrol login
