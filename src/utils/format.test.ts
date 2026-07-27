@@ -690,14 +690,27 @@ describe('maskUrlUserinfoInText', () => {
     );
   });
 
+  // A baseline run at 1/10 the size sets the bound instead of a fixed
+  // millisecond budget, so this holds on any machine while still failing on
+  // quadratic behavior: linear scaling gives ~10x the baseline, quadratic
+  // gives ~100x, and 40x is the dividing line with slack for noise. The
+  // floor keeps a near-zero baseline from making the bound vacuous.
+  function expectLinearScaling(buildInput: (repeat: number) => string, fullRepeat: number): void {
+    const t0 = Date.now();
+    maskUrlUserinfoInText(buildInput(fullRepeat / 10));
+    const baseline = Date.now() - t0;
+    const floor = Math.max(baseline, 10);
+
+    const start = Date.now();
+    maskUrlUserinfoInText(buildInput(fullRepeat));
+    const fullDuration = Date.now() - start;
+
+    expect(fullDuration).toBeLessThan(40 * floor);
+  }
+
   it('stays linear when many short authorities follow a distant @', () => {
     // A backward lastIndexOf for the authority's @ made this quadratic.
-    const hostile = `@${' http:x/'.repeat(50_000)}`;
-    const start = Date.now();
-
-    maskUrlUserinfoInText(hostile);
-
-    expect(Date.now() - start).toBeLessThan(500);
+    expectLinearScaling((repeat) => `@${' http:x/'.repeat(repeat)}`, 50_000);
   });
 
   it('stays linear on terminator-free scheme repeats and unclosed brackets', () => {
@@ -707,11 +720,7 @@ describe('maskUrlUserinfoInText', () => {
     // its `]`. Past MAX_AUTHORITY_SPAN the adjudicator now fails closed
     // instead of parsing unbounded candidates.
     for (const unit of ['https:\\\\u:p@', 'https:\\\\u:p@!', 'https://u:p@[/']) {
-      const start = Date.now();
-
-      maskUrlUserinfoInText(unit.repeat(20_000));
-
-      expect(Date.now() - start).toBeLessThan(1_000);
+      expectLinearScaling((repeat) => unit.repeat(repeat), 20_000);
     }
   });
 
