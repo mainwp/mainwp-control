@@ -12,7 +12,7 @@
  * of the safety contract.
  */
 
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach, type Mock } from 'vitest';
 import { ChatEngine, createChatEngine, type ChatResponse } from './chat-engine.js';
 import type { LLMProvider, LLMResponse, Message, ToolDefinition, ChatOptions } from './providers/provider.js';
 import type { Ability, ExecutionResult, ExecutionOptions } from '../core/abilities-executor.js';
@@ -3037,6 +3037,101 @@ describe('ChatEngine', () => {
       if (responses[0]!.type === 'error') {
         expect(responses[0]!.error).toContain('interrupted');
       }
+      expect(mockExecutor.execute).not.toHaveBeenCalled();
+    });
+
+    it('stops consuming a stream that keeps yielding tool calls', async () => {
+      let yielded = 0;
+      const floodProvider: LLMProvider = {
+        name: 'mock-streaming-provider',
+        capabilities: {
+          functionCalling: true,
+          streaming: true,
+          systemMessages: true,
+          vision: false,
+          maxContextLength: 4096,
+        },
+        chat: vi.fn(),
+        chatStream: vi.fn(async function* () {
+          for (let index = 0; index < 500; index++) {
+            yielded++;
+            yield {
+              toolCall: {
+                id: `call_${index}`,
+                name: 'list-sites-v1',
+                arguments: { index },
+              },
+            };
+          }
+          yield { done: true };
+        }),
+        isConfigured: () => true,
+        getModels: () => ['test-model'],
+        getDefaultModel: () => 'test-model',
+      };
+
+      const mockExecutor = createMockExecutor([READONLY_ABILITY]);
+      const engine = createChatEngine({
+        provider: floodProvider,
+        executor: mockExecutor as never,
+        stream: true,
+      });
+
+      await engine.initialize();
+      const responses = await engine.sendMessage('list sites');
+
+      // Two calls are retained, and the third is what trips the cap: the rest
+      // of the stream is never pulled.
+      expect(yielded).toBeLessThanOrEqual(3 * (floodProvider.chatStream as Mock).mock.calls.length);
+      expect(responses[0]!.type).toBe('error');
+      expect(mockExecutor.execute).not.toHaveBeenCalled();
+    });
+
+    it('stops consuming a stream whose tool-call arguments exceed the cap', async () => {
+      let yielded = 0;
+      const hugeArgsProvider: LLMProvider = {
+        name: 'mock-streaming-provider',
+        capabilities: {
+          functionCalling: true,
+          streaming: true,
+          systemMessages: true,
+          vision: false,
+          maxContextLength: 4096,
+        },
+        chat: vi.fn(),
+        chatStream: vi.fn(async function* () {
+          for (let index = 0; index < 500; index++) {
+            yielded++;
+            yield {
+              toolCall: {
+                id: `call_${index}`,
+                name: 'list-sites-v1',
+                arguments: { blob: 'x'.repeat(700_000) },
+              },
+            };
+          }
+          yield { done: true };
+        }),
+        isConfigured: () => true,
+        getModels: () => ['test-model'],
+        getDefaultModel: () => 'test-model',
+      };
+
+      const mockExecutor = createMockExecutor([READONLY_ABILITY]);
+      const engine = createChatEngine({
+        provider: hugeArgsProvider,
+        executor: mockExecutor as never,
+        stream: true,
+      });
+
+      await engine.initialize();
+      const responses = await engine.sendMessage('list sites');
+
+      // The second call breaches the aggregate byte cap, so one call was
+      // retained — and it must not be proposed for execution from a stream we
+      // abandoned.
+      expect(yielded).toBeLessThanOrEqual(2 * (hugeArgsProvider.chatStream as Mock).mock.calls.length);
+      expect(responses[0]!.type).toBe('error');
       expect(mockExecutor.execute).not.toHaveBeenCalled();
     });
 

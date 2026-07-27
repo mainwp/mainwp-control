@@ -6,7 +6,11 @@
 
 import { Args } from '@oclif/core';
 import { BaseCommand, commonFlags } from '../../lib/base-command.js';
-import { formatHeading, formatKeyValue } from '../../output/formatter.js';
+import {
+  formatHeading,
+  formatKeyValue,
+  formatUntrustedBlock,
+} from '../../output/formatter.js';
 import { InputError } from '../../utils/errors.js';
 
 export default class AbilitiesInfo extends BaseCommand {
@@ -55,7 +59,10 @@ export default class AbilitiesInfo extends BaseCommand {
         const lines = [
           formatHeading(ability.label || ability.name),
           '',
-          ability.description,
+          // Free-text from the Dashboard: quoted so a multi-paragraph
+          // description still renders across lines without any of those lines
+          // being able to imitate the headings and rows printed below.
+          formatUntrustedBlock(ability.description),
           '',
           formatKeyValue('Name', ability.name),
           formatKeyValue('Category', ability.category),
@@ -72,7 +79,7 @@ export default class AbilitiesInfo extends BaseCommand {
           if (annotations.instructions) {
             lines.push('');
             lines.push(formatHeading('Instructions'));
-            lines.push(annotations.instructions);
+            lines.push(formatUntrustedBlock(annotations.instructions));
           }
         } else {
           lines.push('  (no annotations)');

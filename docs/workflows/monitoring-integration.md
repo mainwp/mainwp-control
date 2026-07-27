@@ -116,7 +116,7 @@ You will be prompted for three pieces of information:
 2. **Username:** Your WordPress admin username on the Dashboard site.
 3. **Application Password:** The password you created in Step 1. Paste it in when prompted. The spaces in the password are fine; include them or omit them, both work.
 
-After entering these, MainWP Control stores your credentials in your system's keychain when one is available (macOS Keychain, Linux secret service, or Windows Credential Manager). If the machine cannot use a keychain, keep `MAINWP_APP_PASSWORD` available in the environment for future runs.
+After entering these, MainWP Control stores your credentials in your system's keychain when one is available (macOS Keychain, Linux secret service, or Windows Credential Manager). If the machine cannot use a keychain, keep `MAINWP_APP_PASSWORD` and `MAINWP_DASHBOARD_URL` available in the environment for future runs.
 
 ### Verify authentication
 
@@ -706,7 +706,8 @@ Cron runs in a minimal environment and may not have access to your system keycha
 
 ```
 MAINWP_APP_PASSWORD='your-app-password'
+MAINWP_DASHBOARD_URL='https://dashboard.example.com'
 */5 * * * * /full/path/to/mainwp-metrics.sh
 ```
 
-Replace `your-app-password` with the Application Password from Step 1 (spaces removed). Environment variables set at the top of the crontab apply to all jobs below them.
+Replace `your-app-password` with the Application Password from Step 1 (spaces removed) and the URL with your Dashboard. Both are required: the CLI hands the environment credential only to the Dashboard named in `MAINWP_DASHBOARD_URL`. Environment variables set at the top of the crontab apply to all jobs below them.

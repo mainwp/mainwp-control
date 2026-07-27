@@ -14,6 +14,10 @@ import {
   formatSection,
   formatStatusIcon,
   getStatusColor,
+  formatHeading,
+  formatUntrustedBlock,
+  formatSuccess,
+  formatInfo,
 } from './formatter.js';
 import { colors } from '../utils/colors.js';
 import { InputError } from '../utils/errors.js';
@@ -21,7 +25,7 @@ import { InputError } from '../utils/errors.js';
 describe('formatError credential redaction', () => {
   it.each([
     ['Bearer token', 'Request failed with Bearer abc123secret', 'abc123secret', 'Bearer [REDACTED]'],
-    ['credential URL', 'Request failed at https://user:pass@host/x', 'user:pass', '[URL_WITH_CREDENTIALS]'],
+    ['credential URL', 'Request failed at https://user:pass@host/x', 'user:pass', 'https://***:***@host/x'],
   ])('redacts %s credentials from Error messages', (_label, message, secret, marker) => {
     const output = formatError(new Error(message));
 
@@ -83,6 +87,83 @@ describe('single-row formatter sanitization', () => {
     expect(formatTable(['head\ner'], [['cell\r\nvalue']])).toContain('cell value');
     expect(formatList(['list\nitem'])).toContain('list item');
     expect(formatPreview('delete\nsite', [])).toContain('delete site');
+  });
+
+  it('collapses a lone carriage return in a key-value value', () => {
+    // stripControlChars preserves \r by design, so a value carrying one would
+    // return the cursor to column 0 and overwrite the row already printed.
+    const result = formatKeyValue('Category', 'EvilCategory\rOVERWRITTEN');
+
+    expect(result).not.toContain('\r');
+    expect(result).toContain('EvilCategory OVERWRITTEN');
+  });
+});
+
+describe('heading/success/info sanitization (F2/F5/F7)', () => {
+  it('strips escape sequences and collapses newlines in headings', () => {
+    // Untrusted ability category/label reaches formatHeading on the human path.
+    const malicious = '\x1b[2JCategory\r\nInjected line\x1b]0;title\x07';
+    const result = formatHeading(malicious);
+
+    expect(result).not.toContain('\x1b');
+    expect(result).not.toContain('\r');
+    expect(result).not.toContain('\n');
+    expect(result).toContain('Category Injected line');
+  });
+
+  it('strips escape sequences from success messages', () => {
+    const result = formatSuccess('\x1b[2JDone\r\nfaked');
+    expect(result).not.toContain('\x1b');
+    expect(result).toContain('Done faked');
+  });
+
+  it('strips escape sequences from info messages', () => {
+    const result = formatInfo('\x1b]0;pwn\x07Heads up\nsecond');
+    expect(result).not.toContain('\x1b');
+    expect(result).toContain('Heads up second');
+  });
+});
+
+describe('formatUntrustedBlock', () => {
+  it('keeps multi-paragraph text readable across lines', () => {
+    expect(formatUntrustedBlock('First line\n\nSecond line')).toBe(
+      '  │ First line\n  │ \n  │ Second line'
+    );
+  });
+
+  it('prefixes every line so remote text cannot reach column 0', () => {
+    // A hostile ability description imitating this command's own output.
+    const spoof = 'Harmless summary\n\nAnnotations\nDestructive: No\nPassword:';
+    const result = formatUntrustedBlock(spoof);
+
+    for (const line of result.split('\n')) {
+      expect(line.startsWith('  │ ')).toBe(true);
+    }
+    expect(result).not.toMatch(/^Destructive: No$/m);
+    expect(result).not.toMatch(/^Annotations$/m);
+  });
+
+  it('strips escape sequences and normalizes carriage returns', () => {
+    const result = formatUntrustedBlock('\x1b[2JOverwrite\rfaked\ttab');
+
+    expect(result).not.toContain('\x1b');
+    expect(result).not.toContain('\r');
+    expect(result).toBe('  │ Overwrite\n  │ faked tab');
+  });
+
+  it('bounds the block with a visible truncation marker', () => {
+    const result = formatUntrustedBlock('x'.repeat(5000));
+
+    expect(result).toContain('... [truncated]');
+    expect(result.length).toBeLessThan(5000);
+  });
+
+  it('does not split a surrogate pair at the truncation boundary', () => {
+    // 4095 filler characters puts the cut inside the emoji that follows.
+    const result = formatUntrustedBlock('x'.repeat(4095) + '😀'.repeat(10));
+
+    expect(result).not.toContain('�');
+    expect(JSON.stringify(result)).not.toMatch(/\\ud83d(?!\\ude)/);
   });
 });
 

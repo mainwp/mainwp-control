@@ -3,6 +3,7 @@
  */
 
 import { isSensitiveKey } from './redaction.js';
+import { isSensitiveParameterKey, maskUrlUserinfoInText } from './format.js';
 
 const PATH_PATTERNS = [
   /\/Users\/[^/\s]+/g,
@@ -11,34 +12,100 @@ const PATH_PATTERNS = [
   /\.config\/mainwpcontrol/g,
 ];
 
+/**
+ * Longest error text scanned by the patterns below.
+ *
+ * Error strings reach here from hostile Dashboard response bodies, where the
+ * transport's byte cap (10MB) is far too coarse to keep the credential scan
+ * cheap. Any genuine error message is orders of magnitude shorter than this, so
+ * truncating first bounds the work without losing real diagnostics.
+ */
+const MAX_ERROR_MESSAGE_LENGTH = 16384;
+
+/**
+ * Whitespace that may end a retained token, excluding tab/CR/LF.
+ *
+ * Those three are not boundaries here: the URL parser discards them, so
+ * `https://user:secret\n...@host` is a single credential to it even though it
+ * looks like two tokens. Cutting on the newline would keep
+ * `https://user:secret`, which the credential pattern can no longer recognize.
+ */
+const SAFE_BOUNDARY = /[^\S\t\n\r]/;
+
+/**
+ * Truncate without cutting through the middle of a token.
+ *
+ * Cutting mid-token hides credentials instead of redacting them: the patterns
+ * below need the whole `user:pass@host` construct to match, so a URL sliced
+ * before its `@` stops matching and the userinfo is emitted as plain text.
+ * Ending on a whitespace boundary guarantees every token that survives is
+ * complete. A single token longer than the limit carries no diagnostic value
+ * and is dropped entirely rather than half-emitted.
+ */
+function truncateAtTokenBoundary(text: string, limit: number): string {
+  const cut = text.slice(0, limit);
+  // Tab, CR and LF are NOT safe boundaries: the URL parser discards them, so
+  // `https://user:secret\n...@host` is one credential to the parser even though
+  // it looks like two tokens here. Cutting on the newline would keep
+  // `https://user:secret`, which the pattern below can no longer recognize.
+  // Scan back for the last usable boundary directly. A trailing-anchored
+  // pattern cannot cross tabs or newlines that appear after it, so a message
+  // ending in a long run of them discarded an otherwise fine prefix.
+  for (let index = cut.length - 1; index >= 0; index--) {
+    if (SAFE_BOUNDARY.test(cut[index]!)) {
+      return cut.slice(0, index);
+    }
+  }
+  return '';
+}
+
 export function sanitizeErrorMessage(message: string): string {
-  let sanitized = message;
+  let sanitized =
+    message.length > MAX_ERROR_MESSAGE_LENGTH
+      ? `${truncateAtTokenBoundary(message, MAX_ERROR_MESSAGE_LENGTH)}... [truncated]`
+      : message;
 
   for (const pattern of PATH_PATTERNS) {
     sanitized = sanitized.replace(pattern, '[PATH]');
   }
 
-  // Password is optional: `https://alice@host` still leaks a username.
+  // Embedded userinfo, delegated to the shared linear scanner. A local pattern
+  // lived here through three rewrites and still missed an uppercase scheme, a
+  // scheme split by a newline the URL parser discards, and a password
+  // containing spaces (the Application Password format). The scanner masks the
+  // userinfo in place and keeps scheme/host, which is the more useful
+  // diagnostic than the old whole-URL placeholder.
+  sanitized = maskUrlUserinfoInText(sanitized);
+
+  // RFC 6750 b64token: `Basic`/`Bearer` values may use base64url (`-` `_`) and
+  // the token68 extras (`.` `~` `+` `/`). Stopping at the first character
+  // outside a narrower class left the credential's tail in the message.
   sanitized = sanitized.replace(
-    /https?:\/\/[^\s@/]+(?::[^\s@]*)?@[^\s]+/g,
-    '[URL_WITH_CREDENTIALS]'
-  );
-  sanitized = sanitized.replace(
-    /Basic\s+[A-Za-z0-9+/]+=*/gi,
+    /Basic\s+[A-Za-z0-9+/_-]+=*/gi,
     'Basic [REDACTED]'
   );
   sanitized = sanitized.replace(
-    /Bearer\s+[A-Za-z0-9._-]+/gi,
+    /Bearer\s+[A-Za-z0-9._~+/-]+=*/gi,
     'Bearer [REDACTED]'
   );
 
-  // Query-string parameters whose key is on the shared sensitive list
-  // (access_token, api_key, ...) — a URL like ?access_token=... carries the
-  // credential outside the userinfo form handled above.
+  // Parameters whose key is on the shared sensitive list (access_token,
+  // api_key, ...) — a URL like ?access_token=... carries the credential
+  // outside the userinfo form handled above. `#` is a separator too: a
+  // fragment-carried key never reaches a server but does reach the terminal.
+  // `#` also has to leave the key/value classes, or a preceding harmless
+  // parameter's value swallows `#api_key=...` and the scan never sees it.
+  //
+  // Classification is shared with the URL masker rather than calling
+  // isSensitiveKey directly: the raw key is not the parameter's name, so
+  // `api%5Fkey` would otherwise pass through with its value intact here even
+  // though the same URL masks correctly on the display path. The character
+  // classes stay local — this scans free prose, where quotes terminate a
+  // value, not a whole URL.
   sanitized = sanitized.replace(
-    /([?&])([^=&\s"']{1,64})=([^&\s"']+)/g,
+    /([?&#])([^=&#\s"']+)=([^&#\s"']+)/g,
     (match, sep: string, key: string) =>
-      isSensitiveKey(key) ? `${sep}${key}=[REDACTED]` : match
+      isSensitiveParameterKey(key) ? `${sep}${key}=[REDACTED]` : match
   );
 
   return sanitized;

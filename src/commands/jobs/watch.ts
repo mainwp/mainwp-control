@@ -16,7 +16,7 @@ import {
   formatProgressBar,
   formatElapsed,
 } from '../../output/formatter.js';
-import { safeString } from '../../utils/terminal-sanitizer.js';
+import { safeString, sanitizeSingleLine } from '../../utils/terminal-sanitizer.js';
 import { APIError } from '../../utils/errors.js';
 import { errorOutput } from '../../output/json-envelope.js';
 import {
@@ -355,12 +355,15 @@ export default class JobsWatch extends BaseCommand {
       // Show first few results
       const preview = status.results.slice(0, RESULTS_PREVIEW_LIMIT);
       for (const item of preview) {
+        // These labels are Dashboard-controlled. safeString() strips escape
+        // sequences but preserves CR/LF/tab, so a result named
+        // "site\n✓ Job completed" would forge a status line; collapse to one row.
         if (typeof item === 'object' && item !== null) {
           const obj = item as Record<string, unknown>;
           const label = safeString(obj['name'] ?? obj['url'] ?? obj['id'] ?? JSON.stringify(obj));
-          lines.push(`  - ${label}`);
+          lines.push(`  - ${sanitizeSingleLine(label)}`);
         } else {
-          lines.push(`  - ${safeString(item)}`);
+          lines.push(`  - ${sanitizeSingleLine(safeString(item))}`);
         }
       }
 

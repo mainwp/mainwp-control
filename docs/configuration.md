@@ -16,10 +16,21 @@ For CI, Docker, and machines without a keychain, put the password in the environ
 
 ```bash
 export MAINWP_APP_PASSWORD='xxxx xxxx xxxx xxxx xxxx xxxx'
+export MAINWP_DASHBOARD_URL='https://dashboard.example.com'
 mainwpcontrol login --url https://dashboard.example.com --username admin
 ```
 
-When no keychain is available, the password is never written to disk; keep `MAINWP_APP_PASSWORD` set for each run. The profile file is still written and records the Dashboard URL and username, as it does in every mode. If keytar is installed but broken, set `MAINWPCONTROL_NO_KEYTAR=1` to skip loading it.
+When no keychain is available, the password is never written to disk; keep both variables set for each run:
+
+```bash
+export MAINWP_APP_PASSWORD='xxxx xxxx xxxx xxxx xxxx xxxx'
+export MAINWP_DASHBOARD_URL='https://dashboard.example.com'
+mainwpcontrol abilities list
+```
+
+Any command that authenticates with `MAINWP_APP_PASSWORD`, `login` included, sends it only to the Dashboard named in `MAINWP_DASHBOARD_URL` and fails rather than sending it anywhere else. Two things follow: a `profiles.json` that someone else can write cannot point your credential at their server, and in CI, where the password usually comes from a protected secret store and command arguments do not, an edited pipeline cannot redirect it either. Keychain-stored credentials carry the same binding internally and need no extra variable. `login` only prompts for the password when `MAINWP_APP_PASSWORD` is unset; when it is set, the same binding applies. `doctor` and `config show` only display configuration, so they are unaffected.
+
+The profile file is still written and records the Dashboard URL and username, as it does in every mode. If keytar is installed but broken, set `MAINWPCONTROL_NO_KEYTAR=1` to skip loading it.
 
 ## Profiles
 
@@ -68,6 +79,7 @@ Inspect the active values with `mainwpcontrol config show`.
 | Variable | Description |
 |----------|-------------|
 | `MAINWP_APP_PASSWORD` | Application Password for non-interactive login, and for commands when no keychain is available |
+| `MAINWP_DASHBOARD_URL` | The Dashboard `MAINWP_APP_PASSWORD` belongs to. Required whenever a command authenticates using that fallback |
 | `MAINWPCONTROL_NO_KEYTAR` | Set to `1` to skip keytar (keychain) loading entirely |
 | `MAINWP_ALLOW_HTTP` | Set to `1` to allow insecure HTTP Dashboard URLs |
 

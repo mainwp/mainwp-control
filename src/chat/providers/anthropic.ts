@@ -13,6 +13,7 @@ import {
   type ProviderCapabilities,
   type StreamChunk,
   type ToolCall,
+  MAX_TOOL_ARGUMENTS_LENGTH,
   registerProvider,
   splitSystemMessage,
 } from './provider.js';
@@ -203,6 +204,11 @@ export class AnthropicProvider implements LLMProvider {
     let toolName = '';
     let toolArgs = '';
 
+    // Set inside the try below, thrown after it: the catch there swallows
+    // everything as a malformed chunk, so throwing inside would turn the cap
+    // breach into a silently skipped event and let accumulation continue.
+    let argumentsOverflow = false;
+
     for await (const data of readSSEStream({
       url: `${this.baseUrl}/v1/messages`,
       headers: this.getHeaders(),
@@ -228,7 +234,11 @@ export class AnthropicProvider implements LLMProvider {
             yield { content: delta.text, done: false };
           }
           if (delta?.type === 'input_json_delta' && delta.partial_json) {
-            toolArgs += delta.partial_json;
+            if (toolArgs.length + delta.partial_json.length > MAX_TOOL_ARGUMENTS_LENGTH) {
+              argumentsOverflow = true;
+            } else {
+              toolArgs += delta.partial_json;
+            }
           }
         }
 
@@ -267,6 +277,10 @@ export class AnthropicProvider implements LLMProvider {
         if (process.env['DEBUG']) {
           console.debug('[Anthropic] Skipped malformed SSE chunk');
         }
+      }
+
+      if (argumentsOverflow) {
+        throw new Error('Anthropic tool call argument limit exceeded');
       }
     }
 

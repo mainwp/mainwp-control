@@ -97,6 +97,44 @@ export interface ChatOptions {
 }
 
 /**
+ * Largest tool-call argument payload a provider will accumulate across SSE
+ * events before yielding it.
+ *
+ * Each SSE line is already bounded, but the argument deltas are concatenated
+ * across an unbounded number of them, so without this a hostile endpoint grows
+ * one tool call without limit. Mirrors the chat engine's stream caps; any real
+ * ability input is orders of magnitude smaller.
+ */
+export const MAX_TOOL_ARGUMENTS_LENGTH = 1_048_576;
+
+/**
+ * Distinct tool calls one streamed response may accumulate inside a provider.
+ *
+ * The OpenAI-compatible stream keys partial calls by index and yields nothing
+ * until the finish event, so the chat engine's own tool-call cap cannot engage
+ * while the stream is open: a hostile endpoint opens fresh indices for the
+ * whole multi-minute SSE window. The envelope accepts exactly one call, so this
+ * only has to sit above what a real parallel-tool response sends.
+ *
+ * Intentionally distinct from the chat engine's MAX_STREAM_TOOL_CALLS (2) and
+ * the tool envelope's exactly-one protocol limit: this value is a memory bound
+ * on the provider stream, 2 is the minimum the engine needs to report "received
+ * N > 1" as a protocol error instead of silently taking the first call, and 1
+ * is the protocol contract. Deriving one from another would couple layers that
+ * fail independently.
+ */
+export const MAX_STREAMED_TOOL_CALLS = 8;
+
+/**
+ * Aggregate tool-call argument bytes one streamed response may accumulate.
+ *
+ * The per-call cap bounds a single index; without an aggregate, N indices each
+ * just under it multiply the same memory by N. Mirrors the chat engine's
+ * aggregate cap for the response it will eventually see.
+ */
+export const MAX_TOTAL_TOOL_ARGUMENTS_LENGTH = 1_048_576;
+
+/**
  * Stream chunk for streaming responses
  */
 export interface StreamChunk {

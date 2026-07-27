@@ -433,4 +433,49 @@ describe('doctor command', () => {
     expect(activeProfile?.details).toBe('https://***:***@dashboard.example.com');
     expect(result.stdout).not.toContain('legacy:secret');
   });
+
+  it('redacts sensitive URL parameters echoed by a connection failure', async () => {
+    // The transport echoes an unparseable redirect Location verbatim, so a
+    // URL carrying ?access_token= reaches the Dashboard Connection details.
+    // reset() drops the beforeEach abilities route so this one matches first.
+    server.reset();
+    server.addRoute('GET', '/wp-json/wp-abilities/v1/abilities', (_req, res) => {
+      res.writeHead(302, { Location: 'http://[::1?access_token=SECRET' });
+      res.end();
+    });
+
+    configDir = await ConfigDir.create({
+      profiles: [
+        {
+          name: 'test',
+          dashboardUrl: server.baseUrl,
+          username: 'admin',
+        },
+      ],
+      activeProfile: 'test',
+    });
+
+    const result = await runCLI(['doctor', '--json'], {
+      xdgConfigHome: configDir.xdgHome,
+      env: {
+        MAINWP_APP_PASSWORD: 'test-pass',
+        ANTHROPIC_API_KEY: '',
+        OPENAI_API_KEY: '',
+        GOOGLE_API_KEY: '',
+        OPENROUTER_API_KEY: '',
+        LOCAL_LLM_URL: '',
+        MAINWP_LLM_PROVIDER: '',
+      },
+    });
+
+    const envelope = result.json as {
+      data: { checks: Array<{ name: string; details?: string }> };
+    };
+    const connection = envelope.data.checks.find(
+      (check) => check.name === 'Dashboard Connection'
+    );
+    expect(connection?.details).toContain('access_token=[REDACTED]');
+    expect(connection?.details).not.toContain('SECRET');
+    expect(result.stdout + result.stderr).not.toContain('SECRET');
+  });
 });

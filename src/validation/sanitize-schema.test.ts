@@ -84,6 +84,22 @@ describe('sanitizeInputSchema', () => {
     expect('pattern' in props['notString']!).toBe(false);
   });
 
+  it('strips $async so a hostile schema cannot compile to an async validator', () => {
+    const input = {
+      $async: true,
+      type: 'object',
+      properties: {
+        nested: { $async: true, type: 'string' },
+      },
+    };
+
+    const result = sanitizeInputSchema(input);
+    const props = result['properties'] as Record<string, Record<string, unknown>>;
+
+    expect('$async' in result).toBe(false);
+    expect('$async' in props['nested']!).toBe(false);
+  });
+
   it('drops patternProperties wholesale', () => {
     const input = {
       type: 'object',

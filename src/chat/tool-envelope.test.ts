@@ -134,3 +134,40 @@ describe('parseResponse', () => {
     });
   });
 });
+
+describe('JSON scan bounding (F19)', () => {
+  it('completes quickly on an adversarial unclosed-brace payload', () => {
+    // The balanced-brace scan restarts from every "{", so a wall of unclosed
+    // braces is quadratic without the scan bounds.
+    const hostile = `prose ${'{'.repeat(300_000)}`;
+    const start = Date.now();
+
+    const result = parseResponse(contentResponse(hostile));
+
+    expect(Date.now() - start).toBeLessThan(500);
+    // Bounded scan finds no envelope; content that leads with prose but
+    // carries no envelope key is still surfaced as an answer — whole, so a
+    // scan bound can never be met by silently dropping the payload.
+    expect(result.response).toEqual({ type: 'answer', answer: hostile });
+  });
+
+  it('still extracts an envelope embedded in surrounding prose', () => {
+    const result = parseResponse(
+      contentResponse('Here you go: {"answer": "hello"} — done')
+    );
+
+    expect(result.response).toEqual({ type: 'answer', answer: 'hello' });
+  });
+
+  it('still extracts a tool envelope embedded in prose', () => {
+    const result = parseResponse(
+      contentResponse('Calling now: {"tool": "list-sites-v1", "input": {}}')
+    );
+
+    expect(result.response).toEqual({
+      type: 'tool',
+      tool: 'list-sites-v1',
+      input: {},
+    });
+  });
+});

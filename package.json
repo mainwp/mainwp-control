@@ -96,6 +96,11 @@
   "optionalDependencies": {
     "keytar": "~7.9.0"
   },
+  "overrides": {
+    "filelist": {
+      "minimatch": "^10.2.5"
+    }
+  },
   "devDependencies": {
     "@oclif/test": "^4.0.0",
     "@types/node": "^20.0.0",

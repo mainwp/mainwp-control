@@ -16,8 +16,11 @@ Keytar (the keychain module) requires native C++ compilation on some platforms. 
    ```bash
    export MAINWPCONTROL_NO_KEYTAR=1
    export MAINWP_APP_PASSWORD='your-application-password'
+   export MAINWP_DASHBOARD_URL='https://dashboard.example.com'
    mainwpcontrol login --url https://dashboard.example.com --username admin
+   mainwpcontrol abilities list
    ```
+   `MAINWP_DASHBOARD_URL` is required alongside the password: the CLI releases the environment credential only to the Dashboard it names, and refuses when it is missing or points elsewhere.
 2. **Or install C++ build tools** (`gcc`, `g++`, `make`) and reinstall.
 
 ## "command not found" after install

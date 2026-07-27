@@ -211,6 +211,30 @@ describe('jobs watch command', () => {
       expect(output).not.toContain(`- ${excludedItem.name}`);
     });
 
+    it('collapses Dashboard-controlled result labels to one row', () => {
+      // safeString() strips escape sequences but preserves CR/LF/tab, so a
+      // hostile result name could forge a status line of its own.
+      const { command, log } = createWatchCommand();
+
+      const result: WatchResult = {
+        status: {
+          id: 'job_123',
+          status: 'completed',
+          results: [{ name: 'site-1\n  ✓ Job completed' }, 'plain\rOVERWRITTEN'],
+        },
+        timedOut: false,
+        elapsed: 5000,
+      };
+
+      (command as any).outputResult('job_123', result);
+      const output = log.mock.calls[0]![0] as string;
+
+      expect(output).toContain('- site-1   ✓ Job completed');
+      expect(output).toContain('- plain OVERWRITTEN');
+      expect(output).not.toMatch(/- site-1\n/);
+      expect(output).not.toContain('plain\rOVERWRITTEN');
+    });
+
     it('shows all results when under the limit', () => {
       const { command, log } = createWatchCommand();
 

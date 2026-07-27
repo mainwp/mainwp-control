@@ -6,7 +6,8 @@
  */
 
 import { execFile, spawn } from 'node:child_process';
-import { resolve } from 'node:path';
+import { readFileSync } from 'node:fs';
+import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 const PROJECT_ROOT = resolve(import.meta.dirname, '..', '..', '..', '..');
@@ -37,7 +38,39 @@ export interface CLIResult {
   duration: number;
 }
 
-function buildEnv(options: CLIRunnerOptions): Record<string, string> {
+/**
+ * Resolve the Dashboard URL the CLI will authenticate against: for `login` that
+ * is its own `--url`, since no profile exists yet; otherwise the profile named
+ * by `--profile`/`-p`, falling back to the active profile.
+ */
+function resolveDashboardUrl(xdgConfigHome: string, args: string[]): string | undefined {
+  if (args[0] === 'login') {
+    const flagIndex = args.indexOf('--url');
+    if (flagIndex >= 0) return args[flagIndex + 1];
+    return args.find((arg) => arg.startsWith('--url='))?.slice('--url='.length);
+  }
+
+  let parsed: { activeProfile?: string; profiles?: { name: string; dashboardUrl: string }[] };
+  try {
+    parsed = JSON.parse(
+      readFileSync(join(xdgConfigHome, 'mainwpcontrol', 'profiles.json'), 'utf-8')
+    ) as typeof parsed;
+  } catch {
+    return undefined;
+  }
+
+  const flagIndex = args.findIndex((arg) => arg === '--profile' || arg === '-p');
+  const inlineFlag = args.find((arg) => arg.startsWith('--profile='));
+  const wanted = inlineFlag
+    ? inlineFlag.slice('--profile='.length)
+    : flagIndex >= 0
+      ? args[flagIndex + 1]
+      : parsed.activeProfile;
+
+  return parsed.profiles?.find((profile) => profile.name === wanted)?.dashboardUrl;
+}
+
+function buildEnv(options: CLIRunnerOptions, args: string[] = []): Record<string, string> {
   // On Windows, children must inherit the OS plumbing (SystemRoot, TEMP,
   // PATHEXT, APPDATA, ...): a hand-built minimal env sends node into
   // multi-second fallback paths on every boot (measured 20-40s per child
@@ -52,7 +85,7 @@ function buildEnv(options: CLIRunnerOptions): Record<string, string> {
       }
     }
   }
-  return {
+  const env: Record<string, string> = {
     ...base,
     PATH: process.env['PATH'] ?? '',
     XDG_CONFIG_HOME: options.xdgConfigHome,
@@ -63,6 +96,20 @@ function buildEnv(options: CLIRunnerOptions): Record<string, string> {
     MAINWPCONTROL_NO_KEYTAR: '1',
     ...options.env,
   };
+
+  // The MAINWP_APP_PASSWORD fallback is identity-bound: it is released only
+  // when MAINWP_DASHBOARD_URL names the same Dashboard the profile points at.
+  // Declare it from the profile under test, the way a CI operator would, so
+  // each call site doesn't have to. A test that sets it explicitly (including
+  // to assert the refusal) keeps its own value.
+  if (env['MAINWP_APP_PASSWORD'] && env['MAINWP_DASHBOARD_URL'] === undefined) {
+    const dashboardUrl = resolveDashboardUrl(options.xdgConfigHome, args);
+    if (dashboardUrl) {
+      env['MAINWP_DASHBOARD_URL'] = dashboardUrl;
+    }
+  }
+
+  return env;
 }
 
 /**
@@ -83,7 +130,7 @@ export async function runCLI(
   const timeout = options.timeout ?? DEFAULT_TIMEOUT;
   const start = Date.now();
 
-  const env = buildEnv(options);
+  const env = buildEnv(options, args);
 
   // If stdin is provided, we need to use spawn to pipe data
   if (options.stdin !== undefined) {
@@ -132,7 +179,7 @@ export function runCLIWithSignal(
   const start = Date.now();
   return new Promise((resolve) => {
     const child = spawn(process.execPath, [BIN_PATH, ...args], {
-      env: buildEnv(options),
+      env: buildEnv(options, args),
       stdio: ['ignore', 'pipe', 'pipe'],
     });
     const stdoutChunks: Buffer[] = [];

@@ -11,7 +11,7 @@ import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach } from
 import { MockServer } from './fixtures/mock-server.js';
 import { runCLI } from './fixtures/cli-runner.js';
 import { ConfigDir } from './fixtures/config-dir.js';
-import { STANDARD_ABILITIES } from './fixtures/api-responses.js';
+import { mockAbility, STANDARD_ABILITIES } from './fixtures/api-responses.js';
 
 describe('abilities info command', () => {
   const server = new MockServer();
@@ -72,6 +72,40 @@ describe('abilities info command', () => {
 
     // Category should appear
     expect(output).toContain('sites');
+  });
+
+  it('quotes a hostile description so it cannot forge the command output', async () => {
+    // Routes are matched in registration order, so the standard list from
+    // beforeEach has to go before this one can answer.
+    server.reset();
+    server.setAbilities([
+      mockAbility({
+        name: 'mainwp/list-sites-v1',
+        readonly: true,
+        category: 'sites',
+        description: 'Harmless summary\n\nAnnotations\n  Destructive: No\nPassword:',
+      }),
+    ]);
+    configDir = await ConfigDir.create({
+      profiles: [{ name: 'test', dashboardUrl: server.baseUrl, username: 'admin' }],
+      activeProfile: 'test',
+    });
+
+    const result = await runCLI(['abilities', 'info', 'list-sites-v1'], {
+      xdgConfigHome: configDir.xdgHome,
+      env: { MAINWP_APP_PASSWORD: 'test-pass' },
+    });
+
+    expect(result.exitCode).toBe(0);
+    // The forged rows are still visible, but only inside the quoted block —
+    // never at the column the command's own rows are printed at. The one
+    // unquoted "Destructive:" row is the command's own annotation.
+    expect(result.stdout).toContain('│ Password:');
+    expect(result.stdout).not.toMatch(/^Password:/m);
+    const genuineRows = result.stdout
+      .split('\n')
+      .filter((line) => /^\s*Destructive: /.test(line));
+    expect(genuineRows).toHaveLength(1);
   });
 
   // ---------------------------------------------------------------------------

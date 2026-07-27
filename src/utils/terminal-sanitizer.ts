@@ -21,7 +21,14 @@ const ESCAPE_PATTERNS = {
 
   // Operating System Command sequences: ESC ] ... ST
   // Used for setting window titles, clipboard, etc.
-  osc: /\x1b\][\s\S]*?(?:\x07|\x1b\\)/g,
+  //
+  // The body is a negated class rather than a lazy `[\s\S]*?`: a lazy body with
+  // an alternation terminator rescans to end-of-input from every `ESC ]` when no
+  // terminator exists, which is quadratic on hostile input. A body that cannot
+  // contain its own terminator fails linearly instead. An unterminated sequence
+  // is left for the bare-ESC sweep at the end of stripControlChars, so nothing
+  // escapes; it just no longer swallows an arbitrary span of legitimate text.
+  osc: /\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g,
 
   // Single-character escape sequences: ESC followed by single char
   singleEsc: /\x1b[^[\]]/g,
@@ -30,16 +37,17 @@ const ESCAPE_PATTERNS = {
   c1: /[\x80-\x9f]/g,
 
   // Device Control Strings: ESC P ... ST
-  dcs: /\x1bP[\s\S]*?(?:\x1b\\)/g,
+  // Negated bodies, for the same linear-failure reason as `osc` above.
+  dcs: /\x1bP[^\x1b]*(?:\x1b\\)/g,
 
   // Application Program Command: ESC _ ... ST
-  apc: /\x1b_[\s\S]*?(?:\x1b\\)/g,
+  apc: /\x1b_[^\x1b]*(?:\x1b\\)/g,
 
   // Privacy Message: ESC ^ ... ST
-  pm: /\x1b\^[\s\S]*?(?:\x1b\\)/g,
+  pm: /\x1b\^[^\x1b]*(?:\x1b\\)/g,
 
   // Start of String: ESC X ... ST
-  sos: /\x1bX[\s\S]*?(?:\x1b\\)/g,
+  sos: /\x1bX[^\x1b]*(?:\x1b\\)/g,
 };
 
 /**
@@ -103,6 +111,24 @@ export function stripControlChars(str: string): string {
  */
 export function sanitizeSingleLine(str: string): string {
   return stripControlChars(str).replace(/[\r\n\t]+/g, ' ');
+}
+
+/**
+ * Sanitize untrusted multi-line free text (ability descriptions, instruction
+ * blocks) for terminal output.
+ *
+ * Strips terminal control sequences like the single-line variant but keeps
+ * newlines, so a legitimate multi-paragraph description still renders across
+ * lines instead of being collapsed onto one. Carriage returns (lone or as part
+ * of CRLF) are normalized to a newline so a hostile field cannot return the
+ * cursor to column 0 and overwrite what was already printed.
+ */
+export function sanitizeMultiLine(str: string): string {
+  return stripControlChars(str)
+    .replace(/\r\n?/g, '\n')
+    // Tabs jump to the next tab stop, which lets hostile text align itself into
+    // fake columns; the single-line variant collapses them for the same reason.
+    .replace(/\t/g, ' ');
 }
 
 /**

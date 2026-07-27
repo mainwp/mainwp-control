@@ -68,7 +68,7 @@ export class SchemaValidator {
     const validate = this.getCompiledSchema(schema, schemaId);
     // Clone input so AJV coerceTypes/useDefaults mutates the clone, not the caller's object
     const coerced = structuredClone(input);
-    const valid = validate(coerced);
+    const valid = this.assertSyncResult(validate(coerced), schemaId);
 
     if (valid) {
       return { valid: true, coerced };
@@ -114,7 +114,52 @@ export class SchemaValidator {
     schemaId?: string
   ): boolean {
     const validate = this.getCompiledSchema(schema, schemaId);
-    return validate(structuredClone(input)) as boolean;
+    return this.assertSyncResult(validate(structuredClone(input)), schemaId);
+  }
+
+  /**
+   * Fail closed if a compiled validator returns anything other than a boolean.
+   *
+   * `sanitize-schema` strips `$async`, so a compiled validator is always
+   * synchronous in normal operation. This guard is defense in depth: should any
+   * future async keyword slip past the sanitizer, AJV would return a
+   * Promise, whose truthiness would otherwise be read as "valid" and whose
+   * rejection would crash the process. Reject it as an unusable schema instead.
+   */
+  private assertSyncResult(result: unknown, schemaId?: string): boolean {
+    if (typeof result !== 'boolean') {
+      // Adopt a thenable before throwing. An async validator's promise rejects
+      // on invalid input, and with nothing attached that rejection is unhandled
+      // and kills the process — the exact crash this guard exists to prevent.
+      // The result comes from a compiled remote schema, so `then` may be a
+      // throwing getter, may throw when called, or may itself return a rejected
+      // promise; none of those may replace the schema error below.
+      try {
+        const thenable = result as { then?: unknown } | null;
+        const then = thenable?.then;
+        if (typeof then === 'function') {
+          const chained: unknown = then.call(
+            thenable,
+            () => undefined,
+            () => undefined
+          );
+          if (typeof (chained as PromiseLike<unknown> | null)?.then === 'function') {
+            void Promise.resolve(chained as PromiseLike<unknown>).catch(() => undefined);
+          }
+        }
+      } catch {
+        // Containing the rejection is best effort; the schema error is what matters.
+      }
+      const schemaName = schemaId ? `"${schemaId}"` : '(unnamed)';
+      throw new APIError(
+        'ABILITY_SCHEMA_INVALID',
+        `Input schema for ability ${schemaName} produced a non-boolean validation result`,
+        undefined,
+        undefined,
+        'The Dashboard served an input schema that validates asynchronously, which is not supported'
+      );
+    }
+    return result;
   }
 
   /**

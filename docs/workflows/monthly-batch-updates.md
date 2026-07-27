@@ -104,7 +104,7 @@ MainWP Control will prompt you for three pieces of information:
 2. **Username:** Your WordPress admin username on that site.
 3. **Application Password:** The password you created in Step 1.
 
-After entering your credentials, MainWP Control stores them in a local profile so you do not need to re-enter them each time. If the machine cannot use the OS keychain, keep `MAINWP_APP_PASSWORD` available in the environment for future runs.
+After entering your credentials, MainWP Control stores them in a local profile so you do not need to re-enter them each time. If the machine cannot use the OS keychain, keep `MAINWP_APP_PASSWORD` and `MAINWP_DASHBOARD_URL` available in the environment for future runs.
 
 Verify that authentication is working:
 
@@ -524,6 +524,8 @@ jobs:
       DASHBOARD_URL: ${{ secrets.DASHBOARD_URL }}
       DASHBOARD_USER: ${{ secrets.DASHBOARD_USER }}
       MAINWP_APP_PASSWORD: ${{ secrets.MAINWP_APP_PASSWORD }}
+      # Binds the password to one Dashboard; the CLI refuses to send it elsewhere.
+      MAINWP_DASHBOARD_URL: ${{ secrets.DASHBOARD_URL }}
     steps:
       - uses: actions/setup-node@v4
         with:
@@ -546,7 +548,7 @@ jobs:
           --username $DASHBOARD_USER
 ```
 
-- `env`: Sets job-level environment variables so every `mainwpcontrol` step can authenticate. GitHub runners often do not persist credentials in an OS keychain between steps, so `MAINWP_APP_PASSWORD` must stay available for the whole job.
+- `env`: Sets job-level environment variables so every `mainwpcontrol` step can authenticate. GitHub runners often do not persist credentials in an OS keychain between steps, so `MAINWP_APP_PASSWORD` must stay available for the whole job, together with `MAINWP_DASHBOARD_URL`, which pins the Dashboard it may be sent to.
 - `${{ secrets.DASHBOARD_URL }}`: GitHub replaces this with the encrypted secret value at runtime. The actual value never appears in logs.
 - The `>` after `run:` is YAML syntax for a folded string. It joins the following indented lines into a single command, which makes long commands easier to read.
 
@@ -612,6 +614,8 @@ jobs:
       DASHBOARD_URL: ${{ secrets.DASHBOARD_URL }}
       DASHBOARD_USER: ${{ secrets.DASHBOARD_USER }}
       MAINWP_APP_PASSWORD: ${{ secrets.MAINWP_APP_PASSWORD }}
+      # Binds the password to one Dashboard; the CLI refuses to send it elsewhere.
+      MAINWP_DASHBOARD_URL: ${{ secrets.DASHBOARD_URL }}
     steps:
       - uses: actions/setup-node@v4
         with:

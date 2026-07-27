@@ -1312,6 +1312,8 @@ async function runAgentAcceptance(options: AgentRunnerOptions): Promise<number> 
             XDG_CONFIG_HOME: configDir.xdgHome,
             MAINWPCONTROL_NO_KEYTAR: '1',
             MAINWP_APP_PASSWORD: scenarioCredentials.appPassword,
+            // The env credential is identity-bound to the profile's Dashboard.
+            MAINWP_DASHBOARD_URL: scenarioCredentials.dashboardUrl,
             ...(insecureHttp ? { MAINWP_ALLOW_HTTP: '1' } : {}),
           },
           (line, elapsedMs) => {

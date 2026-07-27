@@ -23,8 +23,8 @@ import { ExitCode } from '../utils/exit-codes.js';
 import {
   maskPassword,
   maskApiKey,
-  maskUrlUserinfo,
-  maskUrlUserinfoInText,
+  maskUrlCredentials,
+  maskUrlCredentialsInText,
 } from '../utils/format.js';
 import { color, colors } from '../utils/colors.js';
 import { formatDivider, formatStatusIcon, getStatusColor } from '../output/formatter.js';
@@ -211,8 +211,9 @@ export default class DoctorCommand extends BaseCommand {
         name: 'Active Profile',
         status: 'pass',
         message: `Active: ${activeProfile.name}`,
-        // Mask userinfo from profiles stored before intake rejection existed
-        details: maskUrlUserinfo(activeProfile.dashboardUrl),
+        // Mask userinfo and sensitive query/fragment parameters from profiles
+        // stored before intake rejection existed
+        details: maskUrlCredentials(activeProfile.dashboardUrl),
       };
     } catch (error) {
       return {
@@ -303,8 +304,9 @@ export default class DoctorCommand extends BaseCommand {
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
 
-      // Fetch errors can echo the full request URL, credentials included
-      let details = maskUrlUserinfoInText(message);
+      // Fetch errors can echo the full request URL, credentials included:
+      // both `user:pass@` userinfo and `?access_token=` / `#api_key=` params.
+      let details = maskUrlCredentialsInText(message);
       if (message.includes('ECONNREFUSED')) {
         details = 'Connection refused. Is the Dashboard running?';
       } else if (message.includes('ENOTFOUND')) {
@@ -456,9 +458,12 @@ export default class DoctorCommand extends BaseCommand {
       this.log(`     ${color(sanitizeSingleLine(check.message), statusColor)}`);
 
       if (verbose && check.details) {
+        // Split on real newlines to keep multi-line details, then collapse any
+        // remaining CR/tab per line (sanitizeSingleLine) so a lone \r cannot
+        // return the cursor and overwrite the line, matching the message path above.
         const detailLines = stripControlChars(check.details).split('\n');
         for (const line of detailLines) {
-          this.log(`     ${color(line, colors.gray)}`);
+          this.log(`     ${color(sanitizeSingleLine(line), colors.gray)}`);
         }
       }
     }

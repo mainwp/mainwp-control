@@ -50,6 +50,67 @@ import { redactSensitiveKeys } from '../utils/redaction.js';
 import { executeAbilityWithPolicy } from '../core/execute-ability-with-policy.js';
 
 /**
+ * Largest streamed response body accumulated into a single LLM response.
+ *
+ * The provider stream is unbounded on its own and the SSE window runs for
+ * minutes, so this is the size cap for the non-streaming path's equivalent.
+ * 1MB is far beyond any real tool envelope or chat answer.
+ */
+const MAX_STREAM_CONTENT_LENGTH = 1_048_576;
+
+/**
+ * Tool calls retained from one streamed response.
+ *
+ * The envelope accepts exactly one call, so two is everything a truthful
+ * "received N" protocol error needs; the rest is memory a hostile endpoint
+ * controls. Without this, thousands of calls accumulate before the envelope
+ * ever sees the response.
+ */
+const MAX_STREAM_TOOL_CALLS = 2;
+
+/**
+ * Aggregate size of the tool-call arguments retained from one streamed
+ * response, mirroring the content cap.
+ */
+const MAX_STREAM_TOOL_ARGUMENTS_LENGTH = 1_048_576;
+
+/**
+ * Size of one streamed tool call's arguments, for the aggregate cap.
+ *
+ * Arguments are the provider's parsed JSON, or the raw string when it did not
+ * parse (the envelope rejects that as a protocol error). Serializing is the
+ * only way to price the parsed form; a value that cannot be serialized is
+ * charged the whole budget rather than being treated as free.
+ */
+function measureToolArguments(args: unknown): number {
+  if (typeof args === 'string') {
+    return args.length;
+  }
+  try {
+    return JSON.stringify(args)?.length ?? 0;
+  } catch {
+    return MAX_STREAM_TOOL_ARGUMENTS_LENGTH;
+  }
+}
+
+/**
+ * Truncate to `limit` UTF-16 units without splitting a surrogate pair.
+ *
+ * A plain slice can cut between the halves of an astral character (emoji,
+ * many CJK extensions) and leave a lone surrogate, which serializes as a
+ * replacement character and can corrupt the tail of the response.
+ */
+function truncateWholeCodePoints(text: string, limit: number): string {
+  const cut = text.slice(0, limit);
+  const lastCode = cut.charCodeAt(cut.length - 1);
+  // High surrogate at the boundary means its low half was cut off.
+  if (lastCode >= 0xd800 && lastCode <= 0xdbff) {
+    return cut.slice(0, -1);
+  }
+  return cut;
+}
+
+/**
  * Chat response types
  */
 export type ChatResponse =
@@ -766,12 +827,40 @@ export class ChatEngine {
     let content = '';
     // Providers yield complete tool calls (not deltas), so we collect them directly
     const toolCalls: ToolCall[] = [];
+    // A response we cut short must not be reported as a complete answer.
+    let contentTruncated = false;
+    let capReached = false;
+    let toolCallsTruncated = false;
+    let toolArgumentsLength = 0;
 
     try {
       for await (const chunk of stream) {
         // Handle content chunks
         if (chunk.content) {
-          content += chunk.content;
+          // Bound the accumulation: the SSE window is minutes long and the
+          // provider stream has no size cap of its own, so an oversized
+          // response would otherwise grow unbounded in memory and feed the
+          // downstream envelope scan. Display still streams every chunk.
+          if (capReached) {
+            // Full already; this chunk is dropped. Tracked separately from
+            // content.length because trimming an orphaned high surrogate puts
+            // the length back under the cap, and testing the length alone would
+            // then admit the next chunk, appending its unpaired low half.
+            contentTruncated = true;
+          } else {
+            const combined = content + chunk.content;
+            // >= not >: a surrogate pair split across chunks can land exactly on
+            // the cap, and a `>` test would never trim the orphaned half.
+            if (combined.length >= MAX_STREAM_CONTENT_LENGTH) {
+              capReached = true;
+              content = truncateWholeCodePoints(combined, MAX_STREAM_CONTENT_LENGTH);
+              if (combined.length > content.length) {
+                contentTruncated = true;
+              }
+            } else {
+              content = combined;
+            }
+          }
           // Call callback for progressive display
           if (this.onStreamChunk) {
             this.onStreamChunk(chunk.content);
@@ -781,6 +870,19 @@ export class ChatEngine {
         // Handle tool call chunks - providers yield each complete tool call as a separate chunk
         // before the done chunk, so push each one immediately
         if (chunk.toolCall && chunk.toolCall.id && chunk.toolCall.name) {
+          // Bound both the count and the bytes, then stop consuming: past
+          // either cap the stream is only spending memory on a response the
+          // envelope will reject anyway.
+          if (toolCalls.length >= MAX_STREAM_TOOL_CALLS) {
+            toolCallsTruncated = true;
+            break;
+          }
+          const argumentsLength = measureToolArguments(chunk.toolCall.arguments);
+          if (toolArgumentsLength + argumentsLength > MAX_STREAM_TOOL_ARGUMENTS_LENGTH) {
+            toolCallsTruncated = true;
+            break;
+          }
+          toolArgumentsLength += argumentsLength;
           toolCalls.push({
             id: chunk.toolCall.id,
             name: chunk.toolCall.name,
@@ -830,6 +932,32 @@ export class ChatEngine {
 
     // Return accumulated LLMResponse
     const parsedToolCalls = toolCalls;
+
+    // A stream cut at a tool-call cap is not a complete answer either. With two
+    // calls retained the envelope's own "received 2" error already says so, so
+    // only the byte cap (which can stop at one call, or at none) needs routing
+    // through the truncated path — a single call from a stream we abandoned
+    // must never be proposed for execution.
+    if (toolCallsTruncated && parsedToolCalls.length < MAX_STREAM_TOOL_CALLS) {
+      return {
+        content,
+        toolCalls: undefined,
+        finishReason: 'length',
+        model: this.provider.getDefaultModel(),
+      };
+    }
+
+    // Content we cut at the cap is not a complete answer. Reporting 'stop'
+    // would let a truncated response pass as a finished one; 'length' routes it
+    // into the envelope parser's existing protocol-error path instead.
+    if (contentTruncated && parsedToolCalls.length === 0) {
+      return {
+        content,
+        toolCalls: undefined,
+        finishReason: 'length',
+        model: this.provider.getDefaultModel(),
+      };
+    }
 
     return {
       content,

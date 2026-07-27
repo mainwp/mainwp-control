@@ -7,7 +7,7 @@
 import { Flags } from '@oclif/core';
 import { BaseCommand, commonFlags } from '../lib/base-command.js';
 import { getProfileStore, validateDashboardUrl, type Profile } from '../config/profile-store.js';
-import { getKeychain } from '../config/keychain.js';
+import { getKeychain, assertEnvCredentialDeclaredFor } from '../config/keychain.js';
 import { createHttpClient } from '../core/http-client.js';
 import { formatSuccess, formatWarning, formatInfo } from '../output/formatter.js';
 import { AuthError, InputError } from '../utils/errors.js';
@@ -106,7 +106,17 @@ export default class Login extends BaseCommand {
     // Reject malformed URLs (embedded credentials included) before the
     // connection test — undici otherwise fails first with an opaque
     // NetworkError and the user never sees the real reason.
-    validateDashboardUrl(normalizedUrl, { rejectUserinfo: true });
+    validateDashboardUrl(normalizedUrl, { strictIntake: true });
+
+    // The env credential is identity-bound here too. --url names the
+    // destination, but in CI the password comes from a protected secret store
+    // while command arguments generally do not, so requiring the operator to
+    // declare the Dashboard separately is what stops an edited workflow from
+    // redirecting it. Checked before the client is built, so a mismatch never
+    // reaches the network.
+    if (!flags.password && envPassword) {
+      assertEnvCredentialDeclaredFor(normalizedUrl, '--url');
+    }
 
     // Generate profile name from URL if not provided
     const profileName = flags.name ?? new URL(normalizedUrl).hostname;

@@ -5,6 +5,7 @@
 import { isMainWPCTLError } from '../utils/errors.js';
 import {
   sanitizeForTerminal,
+  sanitizeMultiLine,
   sanitizeSingleLine,
   safeString,
 } from '../utils/terminal-sanitizer.js';
@@ -15,7 +16,9 @@ import { colors, color } from '../utils/colors.js';
  * Format a success message
  */
 export function formatSuccess(message: string): string {
-  return color('✓ ', colors.green) + message;
+  // Single-line: the message may interpolate untrusted values (ability names,
+  // job status), so collapse escapes and line breaks like the other terminal fields.
+  return color('✓ ', colors.green) + sanitizeSingleLine(message);
 }
 
 /**
@@ -57,14 +60,63 @@ export function formatWarning(message: string): string {
  * Format an info message
  */
 export function formatInfo(message: string): string {
-  return color('ℹ ', colors.blue) + message;
+  return color('ℹ ', colors.blue) + sanitizeSingleLine(message);
 }
 
 /**
  * Format a heading
+ *
+ * Headings render untrusted Dashboard metadata (ability category, label) on the
+ * human output path, which the JSON envelope sanitizes but the human path does
+ * not. Sanitize here so every call site is safe rather than relying on each to
+ * opt in.
  */
 export function formatHeading(text: string): string {
-  return color(text, colors.bold, colors.cyan);
+  return color(sanitizeSingleLine(text), colors.bold, colors.cyan);
+}
+
+/**
+ * Longest untrusted free-text block rendered on the human path. Real ability
+ * descriptions and instruction blocks are a few hundred characters; a remote
+ * field long enough to scroll the surrounding output off the screen is an
+ * output-forging tool, not documentation.
+ */
+const MAX_UNTRUSTED_BLOCK_LENGTH = 4096;
+
+/**
+ * Prefix stamped on every line of an untrusted block, including the first and
+ * any empty one. Remote text cannot reach column 0 through it, which is what
+ * stops a description from printing its own `Annotations` heading or a
+ * `Destructive: No` row that reads as this CLI's own output.
+ */
+const UNTRUSTED_LINE_PREFIX = '  │ ';
+
+/**
+ * Format remote multi-line free text (ability descriptions, instruction
+ * blocks) as a quoted block.
+ *
+ * Escape stripping alone does not stop line-oriented spoofing: `sanitizeMultiLine`
+ * keeps newlines on purpose, so a hostile field can still emit lines that
+ * imitate trusted output or a password prompt. Quoting every line is the
+ * structural fix — no filtering of what the text says, just a frame it cannot
+ * escape.
+ */
+export function formatUntrustedBlock(text: string): string {
+  const sanitized = sanitizeMultiLine(safeString(text));
+  const overLimit = sanitized.length > MAX_UNTRUSTED_BLOCK_LENGTH;
+  let bounded = sanitized.slice(0, MAX_UNTRUSTED_BLOCK_LENGTH);
+
+  // A lone high surrogate at the cut serializes as a replacement character.
+  const lastCode = bounded.charCodeAt(bounded.length - 1);
+  if (lastCode >= 0xd800 && lastCode <= 0xdbff) {
+    bounded = bounded.slice(0, -1);
+  }
+
+  const lines = bounded.split('\n').map((line) => UNTRUSTED_LINE_PREFIX + line);
+  if (overLimit) {
+    lines.push(`${UNTRUSTED_LINE_PREFIX}... [truncated]`);
+  }
+  return lines.join('\n');
 }
 
 /**
@@ -118,9 +170,12 @@ export function formatSection(title: string, rows: string[]): string {
  * Format a key-value pair
  */
 export function formatKeyValue(key: string, value: unknown): string {
-  // Sanitize both key and value (may contain untrusted API data)
+  // Sanitize both key and value (may contain untrusted API data).
+  // The value is collapsed to one row as well: safeString() strips escape
+  // sequences but deliberately preserves \r, which on its own returns the
+  // cursor to column 0 and overwrites the row that was just printed.
   const safeKey = sanitizeSingleLine(key);
-  const valueStr = safeString(value);
+  const valueStr = sanitizeSingleLine(safeString(value));
   return color(safeKey + ': ', colors.dim) + valueStr;
 }
 

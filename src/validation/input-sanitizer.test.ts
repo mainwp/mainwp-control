@@ -154,7 +154,7 @@ describe('InputSanitizer — sanitizeErrorMessage', () => {
     const sanitized = sanitizer.sanitizeErrorMessage(message);
 
     expect(sanitized).not.toContain('admin:s3cr3t');
-    expect(sanitized).toContain('[URL_WITH_CREDENTIALS]');
+    expect(sanitized).toContain('https://***:***@dashboard.example.com/api');
   });
 
   it('redacts Bearer tokens', () => {
