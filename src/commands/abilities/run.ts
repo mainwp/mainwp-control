@@ -26,7 +26,11 @@ import { promptForConfirmation, isInteractive } from '../../utils/prompt.js';
 import { logDestructiveActionSafe } from '../../utils/audit-logger.js';
 import type { WatchResult } from '../../core/batch-manager.js';
 import { APIError } from '../../utils/errors.js';
-import type { Ability } from '../../core/abilities-executor.js';
+import {
+  abilitySupportsDryRun,
+  resolveConfirmationInputProperty,
+  type Ability,
+} from '../../core/abilities-executor.js';
 import { executeAbilityWithPolicy } from '../../core/execute-ability-with-policy.js';
 
 export default class AbilitiesRun extends BaseCommand {
@@ -153,9 +157,31 @@ export default class AbilitiesRun extends BaseCommand {
 
     // Validate input against schema if available
     if (ability.input_schema) {
-      const validated = schemaValidator.validateOrThrow(input, ability.input_schema, ability.name);
+      const confirmationProperty = resolveConfirmationInputProperty(ability);
+      let validationInput = input;
+
+      // Risk-specific confirmation fields are transport controls, not caller
+      // data. Validate a temporary trusted value supplied by --confirm, then
+      // remove it again so AbilitiesExecutor remains the single injection
+      // boundary for the actual request.
+      if (confirmationProperty && confirmationProperty !== 'confirm') {
+        validationInput = { ...input };
+        delete validationInput[confirmationProperty];
+        if (flags.confirm) {
+          validationInput[confirmationProperty] = true;
+        }
+      }
+
+      const validated = schemaValidator.validateOrThrow(
+        validationInput,
+        ability.input_schema,
+        ability.name
+      );
       // Use coerced values (type coercion, defaults applied) from validated clone
       input = validated.coerced ?? input;
+      if (confirmationProperty && confirmationProperty !== 'confirm') {
+        delete input[confirmationProperty];
+      }
     }
 
     // Safety validation BEFORE any network call
@@ -256,29 +282,34 @@ export default class AbilitiesRun extends BaseCommand {
     const abilityName = ability.name;
     const executor = await this.getExecutor();
     const safetyController = getSafetyController();
+    const namedConfirmation = resolveConfirmationInputProperty(ability);
+    const previewSupported = abilitySupportsDryRun(ability) || namedConfirmation === undefined;
 
-    // Preview is mandatory and fail-closed (plan.md §2.1): a destructive
-    // execution must never proceed without a successful dry_run the operator
-    // has seen. --force skips the prompt below, never this preview.
+    // Preview remains mandatory when the ability exposes the established
+    // dry_run contract. A risk-specific confirmation-only schema cannot be
+    // safely previewed by fabricating an undeclared dry_run input; it still
+    // requires the explicit prompt/--force gate below.
     let preview: PreviewResult | undefined;
     let previewFailure: unknown;
-    try {
-      const previewResult = await executeAbilityWithPolicy(
-        executor,
-        ability,
-        input,
-        { dryRun: true }
-      );
-      if (previewResult.success) {
-        preview = safetyController.formatPreviewResult(ability, input, previewResult);
-      } else {
-        previewFailure = previewResult.error ?? new Error('dry_run returned no result');
+    if (previewSupported) {
+      try {
+        const previewResult = await executeAbilityWithPolicy(
+          executor,
+          ability,
+          input,
+          { dryRun: true }
+        );
+        if (previewResult.success) {
+          preview = safetyController.formatPreviewResult(ability, input, previewResult);
+        } else {
+          previewFailure = previewResult.error ?? new Error('dry_run returned no result');
+        }
+      } catch (error) {
+        previewFailure = error;
       }
-    } catch (error) {
-      previewFailure = error;
     }
 
-    if (!preview) {
+    if (previewSupported && !preview) {
       const reason = getInputSanitizer().sanitizeErrorMessage(
         previewFailure instanceof Error
           ? previewFailure.message
@@ -304,17 +335,25 @@ export default class AbilitiesRun extends BaseCommand {
     // Show the preview before any approval decision. In JSON mode it goes to
     // stderr so stdout stays a single clean envelope (preview data is also
     // included in the final envelope below).
-    const previewText = this.formatPreviewOutput(preview);
-    if (this.jsonOutput) {
-      this.logToStderr(previewText);
+    if (preview) {
+      const previewText = this.formatPreviewOutput(preview);
+      if (this.jsonOutput) {
+        this.logToStderr(previewText);
+      } else if (!this.quietMode) {
+        this.log(previewText);
+      }
     } else if (!this.quietMode) {
-      this.log(previewText);
+      const warning = formatWarning(
+        `Ability "${abilityName}" does not expose dry_run; no preview is available.`
+      );
+      if (this.jsonOutput) this.logToStderr(warning);
+      else this.log(warning);
     }
 
     // Preview metadata for audit entries (spread-friendly)
-    const previewMeta = {
-      preview: { summary: preview.summary, affectedCount: preview.affected.length },
-    };
+    const previewMeta = preview
+      ? { preview: { summary: preview.summary, affectedCount: preview.affected.length } }
+      : {};
 
     // In non-interactive mode, require --force or fail
     if (!isInteractive() && !force) {

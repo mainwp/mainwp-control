@@ -38,6 +38,29 @@ function createTestAbility(
   };
 }
 
+const NESTED_WRITE_ONLY_SCHEMA: Record<string, unknown> = {
+  type: 'object',
+  properties: {
+    credentials: {
+      type: 'object',
+      properties: {
+        label: { type: 'string' },
+        secret: { type: 'string', writeOnly: true },
+      },
+    },
+    targets: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          id: { type: 'integer' },
+          token: { type: 'string', writeOnly: true },
+        },
+      },
+    },
+  },
+};
+
 describe('Golden Test: Mutual Exclusion (dry_run XOR confirm)', () => {
   let controller: SafetyController;
 
@@ -610,6 +633,99 @@ describe('formatPreviewResult: fail closed on absent preview evidence', () => {
     expect(result.summary).toBe('1 item would be deleted.');
     expect(result.affected).toEqual([preview]);
     expect(result.requiresApproval).toBe(true);
+  });
+
+  it('masks nested object and array writeOnly input values on the recognized path', () => {
+    const ability = createTestAbility('delete-site-v1', { destructive: true });
+    ability.input_schema = NESTED_WRITE_ONLY_SCHEMA;
+
+    const result = controller.formatPreviewResult(ability, {
+      credentials: { label: 'visible', secret: 'input-object-secret' },
+      targets: [{ id: 7, token: 'input-array-secret' }],
+    }, {
+      success: true,
+      data: { affected: [{ id: 7 }] },
+    });
+
+    expect(result.input).toEqual({
+      credentials: { label: 'visible', secret: '[REDACTED]' },
+      targets: [{ id: 7, token: '[REDACTED]' }],
+    });
+  });
+
+  it('masks nested object and array writeOnly response values on the recognized path', () => {
+    const ability = createTestAbility('delete-site-v1', { destructive: true });
+    ability.output_schema = {
+      type: 'object',
+      properties: {
+        affected: {
+          type: 'array',
+          items: NESTED_WRITE_ONLY_SCHEMA,
+        },
+      },
+    };
+
+    const result = controller.formatPreviewResult(ability, {}, {
+      success: true,
+      data: {
+        affected: [{
+          credentials: { label: 'visible', secret: 'response-object-secret' },
+          targets: [{ id: 7, token: 'response-array-secret' }],
+        }],
+      },
+    });
+
+    expect(result.affected).toEqual([{
+      credentials: { label: 'visible', secret: '[REDACTED]' },
+      targets: [{ id: 7, token: '[REDACTED]' }],
+    }]);
+  });
+
+  it('masks nested object and array writeOnly input values on the unrecognized path', () => {
+    const ability = createTestAbility('delete-site-v1', { destructive: true });
+    ability.input_schema = NESTED_WRITE_ONLY_SCHEMA;
+
+    const result = controller.formatPreviewResult(ability, {
+      credentials: { label: 'visible', secret: 'input-object-secret' },
+      targets: [{ id: 7, token: 'input-array-secret' }],
+    }, {
+      success: true,
+      data: { payload: { name: 'visible' } },
+    });
+
+    expect(result.summary).toContain('unrecognized format');
+    expect(result.input).toEqual({
+      credentials: { label: 'visible', secret: '[REDACTED]' },
+      targets: [{ id: 7, token: '[REDACTED]' }],
+    });
+  });
+
+  it('masks nested object and array writeOnly response values on the unrecognized path', () => {
+    const ability = createTestAbility('delete-site-v1', { destructive: true });
+    ability.output_schema = {
+      type: 'object',
+      properties: {
+        payload: NESTED_WRITE_ONLY_SCHEMA,
+      },
+    };
+
+    const result = controller.formatPreviewResult(ability, {}, {
+      success: true,
+      data: {
+        payload: {
+          credentials: { label: 'visible', secret: 'response-object-secret' },
+          targets: [{ id: 7, token: 'response-array-secret' }],
+        },
+      },
+    });
+
+    expect(result.summary).toContain('unrecognized format');
+    expect(result.affected).toEqual([{
+      payload: {
+        credentials: { label: 'visible', secret: '[REDACTED]' },
+        targets: [{ id: 7, token: '[REDACTED]' }],
+      },
+    }]);
   });
 });
 

@@ -34,6 +34,8 @@ import {
   type AbilitiesExecutor,
   type Ability,
   type ExecutionResult,
+  abilitySupportsDryRun,
+  resolveConfirmationInputProperty,
 } from '../core/abilities-executor.js';
 import {
   SafetyController,
@@ -772,6 +774,21 @@ export class ChatEngine {
     toolCallId: string,
     toolAlias: string
   ): Promise<ChatResponse> {
+    const confirmationProperty = resolveConfirmationInputProperty(ability);
+    if (confirmationProperty && !abilitySupportsDryRun(ability)) {
+      const preview: PreviewResult = {
+        affected: [],
+        summary:
+          `No dry-run preview is available for ${ability.label}. ` +
+          'Review the requested parameters before approving execution.',
+        requiresApproval: true,
+        abilityName: ability.name,
+        input,
+      };
+      this.pendingPreview = { ability, input, preview, toolCallId, toolAlias };
+      return { type: 'preview', preview, requiresApproval: true };
+    }
+
     try {
       // Execute with dry_run
       const previewResult = await executeAbilityWithPolicy(

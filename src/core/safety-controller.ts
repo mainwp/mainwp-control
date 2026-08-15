@@ -269,8 +269,16 @@ export class SafetyController {
     input: Record<string, unknown>,
     apiResult: ExecutionResult
   ): PreviewResult {
-    // Extract affected items from result
-    const data = apiResult.data as Record<string, unknown> | undefined;
+    // Mask schema-declared write-only values before either the recognized or
+    // raw-response preview path can expose them.
+    const data = this.maskWriteOnly(
+      apiResult.data,
+      ability.output_schema
+    ) as Record<string, unknown> | undefined;
+    const maskedInput = this.maskWriteOnly(
+      input,
+      ability.input_schema
+    ) as Record<string, unknown>;
     const affected = this.extractAffectedItems(data);
 
     // Unrecognized response shape: never tell the operator "no items would
@@ -286,7 +294,7 @@ export class SafetyController {
           : 'Preview returned data in an unrecognized format — review the raw response below before approving.',
         requiresApproval: true,
         abilityName: ability.name,
-        input,
+        input: maskedInput,
       };
     }
 
@@ -295,8 +303,56 @@ export class SafetyController {
       summary: this.generatePreviewSummary(ability, affected),
       requiresApproval: true,
       abilityName: ability.name,
-      input,
+      input: maskedInput,
     };
+  }
+
+  /**
+   * Recursively replace values whose schema node is marked writeOnly.
+   * Values without a corresponding schema node are preserved unchanged.
+   */
+  private maskWriteOnly(value: unknown, schema: Record<string, unknown> | undefined): unknown {
+    if (!schema) {
+      return value;
+    }
+
+    if (schema['writeOnly'] === true) {
+      return '[REDACTED]';
+    }
+
+    if (Array.isArray(value)) {
+      const itemSchema = this.schemaRecord(schema['items']);
+      return itemSchema
+        ? value.map((item) => this.maskWriteOnly(item, itemSchema))
+        : value;
+    }
+
+    const valueRecord = this.schemaRecord(value);
+    if (!valueRecord) {
+      return value;
+    }
+
+    const properties = this.schemaRecord(schema['properties']);
+    if (!properties) {
+      return value;
+    }
+
+    const masked: Record<string, unknown> = { ...valueRecord };
+    for (const [key, childValue] of Object.entries(valueRecord)) {
+      const childSchema = this.schemaRecord(properties[key]);
+      if (childSchema) {
+        masked[key] = this.maskWriteOnly(childValue, childSchema);
+      }
+    }
+
+    return masked;
+  }
+
+  /** Return a JSON-schema object node, rejecting arrays and scalar values. */
+  private schemaRecord(value: unknown): Record<string, unknown> | null {
+    return value !== null && typeof value === 'object' && !Array.isArray(value)
+      ? value as Record<string, unknown>
+      : null;
   }
 
   /**

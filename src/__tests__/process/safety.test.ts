@@ -93,11 +93,11 @@ describe('safety / destructive action handling', () => {
   });
 
   // -------------------------------------------------------------------------
-  // 2. --confirm --force sends confirm:true + user_confirmed:true and exits 0
+  // 2. --confirm --force sends the schema-declared confirm:true and exits 0
   //    The executor makes TWO calls: first a dry_run preview (for audit),
   //    then the actual execution with confirm.
   // -------------------------------------------------------------------------
-  it('--confirm --force on destructive ability sends confirm and user_confirmed via POST', async () => {
+  it('--confirm --force on destructive ability sends confirm without undeclared controls via POST', async () => {
     await createConfig();
 
     // The run endpoint will be called twice:
@@ -152,8 +152,9 @@ describe('safety / destructive action handling', () => {
     expect(confirmReq!.method).toBe('POST');
 
     const confirmInput = (confirmReq!.body as Record<string, unknown>)['input'] as Record<string, unknown>;
+    expect(confirmInput).toHaveProperty('dry_run', false);
     expect(confirmInput).toHaveProperty('confirm', true);
-    expect(confirmInput).toHaveProperty('user_confirmed', true);
+    expect(confirmInput).not.toHaveProperty('user_confirmed');
     expect(confirmInput).toHaveProperty('site_id_or_domain', 1);
 
     // The dry_run request should also be present
@@ -168,6 +169,60 @@ describe('safety / destructive action handling', () => {
     // JSON output should indicate success
     const envelope = result.json as Record<string, unknown>;
     expect(envelope).toHaveProperty('success', true);
+  });
+
+  it('--confirm --force executes a schema-named confirmation ability without fabricating dry_run', async () => {
+    await createConfig();
+    server.reset();
+    server.setAbilities([
+      {
+        name: 'mainwp/set-dashboard-ip-restrictions-v1',
+        label: 'Set Dashboard IP Restrictions',
+        description: 'Replace Dashboard IP restrictions.',
+        category: 'mainwp-dashboard-lock',
+        input_schema: {
+          type: 'object',
+          additionalProperties: false,
+          required: ['ipv4_allowlist', 'ipv6_allowlist', 'confirm_lockout_risk'],
+          properties: {
+            ipv4_allowlist: { type: 'array', items: { type: 'string' } },
+            ipv6_allowlist: { type: 'array', items: { type: 'string' } },
+            confirm_lockout_risk: { type: 'boolean', enum: [true] },
+          },
+        },
+        meta: {
+          annotations: { readonly: false, destructive: true, idempotent: true },
+        },
+      },
+    ]);
+    server.setRunResponse(
+      'set-dashboard-ip-restrictions-v1',
+      abilityRunSuccess({ changed: true }),
+    );
+
+    const result = await runCLI(
+      [
+        'abilities', 'run', 'set-dashboard-ip-restrictions-v1',
+        '--input', '{"ipv4_allowlist":[],"ipv6_allowlist":[]}',
+        '--confirm', '--force', '--json',
+      ],
+      {
+        xdgConfigHome: config.xdgHome,
+        env: { MAINWP_APP_PASSWORD: 'test-pass' },
+      },
+    );
+
+    expect(result.exitCode).toBe(0);
+    const runRequests = server
+      .getRecordedRequests()
+      .filter((request) => request.path.includes('set-dashboard-ip-restrictions-v1/run'));
+    expect(runRequests).toHaveLength(1);
+    expect(runRequests[0]?.method).toBe('DELETE');
+    expect((runRequests[0]?.body as Record<string, unknown>)['input']).toEqual({
+      ipv4_allowlist: [],
+      ipv6_allowlist: [],
+      confirm_lockout_risk: true,
+    });
   });
 
   // -------------------------------------------------------------------------

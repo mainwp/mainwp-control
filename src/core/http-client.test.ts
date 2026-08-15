@@ -29,6 +29,28 @@ describe('HttpClient Redirect Security', () => {
     vi.restoreAllMocks();
   });
 
+  it('sends a JSON body with DELETE requests', async () => {
+    mockFetch.mockResolvedValueOnce({
+      status: 200,
+      ok: true,
+      statusText: 'OK',
+      headers: new Headers({ 'content-type': 'application/json' }),
+      text: () => Promise.resolve('{"success":true}'),
+    });
+
+    const client = createHttpClient(baseConfig);
+    await client.delete('/wp-json/wp-abilities/v1/test/run', {
+      input: { api_token: 'write-only-secret', property_ref: null },
+    });
+
+    expect(mockFetch).toHaveBeenCalledOnce();
+    expect(mockFetch.mock.calls[0]?.[0]).not.toContain('write-only-secret');
+    expect(mockFetch.mock.calls[0]?.[1]).toMatchObject({
+      method: 'DELETE',
+      body: '{"input":{"api_token":"write-only-secret","property_ref":null}}',
+    });
+  });
+
   /**
    * GOLDEN TEST: Same-origin redirects are followed
    */

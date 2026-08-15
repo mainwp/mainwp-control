@@ -60,6 +60,53 @@ export interface ExecutionResult<T = unknown> {
   jobId?: string;
 }
 
+function schemaAcceptsTrue(value: unknown): boolean {
+  if (value === true) return true;
+  if (value === false || value === null || typeof value !== 'object' || Array.isArray(value)) {
+    return false;
+  }
+  const schema = value as Record<string, unknown>;
+  const type = schema['type'];
+  if (typeof type === 'string' && type !== 'boolean') return false;
+  if (Array.isArray(type) && !type.includes('boolean')) return false;
+  if (Array.isArray(schema['enum']) && !schema['enum'].includes(true)) return false;
+  if (Object.hasOwn(schema, 'const') && schema['const'] !== true) return false;
+  return true;
+}
+
+/** Resolve the one schema-declared field trusted confirmation may set. */
+export function resolveConfirmationInputProperty(ability: Ability | undefined): string | undefined {
+  const schema = ability?.input_schema;
+  if (schema === null || typeof schema !== 'object' || Array.isArray(schema)) return undefined;
+  const properties = schema['properties'];
+  if (properties === null || typeof properties !== 'object' || Array.isArray(properties)) {
+    return undefined;
+  }
+  const propertyMap = properties as Record<string, unknown>;
+  if (Object.hasOwn(propertyMap, 'confirm') && schemaAcceptsTrue(propertyMap['confirm'])) {
+    return 'confirm';
+  }
+  const required = Array.isArray(schema['required']) ? schema['required'] : [];
+  const candidates = required.filter(
+    (name): name is string =>
+      typeof name === 'string' &&
+      /^confirm_[a-z0-9_]+$/.test(name) &&
+      Object.hasOwn(propertyMap, name) &&
+      schemaAcceptsTrue(propertyMap[name])
+  );
+  return candidates.length === 1 ? candidates[0] : undefined;
+}
+
+/** Whether the discovered closed schema can accept a true dry_run control. */
+export function abilitySupportsDryRun(ability: Ability | undefined): boolean {
+  const schema = ability?.input_schema;
+  if (schema === null || typeof schema !== 'object' || Array.isArray(schema)) return false;
+  const properties = schema['properties'];
+  return properties !== null && typeof properties === 'object' && !Array.isArray(properties) &&
+    Object.hasOwn(properties, 'dry_run') &&
+    schemaAcceptsTrue((properties as Record<string, unknown>)['dry_run']);
+}
+
 /**
  * Abilities list response — the real API returns Ability[] (flat array),
  * with pagination via X-WP-Total / X-WP-TotalPages headers.
@@ -135,7 +182,7 @@ export class AbilitiesExecutor {
 
     // Merge execution options into user input — the single place control
     // flags are applied. Both request paths below format this same output.
-    const params = this.buildEffectiveParams(input, options);
+    const params = this.buildEffectiveParams(input, options, ability);
 
     // Determine HTTP method based on annotations
     const method = this.getHttpMethod(ability, options);
@@ -151,14 +198,18 @@ export class AbilitiesExecutor {
       const requestOptions = options?.signal ? { signal: options.signal } : undefined;
 
       if (method === 'GET') {
-        // For GET requests, nest input under input[key] (WordPress REST style).
+        // GET uses one JSON carrier so nested nulls and composite values retain
+        // their JSON types through PHP query parsing.
         const queryString = this.buildGetQueryString(params);
         const url = queryString ? `${endpoint}?${queryString}` : endpoint;
         response = await this.httpClient.get<ExecutionResult<T>>(url, requestOptions);
       } else if (method === 'DELETE') {
-        const queryString = this.buildGetQueryString(params);
-        const url = queryString ? `${endpoint}?${queryString}` : endpoint;
-        response = await this.httpClient.delete<ExecutionResult<T>>(url, requestOptions);
+        // Keep destructive credentials and confirmation data out of URLs.
+        response = await this.httpClient.delete<ExecutionResult<T>>(
+          endpoint,
+          { input: params },
+          requestOptions
+        );
       } else {
         // POST with JSON body
         response = await this.httpClient.post<ExecutionResult<T>>(
@@ -321,8 +372,8 @@ export class AbilitiesExecutor {
 
   /**
    * Merge execution options into user input, producing the final param set.
-   * Both the POST body and the GET/DELETE query-string path format this same
-   * output — this is the single place dry_run/confirm/user_confirmed are applied.
+   * Every transport formats this same output — this is the single place
+   * dry_run/confirm are applied.
    *
    * SECURITY: strips any dry_run/confirm/user_confirmed present in user/LLM
    * input before applying the ones from `options`. These control flags are
@@ -331,7 +382,8 @@ export class AbilitiesExecutor {
    */
   private buildEffectiveParams(
     input: Record<string, unknown>,
-    options?: ExecutionOptions
+    options?: ExecutionOptions,
+    ability?: Ability
   ): Record<string, unknown> {
     // INVARIANT: dry_run and confirm are mutually exclusive. Callers enforce
     // this upstream (SafetyController.validateExecutionFlags, oclif exclusive
@@ -345,21 +397,56 @@ export class AbilitiesExecutor {
     }
 
     const merged = { ...input };
+    const confirmationProperty = resolveConfirmationInputProperty(ability);
 
     delete merged['dry_run'];
     delete merged['confirm'];
     delete merged['user_confirmed'];
+    if (confirmationProperty) {
+      delete merged[confirmationProperty];
+    }
 
     if (options?.dryRun) {
-      merged['dry_run'] = true;
+      if (confirmationProperty && !abilitySupportsDryRun(ability)) {
+        throw new InputError(
+          `Ability "${ability?.name ?? 'unknown'}" does not declare dry_run`,
+          undefined,
+          'Use the explicit confirmation flow; no upstream preview is available.'
+        );
+      }
+      if (abilitySupportsDryRun(ability) || confirmationProperty === undefined) {
+        merged['dry_run'] = true;
+      }
+      if (this.abilityRequiresInputProperty(ability, 'confirm')) {
+        merged['confirm'] = false;
+      }
     }
 
     if (options?.confirm) {
-      merged['confirm'] = true;
-      merged['user_confirmed'] = true;
+      if (confirmationProperty) {
+        if (confirmationProperty === 'confirm' && abilitySupportsDryRun(ability)) {
+          merged['dry_run'] = false;
+        }
+        merged[confirmationProperty] = true;
+      } else {
+        // Compatibility fallback for older abilities whose discovery schema
+        // omitted both control fields but whose execution contract accepts them.
+        merged['dry_run'] = false;
+        merged['confirm'] = true;
+      }
     }
 
     return merged;
+  }
+
+  /** Whether the closed discovered input schema requires one named property. */
+  private abilityRequiresInputProperty(ability: Ability | undefined, property: string): boolean {
+    const schema = ability?.input_schema;
+    if (!this.isPlainObject(schema) || !Array.isArray(schema['required'])) {
+      return false;
+    }
+
+    return schema['required'].some((item) => item === property);
   }
 
   /**
@@ -403,32 +490,14 @@ export class AbilitiesExecutor {
   }
 
   /**
-   * Build query string for GET/DELETE requests with WordPress-style nesting.
+   * Build the typed JSON query carrier for GET requests.
    * `params` is already the merged output of buildEffectiveParams(), so
-   * dry_run/confirm/user_confirmed (if present) are formatted the same as
-   * any other param — no separate control-flag handling needed here.
+   * dry_run/confirm (if present) are carried in the same input
+   * object — no separate control-flag handling is needed here.
    */
   private buildGetQueryString(params: Record<string, unknown>): string {
-    const parts: string[] = [];
-
-    // All params go under input[key] — the API treats input as a single object.
-    for (const [key, value] of Object.entries(params)) {
-      if (value === undefined || value === null) continue;
-      const ek = encodeURIComponent(key);
-
-      if (Array.isArray(value)) {
-        // WordPress-style: input[key][0]=v0&input[key][1]=v1
-        value.forEach((v, i) => {
-          parts.push(`input[${ek}][${i}]=${encodeURIComponent(String(v))}`);
-        });
-      } else if (typeof value === 'object') {
-        parts.push(`input[${ek}]=${encodeURIComponent(JSON.stringify(value))}`);
-      } else {
-        parts.push(`input[${ek}]=${encodeURIComponent(String(value))}`);
-      }
-    }
-
-    return parts.join('&');
+    const inputJson = JSON.stringify(params);
+    return `input_json=${encodeURIComponent(inputJson)}`;
   }
 
 
