@@ -776,17 +776,11 @@ export class ChatEngine {
   ): Promise<ChatResponse> {
     const confirmationProperty = resolveConfirmationInputProperty(ability);
     if (confirmationProperty && !abilitySupportsDryRun(ability)) {
-      const preview: PreviewResult = {
-        affected: [],
-        summary:
-          `No dry-run preview is available for ${ability.label}. ` +
-          'Review the requested parameters before approving execution.',
-        requiresApproval: true,
-        abilityName: ability.name,
-        input,
+      return {
+        type: 'error',
+        error: `Ability "${ability.name}" does not expose dry_run. Destructive execution refused.`,
+        tool: ability.name,
       };
-      this.pendingPreview = { ability, input, preview, toolCallId, toolAlias };
-      return { type: 'preview', preview, requiresApproval: true };
     }
 
     try {

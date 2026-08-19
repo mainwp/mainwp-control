@@ -283,33 +283,42 @@ export default class AbilitiesRun extends BaseCommand {
     const executor = await this.getExecutor();
     const safetyController = getSafetyController();
     const namedConfirmation = resolveConfirmationInputProperty(ability);
-    const previewSupported = abilitySupportsDryRun(ability) || namedConfirmation === undefined;
 
-    // Preview remains mandatory when the ability exposes the established
-    // dry_run contract. A risk-specific confirmation-only schema cannot be
-    // safely previewed by fabricating an undeclared dry_run input; it still
-    // requires the explicit prompt/--force gate below.
-    let preview: PreviewResult | undefined;
-    let previewFailure: unknown;
-    if (previewSupported) {
-      try {
-        const previewResult = await executeAbilityWithPolicy(
-          executor,
-          ability,
-          input,
-          { dryRun: true }
-        );
-        if (previewResult.success) {
-          preview = safetyController.formatPreviewResult(ability, input, previewResult);
-        } else {
-          previewFailure = previewResult.error ?? new Error('dry_run returned no result');
-        }
-      } catch (error) {
-        previewFailure = error;
-      }
+    if (namedConfirmation && !abilitySupportsDryRun(ability)) {
+      await logDestructiveActionSafe({
+        abilityName,
+        userDecision: 'declined',
+        execution: { success: false, error: 'No dry_run preview contract' },
+        input,
+      });
+      throw new APIError(
+        'PREVIEW_UNAVAILABLE',
+        `Ability "${abilityName}" does not expose dry_run. Destructive execution refused.`,
+        undefined,
+        { reason: 'No dry_run preview contract' }
+      );
     }
 
-    if (previewSupported && !preview) {
+    // A successful immediate preview is mandatory before approval.
+    let preview: PreviewResult | undefined;
+    let previewFailure: unknown;
+    try {
+      const previewResult = await executeAbilityWithPolicy(
+        executor,
+        ability,
+        input,
+        { dryRun: true }
+      );
+      if (previewResult.success) {
+        preview = safetyController.formatPreviewResult(ability, input, previewResult);
+      } else {
+        previewFailure = previewResult.error ?? new Error('dry_run returned no result');
+      }
+    } catch (error) {
+      previewFailure = error;
+    }
+
+    if (!preview) {
       const reason = getInputSanitizer().sanitizeErrorMessage(
         previewFailure instanceof Error
           ? previewFailure.message
@@ -335,25 +344,17 @@ export default class AbilitiesRun extends BaseCommand {
     // Show the preview before any approval decision. In JSON mode it goes to
     // stderr so stdout stays a single clean envelope (preview data is also
     // included in the final envelope below).
-    if (preview) {
-      const previewText = this.formatPreviewOutput(preview);
-      if (this.jsonOutput) {
-        this.logToStderr(previewText);
-      } else if (!this.quietMode) {
-        this.log(previewText);
-      }
+    const previewText = this.formatPreviewOutput(preview);
+    if (this.jsonOutput) {
+      this.logToStderr(previewText);
     } else if (!this.quietMode) {
-      const warning = formatWarning(
-        `Ability "${abilityName}" does not expose dry_run; no preview is available.`
-      );
-      if (this.jsonOutput) this.logToStderr(warning);
-      else this.log(warning);
+      this.log(previewText);
     }
 
     // Preview metadata for audit entries (spread-friendly)
-    const previewMeta = preview
-      ? { preview: { summary: preview.summary, affectedCount: preview.affected.length } }
-      : {};
+    const previewMeta = {
+      preview: { summary: preview.summary, affectedCount: preview.affected.length },
+    };
 
     // In non-interactive mode, require --force or fail
     if (!isInteractive() && !force) {

@@ -653,6 +653,38 @@ describe('formatPreviewResult: fail closed on absent preview evidence', () => {
     });
   });
 
+  it('masks writeOnly values behind JSON-derived prototype-like own keys', () => {
+    const ability = createTestAbility('delete-site-v1', { destructive: true });
+    const dangerousProperties = JSON.parse(JSON.stringify({
+      ['__proto__']: NESTED_WRITE_ONLY_SCHEMA,
+      constructor: NESTED_WRITE_ONLY_SCHEMA,
+      prototype: NESTED_WRITE_ONLY_SCHEMA,
+    })) as Record<string, unknown>;
+    ability.input_schema = {
+      type: 'object',
+      properties: dangerousProperties,
+    };
+    const input = JSON.parse(`{
+      "__proto__":{"credentials":{"secret":"proto-secret"}},
+      "constructor":{"targets":[{"token":"constructor-secret"}]},
+      "prototype":{"credentials":{"secret":"prototype-secret"}}
+    }`) as Record<string, unknown>;
+    Object.setPrototypeOf(input, null);
+
+    const result = controller.formatPreviewResult(ability, input, {
+      success: true,
+      data: { affected: [{ id: 7 }] },
+    });
+
+    expect(Object.getPrototypeOf(result.input)).toBe(null);
+    expect(result.input).toEqual({
+      ['__proto__']: { credentials: { secret: '[REDACTED]' } },
+      constructor: { targets: [{ token: '[REDACTED]' }] },
+      prototype: { credentials: { secret: '[REDACTED]' } },
+    });
+    expect(JSON.stringify(result.input)).not.toMatch(/proto-secret|constructor-secret|prototype-secret/);
+  });
+
   it('masks nested object and array writeOnly response values on the recognized path', () => {
     const ability = createTestAbility('delete-site-v1', { destructive: true });
     ability.output_schema = {

@@ -105,7 +105,7 @@ function json(response: ServerResponse, status: number, body: unknown): void {
 }
 
 function requestInput(request: RecordedRequest): Record<string, unknown> {
-  if (request.method === 'GET' || request.method === 'DELETE') {
+  if (request.method === 'GET') {
     const inputJson = request.query['input_json'];
     if (inputJson !== undefined) {
       try {

@@ -7,7 +7,9 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import {
   AbilitiesExecutor,
+  abilitySupportsDryRun,
   createAbilitiesExecutor,
+  resolveConfirmationInputProperty,
   type Ability,
   type ExecutionResult,
 } from './abilities-executor.js';
@@ -457,7 +459,7 @@ describe('AbilitiesExecutor', () => {
       });
     });
 
-	it('adds only the schema-declared confirm flag when confirm option is true', async () => {
+    it('adds only the schema-declared confirm flag when confirm option is true', async () => {
       mockDelete.mockResolvedValueOnce({
         data: { success: true },
       });
@@ -500,6 +502,7 @@ describe('AbilitiesExecutor', () => {
           {
             site_id: 1,
             confirm_lockout_risk: false,
+            confirm_secondary_risk: true,
             confirm: true,
             dry_run: true,
             user_confirmed: true,
@@ -513,6 +516,45 @@ describe('AbilitiesExecutor', () => {
       expect(mockDelete.mock.calls[0]?.[1]).toEqual({
         input: { site_id: 1, confirm_lockout_risk: true },
       });
+    });
+
+    it('rejects true when confirmation schemas exclude it through composition', () => {
+      const ability: Ability = {
+        ...mockAbilities[1]!,
+        input_schema: {
+        type: 'object',
+        required: ['confirm_lockout_risk'],
+        properties: {
+          confirm_lockout_risk: {
+            type: 'boolean',
+            oneOf: [{ const: true }, { type: 'boolean' }],
+          },
+          dry_run: {
+            type: 'boolean',
+            not: { const: true },
+          },
+        },
+        },
+      };
+
+      expect(resolveConfirmationInputProperty(ability)).toBeUndefined();
+      expect(abilitySupportsDryRun(ability)).toBe(false);
+    });
+
+    it('does not select ambiguous schema-named confirmation fields', () => {
+      const ability: Ability = {
+        ...mockAbilities[1]!,
+        input_schema: {
+          type: 'object',
+          required: ['confirm_first_risk', 'confirm_second_risk'],
+          properties: {
+            confirm_first_risk: { type: 'boolean', enum: [true] },
+            confirm_second_risk: { type: 'boolean', enum: [true] },
+          },
+        },
+      };
+
+      expect(resolveConfirmationInputProperty(ability)).toBeUndefined();
     });
 
     it('throws InputError for unknown ability', async () => {

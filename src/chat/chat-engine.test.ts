@@ -886,7 +886,7 @@ describe('ChatEngine', () => {
       expect(engine.hasPendingPreview()).toBe(true);
     });
 
-    it('requires approval without fabricating dry_run for a schema-named confirmation ability', async () => {
+    it('refuses a schema-named confirmation ability without a dry_run contract', async () => {
       const ability = createTestAbility(
         'set-dashboard-ip-restrictions-v1',
         { destructive: true, idempotent: true },
@@ -912,17 +912,12 @@ describe('ChatEngine', () => {
 
       const proposed = await engine.sendMessage('Lock the Dashboard');
 
-      expect(proposed[0]?.type).toBe('preview');
-      expect(engine.getPendingPreview()?.summary).toContain('No dry-run preview is available');
+      expect(proposed[0]).toMatchObject({
+        type: 'error',
+        error: expect.stringContaining('does not expose dry_run'),
+      });
+      expect(engine.hasPendingPreview()).toBe(false);
       expect(mockExecutor.execute).not.toHaveBeenCalled();
-
-      await engine.sendMessage('yes');
-      expect(mockExecutor.execute).toHaveBeenCalledOnce();
-      expect(mockExecutor.execute).toHaveBeenCalledWith(
-        'set-dashboard-ip-restrictions-v1',
-        { confirm_lockout_risk: true },
-        { confirm: true }
-      );
     });
 
     it('readonly+destructive requires safety flow (contradictory → treated as destructive)', async () => {

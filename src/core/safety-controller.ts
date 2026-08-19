@@ -337,9 +337,14 @@ export class SafetyController {
       return value;
     }
 
-    const masked: Record<string, unknown> = { ...valueRecord };
+    const masked = Object.create(
+      Object.getPrototypeOf(valueRecord),
+      Object.getOwnPropertyDescriptors(valueRecord)
+    ) as Record<string, unknown>;
     for (const [key, childValue] of Object.entries(valueRecord)) {
-      const childSchema = this.schemaRecord(properties[key]);
+      const childSchema = Object.hasOwn(properties, key)
+        ? this.schemaRecord(properties[key])
+        : null;
       if (childSchema) {
         masked[key] = this.maskWriteOnly(childValue, childSchema);
       }

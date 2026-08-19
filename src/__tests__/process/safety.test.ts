@@ -171,7 +171,7 @@ describe('safety / destructive action handling', () => {
     expect(envelope).toHaveProperty('success', true);
   });
 
-  it('--confirm --force executes a schema-named confirmation ability without fabricating dry_run', async () => {
+  it('--confirm --force refuses a schema-named confirmation ability without dry_run', async () => {
     await createConfig();
     server.reset();
     server.setAbilities([
@@ -212,17 +212,12 @@ describe('safety / destructive action handling', () => {
       },
     );
 
-    expect(result.exitCode).toBe(0);
+    expect(result.exitCode).toBe(4);
+    expect(result.stdout + result.stderr).toContain('does not expose dry_run');
     const runRequests = server
       .getRecordedRequests()
       .filter((request) => request.path.includes('set-dashboard-ip-restrictions-v1/run'));
-    expect(runRequests).toHaveLength(1);
-    expect(runRequests[0]?.method).toBe('DELETE');
-    expect((runRequests[0]?.body as Record<string, unknown>)['input']).toEqual({
-      ipv4_allowlist: [],
-      ipv6_allowlist: [],
-      confirm_lockout_risk: true,
-    });
+    expect(runRequests).toHaveLength(0);
   });
 
   // -------------------------------------------------------------------------

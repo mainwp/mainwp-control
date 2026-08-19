@@ -60,18 +60,56 @@ export interface ExecutionResult<T = unknown> {
   jobId?: string;
 }
 
-function schemaAcceptsTrue(value: unknown): boolean {
-  if (value === true) return true;
+type TrueSchemaMatch = 'accept' | 'reject' | 'unknown';
+
+function trueSchemaMatch(value: unknown): TrueSchemaMatch {
+  if (value === true) return 'accept';
   if (value === false || value === null || typeof value !== 'object' || Array.isArray(value)) {
-    return false;
+    return 'reject';
   }
+
   const schema = value as Record<string, unknown>;
+  if (Object.hasOwn(schema, '$ref') || Object.hasOwn(schema, '$dynamicRef')) return 'unknown';
+
   const type = schema['type'];
-  if (typeof type === 'string' && type !== 'boolean') return false;
-  if (Array.isArray(type) && !type.includes('boolean')) return false;
-  if (Array.isArray(schema['enum']) && !schema['enum'].includes(true)) return false;
-  if (Object.hasOwn(schema, 'const') && schema['const'] !== true) return false;
-  return true;
+  if (typeof type === 'string' && type !== 'boolean') return 'reject';
+  if (Array.isArray(type) && !type.includes('boolean')) return 'reject';
+  if (Array.isArray(schema['enum']) && !schema['enum'].includes(true)) return 'reject';
+  if (Object.hasOwn(schema, 'const') && schema['const'] !== true) return 'reject';
+
+  const allOf = schema['allOf'];
+  if (Array.isArray(allOf)) {
+    const matches = allOf.map(trueSchemaMatch);
+    if (matches.includes('reject')) return 'reject';
+    if (matches.includes('unknown')) return 'unknown';
+  }
+
+  const anyOf = schema['anyOf'];
+  if (Array.isArray(anyOf)) {
+    const matches = anyOf.map(trueSchemaMatch);
+    if (!matches.includes('accept')) {
+      return matches.includes('unknown') ? 'unknown' : 'reject';
+    }
+  }
+
+  const oneOf = schema['oneOf'];
+  if (Array.isArray(oneOf)) {
+    const matches = oneOf.map(trueSchemaMatch);
+    if (matches.includes('unknown')) return 'unknown';
+    if (matches.filter((match) => match === 'accept').length !== 1) return 'reject';
+  }
+
+  if (Object.hasOwn(schema, 'not')) {
+    const match = trueSchemaMatch(schema['not']);
+    if (match === 'accept') return 'reject';
+    if (match === 'unknown') return 'unknown';
+  }
+
+  return 'accept';
+}
+
+function schemaAcceptsTrue(value: unknown): boolean {
+  return trueSchemaMatch(value) === 'accept';
 }
 
 /** Resolve the one schema-declared field trusted confirmation may set. */
@@ -402,6 +440,11 @@ export class AbilitiesExecutor {
     delete merged['dry_run'];
     delete merged['confirm'];
     delete merged['user_confirmed'];
+    for (const key of Object.keys(merged)) {
+      if (/^confirm_[a-z0-9_]+$/.test(key)) {
+        delete merged[key];
+      }
+    }
     if (confirmationProperty) {
       delete merged[confirmationProperty];
     }
