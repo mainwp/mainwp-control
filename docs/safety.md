@@ -14,7 +14,27 @@ Every ability your Dashboard exposes carries annotations, visible with `mainwpco
 - **Destructive**: Permanently changes or deletes data. Requires a `--dry-run` preview, then `--confirm` to execute.
 - **Idempotent**: Repeated calls have no additional effect under the same conditions. This describes the ability, and it is not permission to retry: a destructive confirm whose outcome is unknown is never re-run automatically, and you should verify Dashboard state before re-running it yourself (see below).
 
-Classification fails closed, twice over. An ability that does not declare itself non-destructive is treated as destructive. On top of that, a conservative name-based override forces the destructive class for known-dangerous name patterns (`delete-*`, `disconnect-*`, `suspend-*`, `update-site-*`, `run-updates-*`, `update-all-*`, `wipe-*`, and similar), whatever the Dashboard's annotations say, so a buggy or compromised server cannot downgrade a delete into a quiet write. In practice this means updates require the confirm flow; non-destructive writes like syncing sites do not.
+Classification fails closed, twice over. An ability that does not declare itself non-destructive is treated as destructive. On top of that, a conservative name-based override forces the destructive class for known-dangerous name patterns (`delete-*`, `disconnect-*`, `suspend-*`, `update-site-*`, `run-updates-*`, `update-all-*`, `run-safe-update-*`, `wipe-*`, and similar), whatever the Dashboard's annotations say, so a buggy or compromised server cannot downgrade a delete into a quiet write. In practice this means updates require the confirm flow; non-destructive writes like syncing sites do not.
+
+### Safe Updates
+
+On a Dashboard with Safe Updates, every ability that writes to a Safe Updates run goes through the confirm flow:
+
+- `run-safe-update-v1` starts a run. Each site gets a backup check first, then site checks before and after its updates.
+- `continue-safe-update-run-v1` advances a stalled run by one step, which can update the next site.
+- `cancel-safe-update-run-v1` cancels a manual run. Updates already sent to a site still finish.
+- `retest-safe-update-site-v1` runs a site's after-checks again, and `resolve-safe-update-site-v1` marks its failed check as expected. Neither updates nor rolls back anything, and the Dashboard does not mark them destructive, but it still requires a preview or a confirm for both. The CLI sends `confirm` only on the destructive path, so the name-based override covers them too.
+- `rollback-safe-update-v1` rolls back updated plugins and themes on a site. It already falls under `rollback-*`, and database changes are not undone.
+
+Preview each one with `--dry-run`, then run it with `--confirm`. Reading runs with `list-safe-update-runs-v1` and `get-safe-update-run-v1` needs neither flag.
+
+```bash
+mainwpcontrol abilities run run-safe-update-v1 \
+  --input '{"site_ids_or_domains": ["mysite.com"], "types": ["plugins"]}' \
+  --dry-run --json
+```
+
+A confirmed `run-safe-update-v1` returns a `run_id` and continues on the Dashboard. It is not a batch job, so `--wait` and `jobs watch` do not follow it. Read its progress with `get-safe-update-run-v1`.
 
 ## The preview-and-confirm flow
 
