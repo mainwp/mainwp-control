@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- The Safe Updates abilities that write to a run (`run-safe-update-v1`, `continue-safe-update-run-v1`, `cancel-safe-update-run-v1`, `retest-safe-update-site-v1` and `resolve-safe-update-site-v1`) are now always classified as destructive, so each needs `--dry-run` and then `--confirm`, whatever the Dashboard's annotations say. `rollback-safe-update-v1` was already covered by `rollback-*`. The Safe Updates reads are unchanged. See [Safety](docs/safety.md#safe-updates)
+
 ## [1.1.1] - 2026-07-27
 
 ### Changed

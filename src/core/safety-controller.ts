@@ -83,6 +83,13 @@ const DESTRUCTIVE_NAME_PATTERNS = [
   /^(?:mainwp\/)?run-updates-/,
   /^(?:mainwp\/)?update-all-/,
   /^(?:mainwp\/)?update-site-/,
+  // Safe Updates writes, rollback included via rollback-*. The Dashboard requires dry_run or
+  // confirm for retest and resolve too, and confirm is only sent on the destructive path.
+  /^(?:mainwp\/)?run-safe-update-/,
+  /^(?:mainwp\/)?continue-safe-update-run-/,
+  /^(?:mainwp\/)?cancel-safe-update-run-/,
+  /^(?:mainwp\/)?retest-safe-update-site-/,
+  /^(?:mainwp\/)?resolve-safe-update-site-/,
   /^(?:mainwp\/)?activate-/,
   /^(?:mainwp\/)?reset-/,
   /^(?:mainwp\/)?restore-/,
