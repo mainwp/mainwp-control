@@ -480,7 +480,7 @@ describe('AbilitiesExecutor', () => {
       });
     });
 
-    it('maps trusted confirmation to one required schema-named risk field', async () => {
+    it('refuses trusted confirmation for a required pinned risk field', async () => {
       const ability = mockAbilities.find(
         (candidate) => candidate.name === 'mainwp/delete-site-v1'
       );
@@ -495,10 +495,10 @@ describe('AbilitiesExecutor', () => {
           confirm_lockout_risk: { type: 'boolean', enum: [true] },
         },
       };
-      mockDelete.mockResolvedValueOnce({ data: { success: true } });
-
       try {
-        await executor.execute(
+        // A pinned field must stay true, so the ability has no preview and
+        // the executor refuses confirm even from a caller that skipped one.
+        await expect(executor.execute(
           'delete-site-v1',
           {
             site_id: 1,
@@ -509,14 +509,14 @@ describe('AbilitiesExecutor', () => {
             user_confirmed: true,
           },
           { confirm: true }
-        );
+        )).rejects.toMatchObject({
+          code: 'INPUT_ERROR', message: expect.stringContaining('no preview the CLI can run'),
+        });
       } finally {
         ability!.input_schema = originalSchema;
       }
 
-      expect(mockDelete.mock.calls[0]?.[1]).toEqual({
-        input: { site_id: 1, confirm_lockout_risk: true, confirm_secondary_risk: true },
-      });
+      expect(mockDelete).not.toHaveBeenCalled();
     });
 
     it('uses the MCP boolean declaration rule without evaluating composition', () => {
@@ -673,6 +673,34 @@ describe('AbilitiesExecutor', () => {
           code: 'INPUT_ERROR', message: expect.stringContaining('no preview the CLI can run'),
         });
         expect(mockPost).not.toHaveBeenCalled();
+      } finally {
+        ability.input_schema = originalSchema;
+      }
+    });
+
+    it('refuses preview and confirm for unpinned confirm_* acknowledgements without dry_run', async () => {
+      // Code Snippets shape: required acknowledgements that accept true or
+      // string forms, with neither confirm nor dry_run declared.
+      const ability = mockAbilities[2]!;
+      const originalSchema = ability.input_schema;
+      const flag = { type: ['boolean', 'string'], enum: [true, 'true', '1'] };
+      ability.input_schema = {
+        type: 'object',
+        additionalProperties: false,
+        required: ['snippet_id', 'confirm_arbitrary_php_execution'],
+        properties: { snippet_id: { type: 'integer' }, confirm_arbitrary_php_execution: flag },
+      };
+      mockPost.mockResolvedValue({ data: { success: true } });
+      try {
+        for (const options of [{ dryRun: true }, { confirm: true }]) {
+          await expect(
+            executor.execute(ability.name, { snippet_id: 1, confirm_arbitrary_php_execution: true }, options)
+          ).rejects.toMatchObject({
+            code: 'INPUT_ERROR', message: expect.stringContaining('no preview the CLI can run'),
+          });
+        }
+        expect(mockPost).not.toHaveBeenCalled();
+        expect(mockDelete).not.toHaveBeenCalled();
       } finally {
         ability.input_schema = originalSchema;
       }

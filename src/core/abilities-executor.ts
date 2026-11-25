@@ -124,13 +124,20 @@ export function abilitySupportsDryRun(ability: Ability | undefined): boolean {
   return declaresUsableBooleanParam(ability?.input_schema?.['properties'], 'dry_run');
 }
 
-/** Conventional controls can preview; schemas without confirmation controls retain legacy support. */
+/**
+ * Conventional controls can preview. The legacy fallback covers only schemas
+ * that declare no confirm or confirm_* property at all: an ability that asks
+ * for a confirm_* acknowledgement without declaring dry_run would otherwise
+ * receive an undeclared dry_run next to the caller's acknowledgement, and an
+ * open schema that ignores dry_run would execute on the "preview".
+ */
 export function abilitySupportsPreview(ability: Ability | undefined): boolean {
   if (resolveConfirmationInputProperty(ability) === 'confirm') return abilitySupportsDryRun(ability);
   const properties = ability?.input_schema?.['properties'];
-  const declaresConfirm = properties !== null && typeof properties === 'object' &&
-    !Array.isArray(properties) && Object.hasOwn(properties, 'confirm');
-  return !declaresConfirm && pinnedConfirmationInputProperties(ability).length === 0;
+  if (properties === null || typeof properties !== 'object' || Array.isArray(properties)) {
+    return true;
+  }
+  return !Object.keys(properties).some((name) => name === 'confirm' || name.startsWith('confirm_'));
 }
 
 /**
@@ -437,10 +444,13 @@ export class AbilitiesExecutor {
       throw new InputError(`Ability "${ability?.name ?? 'unknown'}" has ambiguous confirmation fields.`);
     }
 
+    // Confirm is checked here too, not only in the commands, so no caller can
+    // execute an ability that could never have been previewed.
+    if ((options?.dryRun || options?.confirm) && !abilitySupportsPreview(ability)) {
+      throw new InputError(`Ability "${ability?.name ?? 'unknown'}" has no preview the CLI can run.`);
+    }
+
     if (options?.dryRun) {
-      if (!abilitySupportsPreview(ability)) {
-        throw new InputError(`Ability "${ability?.name ?? 'unknown'}" has no preview the CLI can run.`);
-      }
       merged['dry_run'] = true;
       if (requiresUsableFalseParam(ability?.input_schema, 'confirm')) {
         merged['confirm'] = false;
