@@ -34,8 +34,9 @@ mainwpcontrol abilities run list-updates-v1 --json
 mainwpcontrol abilities run sync-sites-v1 --wait --json
 
 # Nightly from cron: alert Slack if any site is disconnected
-mainwpcontrol abilities run list-sites-v1 --json \
-  | jq -e '[.data.data.items[] | select(.status != "connected")] | length == 0' >/dev/null \
+mainwpcontrol abilities run list-sites-v1 \
+  --input '{"status":"disconnected","per_page":1}' --json \
+  | jq -e '.data.data.total == 0' >/dev/null \
   || curl -fsS "$SLACK_WEBHOOK" -d '{"text":"Sites need attention"}'
 ```
 
