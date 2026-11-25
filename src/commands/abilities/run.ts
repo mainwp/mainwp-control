@@ -26,7 +26,12 @@ import { promptForConfirmation, isInteractive } from '../../utils/prompt.js';
 import { logDestructiveActionSafe } from '../../utils/audit-logger.js';
 import type { WatchResult } from '../../core/batch-manager.js';
 import { APIError } from '../../utils/errors.js';
-import type { Ability } from '../../core/abilities-executor.js';
+import {
+  abilitySupportsPreview,
+  pinnedConfirmationInputProperties,
+  resolveConfirmationInputProperty,
+  type Ability,
+} from '../../core/abilities-executor.js';
 import { executeAbilityWithPolicy } from '../../core/execute-ability-with-policy.js';
 
 export default class AbilitiesRun extends BaseCommand {
@@ -151,17 +156,38 @@ export default class AbilitiesRun extends BaseCommand {
     // Sanitize input
     input = inputSanitizer.sanitize(input);
 
-    // Validate input against schema if available
-    if (ability.input_schema) {
-      const validated = schemaValidator.validateOrThrow(input, ability.input_schema, ability.name);
-      // Use coerced values (type coercion, defaults applied) from validated clone
-      input = validated.coerced ?? input;
-    }
-
-    // Safety validation BEFORE any network call
     const dryRun = flags['dry-run'];
     const confirm = flags.confirm;
     const requiresSafetyFlow = safetyController.requiresSafetyFlow(ability);
+    const confirmationProperty = resolveConfirmationInputProperty(ability);
+
+    if ((dryRun || confirm) && pinnedConfirmationInputProperties(ability).length > 0 &&
+      !confirmationProperty) {
+      throw new InputError(`Ability "${ability.name}" has ambiguous confirmation fields.`);
+    }
+    if (dryRun && !abilitySupportsPreview(ability)) {
+      throw new InputError(`Ability "${ability.name}" has no preview the CLI can run.`);
+    }
+    if (confirm && requiresSafetyFlow && !abilitySupportsPreview(ability)) {
+      await logDestructiveActionSafe({
+        abilityName: ability.name,
+        userDecision: 'declined',
+        execution: { success: false, error: 'No dry_run preview contract' },
+        input,
+      });
+      throw new APIError(
+        'PREVIEW_UNAVAILABLE',
+        `Ability "${ability.name}" has no preview the CLI can run. Destructive execution refused.`,
+        undefined,
+        { reason: 'No dry_run preview contract' }
+      );
+    }
+
+    // Domain confirm_* fields remain ordinary schema-validated input.
+    if (ability.input_schema) {
+      const validated = schemaValidator.validateOrThrow(input, ability.input_schema, ability.name);
+      input = validated.coerced ?? input;
+    }
 
     this.debugLog('Resolved ability execution', {
       abilityName: ability.name,
@@ -256,10 +282,7 @@ export default class AbilitiesRun extends BaseCommand {
     const abilityName = ability.name;
     const executor = await this.getExecutor();
     const safetyController = getSafetyController();
-
-    // Preview is mandatory and fail-closed (plan.md §2.1): a destructive
-    // execution must never proceed without a successful dry_run the operator
-    // has seen. --force skips the prompt below, never this preview.
+    // A successful immediate preview is mandatory before approval.
     let preview: PreviewResult | undefined;
     let previewFailure: unknown;
     try {

@@ -57,7 +57,7 @@ Built for WordPress agencies and site managers who want their MainWP routine in 
 
 ## Quick Start
 
-**Requirements:** Node.js >=20.18.1 and MainWP Dashboard 6.0+
+**Requirements:** Node.js >=20.18.1 and MainWP Dashboard 6.4.2+
 
 > **On Windows?** Use [Git Bash](https://gitforwindows.org/) and every example below works without changes. For scheduled workflows (cron), see [WSL](https://learn.microsoft.com/en-us/windows/wsl/install).
 

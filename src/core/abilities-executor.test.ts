@@ -7,7 +7,10 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import {
   AbilitiesExecutor,
+  abilitySupportsDryRun,
   createAbilitiesExecutor,
+  pinnedConfirmationInputProperties,
+  resolveConfirmationInputProperty,
   type Ability,
   type ExecutionResult,
 } from './abilities-executor.js';
@@ -340,6 +343,29 @@ describe('AbilitiesExecutor', () => {
       expect(mockDelete).toHaveBeenCalledOnce();
     });
 
+    it('sends DELETE input as an application/json body without URL credentials', async () => {
+      mockDelete.mockResolvedValueOnce({ data: { success: true } });
+
+      await executor.execute(
+        'delete-site-v1',
+        { site_id: 1, api_token: 'write-only-secret', property_ref: null },
+        { confirm: true }
+      );
+
+      const [url, body] = mockDelete.mock.calls[0] as [string, unknown];
+      expect(url).not.toContain('?');
+      expect(url).not.toContain('write-only-secret');
+      expect(body).toEqual({
+        input: {
+          site_id: 1,
+          api_token: 'write-only-secret',
+          property_ref: null,
+          dry_run: false,
+          confirm: true,
+        },
+      });
+    });
+
     it('never uses GET for a destructive-named ability marked readonly (transport/policy consistency)', async () => {
       mockPost.mockResolvedValueOnce({ data: { success: true } });
 
@@ -409,7 +435,32 @@ describe('AbilitiesExecutor', () => {
       expect(mockPost).toHaveBeenCalled();
     });
 
-    it('adds confirm and user_confirmed flags when confirm option is true', async () => {
+    it('sends schema-required false confirm alongside a trusted dry-run preview', async () => {
+      mockPost.mockResolvedValueOnce({ data: { success: true } });
+
+      const controlAbility = mockAbilities.find(
+        (ability) => ability.name === 'mainwp/update-site-v1'
+      );
+      expect(controlAbility).toBeDefined();
+      controlAbility!.input_schema = {
+        type: 'object',
+        required: ['site_id', 'dry_run', 'confirm'],
+        properties: {
+          site_id: { type: 'integer' },
+          dry_run: { type: 'boolean' },
+          confirm: { type: 'boolean' },
+        },
+        additionalProperties: false,
+      };
+
+      await executor.execute('update-site-v1', { site_id: 1 }, { dryRun: true });
+
+      expect(mockPost.mock.calls[0]?.[1]).toEqual({
+        input: { site_id: 1, dry_run: true, confirm: false },
+      });
+    });
+
+    it('adds only the schema-declared confirm flag when confirm option is true', async () => {
       mockDelete.mockResolvedValueOnce({
         data: { success: true },
       });
@@ -420,11 +471,255 @@ describe('AbilitiesExecutor', () => {
         { confirm: true }
       );
 
-      // The query params should include confirm and user_confirmed under input[]
+      // The JSON body should include only the schema-declared execution controls under input.
       const call = mockDelete.mock.calls[0];
       const url = call?.[0] as string;
-      expect(url).toContain('input[confirm]=true');
-      expect(url).toContain('input[user_confirmed]=true');
+      expect(url).not.toContain('?');
+      expect(call?.[1]).toEqual({
+        input: { site_id: 1, dry_run: false, confirm: true },
+      });
+    });
+
+    it('refuses trusted confirmation for a required pinned risk field', async () => {
+      const ability = mockAbilities.find(
+        (candidate) => candidate.name === 'mainwp/delete-site-v1'
+      );
+      expect(ability).toBeDefined();
+      const originalSchema = ability!.input_schema;
+      ability!.input_schema = {
+        type: 'object',
+        additionalProperties: false,
+        required: ['site_id', 'confirm_lockout_risk'],
+        properties: {
+          site_id: { type: 'integer' },
+          confirm_lockout_risk: { type: 'boolean', enum: [true] },
+        },
+      };
+      try {
+        // A pinned field must stay true, so the ability has no preview and
+        // the executor refuses confirm even from a caller that skipped one.
+        await expect(executor.execute(
+          'delete-site-v1',
+          {
+            site_id: 1,
+            confirm_lockout_risk: false,
+            confirm_secondary_risk: true,
+            confirm: true,
+            dry_run: true,
+            user_confirmed: true,
+          },
+          { confirm: true }
+        )).rejects.toMatchObject({
+          code: 'INPUT_ERROR', message: expect.stringContaining('no preview the CLI can run'),
+        });
+      } finally {
+        ability!.input_schema = originalSchema;
+      }
+
+      expect(mockDelete).not.toHaveBeenCalled();
+    });
+
+    it('uses the MCP boolean declaration rule without evaluating composition', () => {
+      const ability: Ability = {
+        ...mockAbilities[1]!,
+        input_schema: {
+        type: 'object',
+        required: ['confirm_lockout_risk'],
+        properties: {
+          confirm_lockout_risk: {
+            type: 'boolean',
+            oneOf: [{ const: true }, { type: 'boolean' }],
+          },
+          dry_run: {
+            type: 'boolean',
+            not: { const: true },
+          },
+        },
+        },
+      };
+
+      expect(resolveConfirmationInputProperty(ability)).toBeUndefined();
+      expect(abilitySupportsDryRun(ability)).toBe(true);
+    });
+
+    it('does not select ambiguous schema-named confirmation fields', () => {
+      const ability: Ability = {
+        ...mockAbilities[1]!,
+        input_schema: {
+          type: 'object',
+          required: ['confirm_first_risk', 'confirm_second_risk'],
+          properties: {
+            confirm_first_risk: { type: 'boolean', enum: [true] },
+            confirm_second_risk: { type: 'boolean', enum: [true] },
+          },
+        },
+      };
+
+      expect(resolveConfirmationInputProperty(ability)).toBeUndefined();
+    });
+
+    it('detects only required usable confirm_* fields pinned to true', () => {
+      const ability: Ability = {
+        ...mockAbilities[1]!,
+        input_schema: {
+          required: ['confirm_const', 'confirm_enum', 'confirm_both', 'confirm_plain', 'confirm_string'],
+          properties: {
+            confirm_const: { type: 'boolean', const: true },
+            confirm_enum: { type: 'boolean', enum: [true] },
+            confirm_both: { type: 'boolean', enum: [true, false] },
+            confirm_plain: { type: 'boolean' },
+            confirm_string: { type: 'string', const: true },
+            confirm_optional: { type: 'boolean', const: true },
+          },
+        },
+      };
+      expect(pinnedConfirmationInputProperties(ability)).toEqual(['confirm_const', 'confirm_enum']);
+    });
+
+    it('resolves only an unambiguous pinned or conventional confirmation field', () => {
+      const ability: Ability = { ...mockAbilities[1]! };
+      for (const property of [
+        { type: 'boolean' }, { enum: [true, false] }, { const: true }, { enum: [true] },
+      ]) {
+        ability.input_schema = { required: ['confirm_risk'], properties: { confirm_risk: property } };
+        const pinned = 'const' in property || ('enum' in property && property.enum.length === 1);
+        expect(resolveConfirmationInputProperty(ability)).toBe(pinned ? 'confirm_risk' : undefined);
+        ability.input_schema['properties'] = { confirm: { type: 'boolean' }, confirm_risk: property };
+        expect(resolveConfirmationInputProperty(ability)).toBe(pinned ? undefined : 'confirm');
+      }
+      ability.input_schema = { properties: { confirm_risk: { const: true } } };
+      expect(resolveConfirmationInputProperty(ability)).toBeUndefined();
+    });
+
+    it.each([
+      ['Cost Tracker', { enabled: true, confirm_disable: false }],
+      ['Code Snippets', { confirm_delete: true, confirm_remove_data: false, confirm_backup: true }],
+    ])('preserves required %s domain flags in preview and confirm requests', async (_label, input) => {
+      const ability = mockAbilities[2]!;
+      const originalSchema = ability.input_schema;
+      ability.input_schema = {
+        type: 'object',
+        required: Object.keys(input),
+        properties: {
+          ...Object.fromEntries(Object.keys(input).map((name) => [name, { type: 'boolean' }])),
+          dry_run: { type: 'boolean' },
+          confirm: { type: 'boolean' },
+        },
+      };
+      mockPost.mockResolvedValue({ data: { success: true } });
+      try {
+        await executor.execute(ability.name, input, { dryRun: true });
+        await executor.execute(ability.name, input, { confirm: true });
+        expect(mockPost.mock.calls.map((call) => call[1])).toEqual([
+          { input: { ...input, dry_run: true } },
+          { input: { ...input, dry_run: false, confirm: true } },
+        ]);
+      } finally {
+        ability.input_schema = originalSchema;
+      }
+    });
+
+    it('strips caller-supplied pinned fields without stripping ordinary confirm_* input', async () => {
+      const ability = mockAbilities[2]!;
+      const originalSchema = ability.input_schema;
+      ability.input_schema = {
+        required: ['confirm_lockout_risk'],
+        properties: { confirm_lockout_risk: { type: 'boolean', enum: [true] } },
+      };
+      mockPost.mockResolvedValueOnce({ data: { success: true } });
+      try {
+        await executor.execute(ability.name, { confirm_lockout_risk: true, confirm_disable: false });
+        expect(mockPost.mock.calls[0]?.[1]).toEqual({ input: { confirm_disable: false } });
+      } finally {
+        ability.input_schema = originalSchema;
+      }
+    });
+
+    it.each([
+      ['confirm beside pinned', { confirm: { type: 'boolean' }, confirm_first: { const: true } }, ['confirm_first']],
+      ['two pinned', { confirm_first: { const: true }, confirm_second: { enum: [true] } }, ['confirm_first', 'confirm_second']],
+    ])('refuses %s for preview and confirm before HTTP dispatch', async (_label, properties, required) => {
+      const ability = mockAbilities[2]!;
+      const originalSchema = ability.input_schema;
+      ability.input_schema = { properties, required };
+      mockPost.mockResolvedValue({ data: { success: true } });
+      try {
+        for (const options of [{ dryRun: true }, { confirm: true }]) {
+          await expect(executor.execute(ability.name, {}, options)).rejects.toMatchObject({
+            code: 'INPUT_ERROR', message: expect.stringContaining('ambiguous confirmation'),
+          });
+        }
+        expect(mockPost).not.toHaveBeenCalled();
+        expect(mockDelete).not.toHaveBeenCalled();
+        expect(mockGet).toHaveBeenCalledOnce();
+      } finally {
+        ability.input_schema = originalSchema;
+      }
+    });
+
+    it('refuses a pinned dry-run even when dry_run is declared', async () => {
+      const ability = mockAbilities[2]!;
+      const originalSchema = ability.input_schema;
+      ability.input_schema = {
+        required: ['confirm_lockout_risk'],
+        properties: {
+          confirm_lockout_risk: { enum: [true] },
+          dry_run: { type: 'boolean' },
+        },
+      };
+      mockPost.mockResolvedValue({ data: { success: true } });
+      try {
+        await expect(executor.execute(ability.name, {}, { dryRun: true })).rejects.toMatchObject({
+          code: 'INPUT_ERROR', message: expect.stringContaining('no preview the CLI can run'),
+        });
+        expect(mockPost).not.toHaveBeenCalled();
+      } finally {
+        ability.input_schema = originalSchema;
+      }
+    });
+
+    it('refuses preview and confirm for unpinned confirm_* acknowledgements without dry_run', async () => {
+      // Code Snippets shape: required acknowledgements that accept true or
+      // string forms, with neither confirm nor dry_run declared.
+      const ability = mockAbilities[2]!;
+      const originalSchema = ability.input_schema;
+      const flag = { type: ['boolean', 'string'], enum: [true, 'true', '1'] };
+      ability.input_schema = {
+        type: 'object',
+        additionalProperties: false,
+        required: ['snippet_id', 'confirm_arbitrary_php_execution'],
+        properties: { snippet_id: { type: 'integer' }, confirm_arbitrary_php_execution: flag },
+      };
+      mockPost.mockResolvedValue({ data: { success: true } });
+      try {
+        for (const options of [{ dryRun: true }, { confirm: true }]) {
+          await expect(
+            executor.execute(ability.name, { snippet_id: 1, confirm_arbitrary_php_execution: true }, options)
+          ).rejects.toMatchObject({
+            code: 'INPUT_ERROR', message: expect.stringContaining('no preview the CLI can run'),
+          });
+        }
+        expect(mockPost).not.toHaveBeenCalled();
+        expect(mockDelete).not.toHaveBeenCalled();
+      } finally {
+        ability.input_schema = originalSchema;
+      }
+    });
+
+    it('omits required confirm from preview when false is not usable', async () => {
+      const ability = mockAbilities[2]!;
+      const originalSchema = ability.input_schema;
+      ability.input_schema = {
+        required: ['confirm'],
+        properties: { confirm: { const: true }, dry_run: { type: 'boolean' } },
+      };
+      mockPost.mockResolvedValue({ data: { success: true } });
+      try {
+        await executor.execute(ability.name, {}, { dryRun: true });
+        expect(mockPost.mock.calls[0]?.[1]).toEqual({ input: { dry_run: true } });
+      } finally {
+        ability.input_schema = originalSchema;
+      }
     });
 
     it('throws InputError for unknown ability', async () => {
@@ -617,24 +912,57 @@ describe('AbilitiesExecutor Query String Building', () => {
       status: 'active',
     });
 
-    // Input params are nested under input[key] for the WP Abilities API
-    const url = mockGet.mock.calls[1]?.[0] as string;
-    expect(url).toContain('input[page]=1');
-    expect(url).toContain('input[per_page]=20');
-    expect(url).toContain('input[status]=active');
+    const url = new URL(mockGet.mock.calls[1]?.[0] as string, 'https://dashboard.local');
+    expect(JSON.parse(url.searchParams.get('input_json') ?? '')).toEqual({
+      page: 1,
+      per_page: 20,
+      status: 'active',
+    });
   });
 
-  it('encodes arrays with WordPress-style indexing', async () => {
+  it('preserves an explicit empty input object in the JSON query carrier', async () => {
+    mockGet.mockResolvedValueOnce({ data: { sites: [] } });
+
+    await executor.execute('list-sites-v1', {});
+
+    const url = new URL(mockGet.mock.calls[1]?.[0] as string, 'https://dashboard.local');
+    expect(url.searchParams.has('input_json')).toBe(true);
+    expect(JSON.parse(url.searchParams.get('input_json') ?? '')).toEqual({});
+  });
+
+  it('uses one JSON query carrier and preserves nested null values', async () => {
+    mockGet.mockResolvedValueOnce({ data: { sites: [] } });
+
+    await executor.execute('list-sites-v1', {
+      page: 1,
+      property_ref: null,
+      literal: 'null',
+      nested: { value: null },
+      items: [null, 'null'],
+    });
+
+    const url = new URL(mockGet.mock.calls[1]?.[0] as string, 'https://dashboard.local');
+    expect(url.searchParams.has('input')).toBe(false);
+    expect(JSON.parse(url.searchParams.get('input_json') ?? '')).toEqual({
+      page: 1,
+      property_ref: null,
+      literal: 'null',
+      nested: { value: null },
+      items: [null, 'null'],
+    });
+  });
+
+  it('encodes arrays inside the JSON carrier', async () => {
     mockGet.mockResolvedValueOnce({ data: { sites: [] } });
 
     await executor.execute('list-sites-v1', {
       site_ids: [1, 2, 3],
     });
 
-    const url = mockGet.mock.calls[1]?.[0] as string;
-    expect(url).toContain('input[site_ids][0]=1');
-    expect(url).toContain('input[site_ids][1]=2');
-    expect(url).toContain('input[site_ids][2]=3');
+    const url = new URL(mockGet.mock.calls[1]?.[0] as string, 'https://dashboard.local');
+    expect(JSON.parse(url.searchParams.get('input_json') ?? '')).toEqual({
+      site_ids: [1, 2, 3],
+    });
   });
 
   it('encodes objects as JSON', async () => {
@@ -644,13 +972,13 @@ describe('AbilitiesExecutor Query String Building', () => {
       filter: { status: 'active', client_id: 5 },
     });
 
-    const url = mockGet.mock.calls[1]?.[0] as string;
-    expect(url).toContain('input[filter]=');
-    // URL-encoded JSON
-    expect(decodeURIComponent(url)).toContain('{"status":"active","client_id":5}');
+    const url = new URL(mockGet.mock.calls[1]?.[0] as string, 'https://dashboard.local');
+    expect(JSON.parse(url.searchParams.get('input_json') ?? '')).toEqual({
+      filter: { status: 'active', client_id: 5 },
+    });
   });
 
-  it('skips null and undefined values', async () => {
+  it('preserves null and skips undefined values', async () => {
     mockGet.mockResolvedValueOnce({ data: { sites: [] } });
 
     await executor.execute('list-sites-v1', {
@@ -659,10 +987,11 @@ describe('AbilitiesExecutor Query String Building', () => {
       search: undefined,
     });
 
-    const url = mockGet.mock.calls[1]?.[0] as string;
-    expect(url).toContain('input[page]=1');
-    expect(url).not.toContain('filter');
-    expect(url).not.toContain('search');
+    const url = new URL(mockGet.mock.calls[1]?.[0] as string, 'https://dashboard.local');
+    expect(JSON.parse(url.searchParams.get('input_json') ?? '')).toEqual({
+      page: 1,
+      filter: null,
+    });
   });
 });
 
@@ -772,7 +1101,7 @@ describe('H1: Control flag stripping from user/LLM input', () => {
     vi.clearAllMocks();
   });
 
-  it('strips confirm/dry_run/user_confirmed injected by LLM into input (DELETE/query string path)', async () => {
+  it('strips confirm/dry_run/user_confirmed injected by LLM into input (DELETE body path)', async () => {
     // Populate abilities cache
     mockGet.mockResolvedValueOnce({ data: { abilities: mockAbilities } });
 
@@ -791,12 +1120,11 @@ describe('H1: Control flag stripping from user/LLM input', () => {
     // Execute with dryRun option — control flags from input should be stripped
     await executor.execute('delete-site-v1', maliciousInput, { dryRun: true });
 
-    // DELETE uses query string — verify URL doesn't contain injected flags
+    // DELETE uses a JSON body — verify only the execution option survives.
     const url = mockDelete.mock.calls[0][0] as string;
-    expect(url).toContain('input[site_id]=123');
-    expect(url).toContain('input[dry_run]=true');  // From options, not input
-    expect(url).not.toContain('input[confirm]');
-    expect(url).not.toContain('input[user_confirmed]');
+    const body = mockDelete.mock.calls[0][1] as { input: Record<string, unknown> };
+    expect(url).not.toContain('?');
+    expect(body.input).toEqual({ site_id: 123, dry_run: true });
   });
 
   it('strips control flags from LLM input (POST path)', async () => {
@@ -844,8 +1172,12 @@ describe('H1: Control flag stripping from user/LLM input', () => {
     await executor.execute('delete-site-v1', { site_id: 456 }, { confirm: true });
 
     const url = mockDelete.mock.calls[0][0] as string;
-    expect(url).toContain('input[site_id]=456');
-    expect(url).toContain('input[confirm]=true');
-    expect(url).toContain('input[user_confirmed]=true');
+    const body = mockDelete.mock.calls[0][1] as { input: Record<string, unknown> };
+    expect(url).not.toContain('?');
+    expect(body.input).toEqual({
+      site_id: 456,
+      dry_run: false,
+      confirm: true,
+    });
   });
 });

@@ -165,7 +165,18 @@ function jsonResponse(response: ServerResponse, status: number, body: unknown): 
 }
 
 function fixtureRequestInput(request: RecordedRequest): Record<string, unknown> {
-  if (request.method === 'GET' || request.method === 'DELETE') {
+  if (request.method === 'GET') {
+    const inputJson = request.query['input_json'];
+    if (inputJson !== undefined) {
+      try {
+        const parsed = JSON.parse(inputJson) as unknown;
+        return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+          ? parsed as Record<string, unknown>
+          : {};
+      } catch {
+        return {};
+      }
+    }
     const input: Record<string, unknown> = {};
     for (const [key, value] of Object.entries(request.query)) {
       const match = key.match(/^input\[([^\]]+)\]$/);

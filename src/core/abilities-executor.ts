@@ -60,6 +60,86 @@ export interface ExecutionResult<T = unknown> {
   jobId?: string;
 }
 
+/** Whether raw schema properties accept the requested boolean literal. */
+export function declaresUsableBooleanParam(
+  properties: unknown,
+  name: string,
+  value: boolean = true
+): boolean {
+  if (properties === null || typeof properties !== 'object' || Array.isArray(properties)) {
+    return false;
+  }
+  if (!Object.hasOwn(properties, name)) return false;
+  const sub = (properties as Record<string, unknown>)[name];
+  if (sub === true) return true;
+  if (sub === false) return false;
+  if (sub === null || typeof sub !== 'object' || Array.isArray(sub)) return false;
+  const schema = sub as Record<string, unknown>;
+  const type = schema['type'];
+  if (typeof type === 'string' && type !== 'boolean') return false;
+  if (Array.isArray(type) && !type.includes('boolean')) return false;
+  if (Array.isArray(schema['enum']) && !schema['enum'].includes(value)) return false;
+  if (Object.hasOwn(schema, 'const') && schema['const'] !== value) return false;
+  return true;
+}
+
+/** Send false only for required fields whose schema accepts it. */
+export function requiresUsableFalseParam(schema: unknown, name: string): boolean {
+  if (schema === null || typeof schema !== 'object' || Array.isArray(schema)) return false;
+  if (!Object.hasOwn(schema, 'required')) return false;
+  const record = schema as Record<string, unknown>;
+  return Array.isArray(record['required']) && record['required'].includes(name) &&
+    declaresUsableBooleanParam(record['properties'], name, false);
+}
+
+/** Required usable confirm_* fields pinned to true are execution controls. */
+export function pinnedConfirmationInputProperties(ability: Ability | undefined): string[] {
+  const schema = ability?.input_schema;
+  if (schema === null || typeof schema !== 'object' || Array.isArray(schema)) return [];
+  const properties = schema['properties'];
+  if (properties === null || typeof properties !== 'object' || Array.isArray(properties)) return [];
+  const required = Array.isArray(schema['required']) ? schema['required'] : [];
+  return required.filter((name): name is string => {
+    if (typeof name !== 'string' || !/^confirm_[a-z0-9_]+$/.test(name) ||
+      !declaresUsableBooleanParam(properties, name)) return false;
+    const property = (properties as Record<string, Record<string, unknown>>)[name]!;
+    return property['const'] === true ||
+      (Array.isArray(property['enum']) && property['enum'].length === 1 && property['enum'][0] === true);
+  });
+}
+
+/** Resolve one trusted confirmation field; ambiguous channels fail closed. */
+export function resolveConfirmationInputProperty(ability: Ability | undefined): string | undefined {
+  const schema = ability?.input_schema;
+  if (schema === null || typeof schema !== 'object' || Array.isArray(schema)) return undefined;
+  const pinned = pinnedConfirmationInputProperties(ability);
+  if (declaresUsableBooleanParam(schema['properties'], 'confirm')) {
+    return pinned.length === 0 ? 'confirm' : undefined;
+  }
+  return pinned.length === 1 ? pinned[0] : undefined;
+}
+
+/** Whether discovery declares a usable dry_run boolean. */
+export function abilitySupportsDryRun(ability: Ability | undefined): boolean {
+  return declaresUsableBooleanParam(ability?.input_schema?.['properties'], 'dry_run');
+}
+
+/**
+ * Conventional controls can preview. The legacy fallback covers only schemas
+ * that declare no confirm or confirm_* property at all: an ability that asks
+ * for a confirm_* acknowledgement without declaring dry_run would otherwise
+ * receive an undeclared dry_run next to the caller's acknowledgement, and an
+ * open schema that ignores dry_run would execute on the "preview".
+ */
+export function abilitySupportsPreview(ability: Ability | undefined): boolean {
+  if (resolveConfirmationInputProperty(ability) === 'confirm') return abilitySupportsDryRun(ability);
+  const properties = ability?.input_schema?.['properties'];
+  if (properties === null || typeof properties !== 'object' || Array.isArray(properties)) {
+    return true;
+  }
+  return !Object.keys(properties).some((name) => name === 'confirm' || name.startsWith('confirm_'));
+}
+
 /**
  * Abilities list response — the real API returns Ability[] (flat array),
  * with pagination via X-WP-Total / X-WP-TotalPages headers.
@@ -135,7 +215,7 @@ export class AbilitiesExecutor {
 
     // Merge execution options into user input — the single place control
     // flags are applied. Both request paths below format this same output.
-    const params = this.buildEffectiveParams(input, options);
+    const params = this.buildEffectiveParams(input, options, ability);
 
     // Determine HTTP method based on annotations
     const method = this.getHttpMethod(ability, options);
@@ -151,14 +231,18 @@ export class AbilitiesExecutor {
       const requestOptions = options?.signal ? { signal: options.signal } : undefined;
 
       if (method === 'GET') {
-        // For GET requests, nest input under input[key] (WordPress REST style).
+        // GET uses one JSON carrier so nested nulls and composite values retain
+        // their JSON types through PHP query parsing.
         const queryString = this.buildGetQueryString(params);
         const url = queryString ? `${endpoint}?${queryString}` : endpoint;
         response = await this.httpClient.get<ExecutionResult<T>>(url, requestOptions);
       } else if (method === 'DELETE') {
-        const queryString = this.buildGetQueryString(params);
-        const url = queryString ? `${endpoint}?${queryString}` : endpoint;
-        response = await this.httpClient.delete<ExecutionResult<T>>(url, requestOptions);
+        // Keep destructive credentials and confirmation data out of URLs.
+        response = await this.httpClient.delete<ExecutionResult<T>>(
+          endpoint,
+          { input: params },
+          requestOptions
+        );
       } else {
         // POST with JSON body
         response = await this.httpClient.post<ExecutionResult<T>>(
@@ -321,8 +405,8 @@ export class AbilitiesExecutor {
 
   /**
    * Merge execution options into user input, producing the final param set.
-   * Both the POST body and the GET/DELETE query-string path format this same
-   * output — this is the single place dry_run/confirm/user_confirmed are applied.
+   * Every transport formats this same output — this is the single place
+   * dry_run/confirm are applied.
    *
    * SECURITY: strips any dry_run/confirm/user_confirmed present in user/LLM
    * input before applying the ones from `options`. These control flags are
@@ -331,7 +415,8 @@ export class AbilitiesExecutor {
    */
   private buildEffectiveParams(
     input: Record<string, unknown>,
-    options?: ExecutionOptions
+    options?: ExecutionOptions,
+    ability?: Ability
   ): Record<string, unknown> {
     // INVARIANT: dry_run and confirm are mutually exclusive. Callers enforce
     // this upstream (SafetyController.validateExecutionFlags, oclif exclusive
@@ -345,18 +430,45 @@ export class AbilitiesExecutor {
     }
 
     const merged = { ...input };
+    const confirmationProperty = resolveConfirmationInputProperty(ability);
 
     delete merged['dry_run'];
     delete merged['confirm'];
     delete merged['user_confirmed'];
+    const pinned = pinnedConfirmationInputProperties(ability);
+    for (const key of pinned) {
+      delete merged[key];
+    }
+
+    if ((options?.dryRun || options?.confirm) && pinned.length > 0 && !confirmationProperty) {
+      throw new InputError(`Ability "${ability?.name ?? 'unknown'}" has ambiguous confirmation fields.`);
+    }
+
+    // Confirm is checked here too, not only in the commands, so no caller can
+    // execute an ability that could never have been previewed.
+    if ((options?.dryRun || options?.confirm) && !abilitySupportsPreview(ability)) {
+      throw new InputError(`Ability "${ability?.name ?? 'unknown'}" has no preview the CLI can run.`);
+    }
 
     if (options?.dryRun) {
       merged['dry_run'] = true;
+      if (requiresUsableFalseParam(ability?.input_schema, 'confirm')) {
+        merged['confirm'] = false;
+      }
     }
 
     if (options?.confirm) {
-      merged['confirm'] = true;
-      merged['user_confirmed'] = true;
+      if (confirmationProperty) {
+        if (confirmationProperty === 'confirm' && abilitySupportsDryRun(ability)) {
+          merged['dry_run'] = false;
+        }
+        merged[confirmationProperty] = true;
+      } else {
+        // Compatibility fallback for older abilities whose discovery schema
+        // omitted both control fields but whose execution contract accepts them.
+        merged['dry_run'] = false;
+        merged['confirm'] = true;
+      }
     }
 
     return merged;
@@ -403,32 +515,14 @@ export class AbilitiesExecutor {
   }
 
   /**
-   * Build query string for GET/DELETE requests with WordPress-style nesting.
+   * Build the typed JSON query carrier for GET requests.
    * `params` is already the merged output of buildEffectiveParams(), so
-   * dry_run/confirm/user_confirmed (if present) are formatted the same as
-   * any other param — no separate control-flag handling needed here.
+   * dry_run/confirm (if present) are carried in the same input
+   * object — no separate control-flag handling is needed here.
    */
   private buildGetQueryString(params: Record<string, unknown>): string {
-    const parts: string[] = [];
-
-    // All params go under input[key] — the API treats input as a single object.
-    for (const [key, value] of Object.entries(params)) {
-      if (value === undefined || value === null) continue;
-      const ek = encodeURIComponent(key);
-
-      if (Array.isArray(value)) {
-        // WordPress-style: input[key][0]=v0&input[key][1]=v1
-        value.forEach((v, i) => {
-          parts.push(`input[${ek}][${i}]=${encodeURIComponent(String(v))}`);
-        });
-      } else if (typeof value === 'object') {
-        parts.push(`input[${ek}]=${encodeURIComponent(JSON.stringify(value))}`);
-      } else {
-        parts.push(`input[${ek}]=${encodeURIComponent(String(value))}`);
-      }
-    }
-
-    return parts.join('&');
+    const inputJson = JSON.stringify(params);
+    return `input_json=${encodeURIComponent(inputJson)}`;
   }
 
 
