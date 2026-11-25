@@ -156,6 +156,10 @@ export async function promptForPassword(question: string): Promise<string> {
     };
 
     stdin.on('data', onData);
+    // An earlier readline prompt leaves stdin explicitly paused, and adding a
+    // 'data' listener does not restart a paused stream. Without this the event
+    // loop drains and Node exits at the prompt with "unsettled top-level await".
+    stdin.resume();
   });
 }
 
