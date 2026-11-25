@@ -19,7 +19,7 @@ import {
 } from '../chat/providers/provider.js';
 import type { PreviewResult } from '../core/safety-controller.js';
 import { isInteractive } from '../utils/prompt.js';
-import { stripControlChars } from '../utils/terminal-sanitizer.js';
+import { sanitizeForTerminal, sanitizeSingleLine, stripControlChars } from '../utils/terminal-sanitizer.js';
 import { getInputSanitizer } from '../validation/input-sanitizer.js';
 import { APIError, UnknownOutcomeError, type MainWPCTLError } from '../utils/errors.js';
 
@@ -33,25 +33,15 @@ function formatPreview(preview: PreviewResult): string {
   const lines: string[] = [];
 
   lines.push(`\n${'='.repeat(60)}`);
-  lines.push(`PREVIEW: ${preview.abilityName}`);
+  lines.push(`PREVIEW: ${sanitizeSingleLine(preview.abilityName)}`);
   lines.push(`${'='.repeat(60)}`);
   lines.push('');
   lines.push(stripControlChars(preview.summary));
 
-  if (preview.affected.length > 0) {
-    lines.push('');
-    lines.push('Affected items:');
-    for (const item of preview.affected.slice(0, 10)) {
-      const itemStr =
-        typeof item === 'object' && item !== null
-          ? JSON.stringify(item, null, 2)
-          : stripControlChars(String(item));
-      lines.push(`  - ${itemStr}`);
-    }
-    if (preview.affected.length > 10) {
-      lines.push(`  ... and ${preview.affected.length - 10} more`);
-    }
-  }
+  lines.push('');
+  lines.push('Full response:');
+  const data = Object.hasOwn(preview, 'rawResponse') ? preview.rawResponse : preview.affected;
+  lines.push(JSON.stringify(sanitizeForTerminal(data), null, 2));
 
   lines.push('');
   lines.push(`${'='.repeat(60)}`);
