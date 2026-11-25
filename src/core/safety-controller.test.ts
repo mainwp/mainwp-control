@@ -276,7 +276,7 @@ describe('Dashboard would_affect previews', () => {
     const result = preview({ dry_run: true,
       would_affect: { id: 7, url: 'https://site.example', name: 'My Store' }, warnings: [warning],
     }, 'mainwp/delete-site-v1');
-    expect(result.summary).toContain(`Warning: ${warning.slice(0, 79)}…`);
+    expect(result.summary).toContain(`Warning: ${warning}\n`);
     expect(result.summary).toContain('\nMy Store');
     expect(humanPreview(result)).toContain(warning);
   });

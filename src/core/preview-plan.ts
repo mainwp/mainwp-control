@@ -1,6 +1,9 @@
 import { sanitizeSingleLine } from '../utils/terminal-sanitizer.js';
 
 const MAX_FIELD_LENGTH = 80;
+// Dashboard warnings and errors are what the operator reads before approving,
+// so they get room for a full sentence; the full response follows anyway.
+const MAX_MESSAGE_LENGTH = 300;
 const MAX_LINES = 50;
 const MAX_CHECKS_SHOWN = 6;
 const VERSION_CAVEAT =
@@ -12,10 +15,10 @@ function record(value: unknown): Record<string, unknown> | undefined {
     : undefined;
 }
 
-function text(value: unknown): string {
+function text(value: unknown, max = MAX_FIELD_LENGTH): string {
   if (typeof value !== 'string') return '';
   const safe = sanitizeSingleLine(value).replace(/[\u2028\u2029]/g, ' ').trim();
-  return safe.length > MAX_FIELD_LENGTH ? `${safe.slice(0, MAX_FIELD_LENGTH - 1)}…` : safe;
+  return safe.length > max ? `${safe.slice(0, max - 1)}…` : safe;
 }
 
 function count(value: unknown): value is number {
@@ -29,9 +32,9 @@ function entityLabel(entity: Record<string, unknown>): string {
 
 function diagnostic(value: unknown): string {
   const entry = record(value);
-  if (!entry) return text(value);
+  if (!entry) return text(value, MAX_MESSAGE_LENGTH);
   const label = entityLabel(entry) || (count(entry['site_id']) ? `Site ${entry['site_id']}` : '');
-  return [label, text(entry['code']), text(entry['message'])].filter(Boolean).join(': ');
+  return [label, text(entry['code']), text(entry['message'], MAX_MESSAGE_LENGTH)].filter(Boolean).join(': ');
 }
 
 function diagnostics(data: Record<string, unknown>): string[] {
@@ -127,11 +130,11 @@ export function previewPlanSummary(data: Record<string, unknown>, affected: unkn
       const item = record(value);
       const label = item && (text(item['name']) || text(item['slug']));
       if (!item || !label || !count(item['site_count']) || !Array.isArray(item['to'])) return undefined;
-      const versions = item['to'].map(text).filter(Boolean);
+      const versions = item['to'].map((version) => text(version)).filter(Boolean);
       const shownVersions = versions.slice(0, MAX_CHECKS_SHOWN);
       const hidden = versions.length - shownVersions.length;
       const flags = record(item['flags']);
-      append(`Across sites: ${label} → ${shownVersions.join(', ') || 'unknown version'}${hidden ? ` and ${hidden} more versions` : ''} on ${item['site_count']} sites${flags?.['major'] === true ? ' (major version change)' : ''}`);
+      append(`Across sites: ${label} → ${shownVersions.join(', ') || 'unknown version'}${hidden ? ` and ${hidden} more versions` : ''} on ${item['site_count']} ${item['site_count'] === 1 ? 'site' : 'sites'}${flags?.['major'] === true ? ' (major version change)' : ''}`);
       if (flags?.['core'] === true) rollupCoreSites += item['site_count'];
     }
   }
