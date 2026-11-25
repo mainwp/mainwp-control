@@ -164,7 +164,7 @@ describe('abilities run', () => {
       const req = server.getLastRequest('/run');
       expect(req).toBeDefined();
       expect(req!.method).toBe('GET');
-      expect(req!.query['input[site_id_or_domain]']).toBe('5');
+      expect(JSON.parse(req!.query['input_json'] ?? '')).toEqual({ site_id_or_domain: 5 });
     });
   });
 
@@ -201,7 +201,7 @@ describe('abilities run', () => {
       const req = server.getLastRequest('/run');
       expect(req).toBeDefined();
       expect(req!.method).toBe('GET');
-      expect(req!.query['input[site_id_or_domain]']).toBe('5');
+      expect(JSON.parse(req!.query['input_json'] ?? '')).toEqual({ site_id_or_domain: 5 });
     });
   });
 
@@ -226,7 +226,7 @@ describe('abilities run', () => {
       const req = server.getLastRequest('/run');
       expect(req).toBeDefined();
       expect(req!.method).toBe('GET');
-      expect(req!.query['input[site_id_or_domain]']).toBe('5');
+      expect(JSON.parse(req!.query['input_json'] ?? '')).toEqual({ site_id_or_domain: 5 });
     });
   });
 

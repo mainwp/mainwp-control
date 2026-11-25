@@ -63,7 +63,8 @@ const mockExecutorListAbilities = vi.fn();
 const mockExecutorExecute = vi.fn();
 const mockExecutorGetAbility = vi.fn();
 
-vi.mock('../../core/abilities-executor.js', () => ({
+vi.mock('../../core/abilities-executor.js', async () => ({
+  ...(await vi.importActual('../../core/abilities-executor.js')),
   createAbilitiesExecutor: vi.fn(() => ({
     listAbilities: mockExecutorListAbilities,
     execute: mockExecutorExecute,

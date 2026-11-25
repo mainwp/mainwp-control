@@ -96,7 +96,7 @@ export const previewThenConfirm: ScenarioDefinition = {
     ctx.assert.equal('exactly one confirm request reached the fixture', confirms.length, 1);
     ctx.assert.equal('preview request is first', requestInput(requests[0] ?? { body: undefined }).dry_run, true);
     ctx.assert.equal('confirm request is second', requestInput(requests[1] ?? { body: undefined }).confirm, true);
-    ctx.assert.equal('confirm request records user confirmation', requestInput(confirms[0] ?? { body: undefined }).user_confirmed, true);
+    ctx.assert.equal('confirm request omits the retired user confirmation field', requestInput(confirms[0] ?? { body: undefined }).user_confirmed, undefined);
     ctx.assert.equal('confirm request retains the site id', requestInput(confirms[0] ?? { body: undefined }).site_id_or_domain, FIXTURE_SITE_ID);
   },
 };

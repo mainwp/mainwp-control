@@ -140,9 +140,10 @@ export class HttpClient {
    */
   async delete<T = unknown>(
     path: string,
+    body?: unknown,
     options?: RequestOptions
   ): Promise<HttpResponse<T>> {
-    return this.request<T>('DELETE', path, undefined, options);
+    return this.request<T>('DELETE', path, body, options);
   }
 
   /**

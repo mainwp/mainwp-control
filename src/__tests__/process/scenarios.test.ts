@@ -508,7 +508,7 @@ describe('Scenario: Plugin Deployment Verification', () => {
     const req = server.getLastRequest('/run');
     expect(req).toBeDefined();
     expect(req!.method).toBe('GET');
-    expect(req!.query['input[site_id_or_domain]']).toBe('1');
+    expect(JSON.parse(req!.query['input_json'] ?? '')).toEqual({ site_id_or_domain: 1 });
   });
 
   it('full flow: login → list sites → get plugins for first site', async () => {
@@ -730,9 +730,9 @@ describe('Scenario: Input Methods Equivalence', () => {
     });
 
     // All three should have sent the same query params to the server
-    expect(results[0]!.query['input[site_id_or_domain]']).toBe('5');
-    expect(results[1]!.query['input[site_id_or_domain]']).toBe('5');
-    expect(results[2]!.query['input[site_id_or_domain]']).toBe('5');
+    expect(JSON.parse(results[0]!.query['input_json'] ?? '')).toEqual({ site_id_or_domain: 5 });
+    expect(JSON.parse(results[1]!.query['input_json'] ?? '')).toEqual({ site_id_or_domain: 5 });
+    expect(JSON.parse(results[2]!.query['input_json'] ?? '')).toEqual({ site_id_or_domain: 5 });
 
     // All three query objects should be equivalent
     expect(results[0]!.query).toEqual(results[1]!.query);
