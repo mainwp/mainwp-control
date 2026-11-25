@@ -12,6 +12,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import {
   SafetyController,
+  isKnownDestructiveName,
 } from './safety-controller.js';
 import { MutualExclusionError, ConfirmationRequiredError } from '../utils/errors.js';
 import type { Ability } from './abilities-executor.js';
@@ -440,6 +441,57 @@ describe('M6: Known-destructive pattern defense-in-depth', () => {
       const classification = controller.classify(ability);
       expect(classification.isDestructive).toBe(true);
       expect(classification.requiresSafetyFlow).toBe(true);
+    }
+  );
+
+  // Names and annotations from mainwp/run-safe-update-v1 and its companions in the Dashboard's
+  // includes/abilities/class-mainwp-abilities-safe-updates.php.
+  it.each([
+    'mainwp/run-safe-update-v1',
+    'mainwp/continue-safe-update-run-v1',
+    'mainwp/cancel-safe-update-run-v1',
+    'mainwp/retest-safe-update-site-v1',
+    'mainwp/resolve-safe-update-site-v1',
+    'mainwp/rollback-safe-update-v1',
+    'run-safe-update-v1',
+    'continue-safe-update-run-v1',
+    'cancel-safe-update-run-v1',
+    'retest-safe-update-site-v1',
+    'resolve-safe-update-site-v1',
+  ])('forces destructive classification for Safe Updates ability %s', (name) => {
+    const ability = createTestAbility(name, {
+      destructive: false,
+      readonly: true,
+    });
+
+    expect(isKnownDestructiveName(name)).toBe(true);
+    const classification = controller.classify(ability);
+    expect(classification.isDestructive).toBe(true);
+    expect(classification.isReadOnly).toBe(false);
+    expect(classification.requiresSafetyFlow).toBe(true);
+  });
+
+  it.each(['mainwp/list-safe-update-runs-v1', 'mainwp/get-safe-update-run-v1'])(
+    'keeps Safe Updates read %s read-only',
+    (name) => {
+      const ability = createTestAbility(name, {
+        destructive: false,
+        readonly: true,
+      });
+
+      expect(isKnownDestructiveName(name)).toBe(false);
+      const classification = controller.classify(ability);
+      expect(classification.isDestructive).toBe(false);
+      expect(classification.isReadOnly).toBe(true);
+      expect(classification.requiresSafetyFlow).toBe(false);
+    }
+  );
+
+  it.each(['list-updates-v1', 'cancel-batch-job-v1', 'continue-sync-v1', 'run-site-checks-v1'])(
+    'does not widen the Safe Updates patterns to %s',
+    (name) => {
+      expect(isKnownDestructiveName(name)).toBe(false);
+      expect(isKnownDestructiveName(`mainwp/${name}`)).toBe(false);
     }
   );
 

@@ -11,6 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Breaking:** requires MainWP Dashboard 6.4.2 or later. GET ability requests send their input as one JSON value in `input_json`, so nulls and nested values keep their types, and DELETE requests send input in a JSON body instead of the URL. Earlier Dashboards read neither format
 - Confirmation resolves to a usable boolean `confirm` when no pinned fields exist, or a single required usable boolean `confirm_*` pinned to true by `const: true` or `enum: [true]`. Other `confirm_*` fields are ordinary input. `user_confirmed` is no longer sent
+- The Safe Updates abilities that write to a run (`run-safe-update-v1`, `continue-safe-update-run-v1`, `cancel-safe-update-run-v1`, `retest-safe-update-site-v1` and `resolve-safe-update-site-v1`) are now always classified as destructive, so each needs `--dry-run` and then `--confirm`, whatever the Dashboard's annotations say. `rollback-safe-update-v1` was already covered by `rollback-*`. The Safe Updates reads are unchanged. See [Safety](docs/safety.md#safe-updates)
 
 ### Security
 
