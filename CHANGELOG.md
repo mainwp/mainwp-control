@@ -7,16 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.2.0] - 2026-11-25
+
 ### Changed
 
 - **Breaking:** requires MainWP Dashboard 6.4.2 or later. GET ability requests send their input as one JSON value in `input_json`, so nulls and nested values keep their types, and DELETE requests send input in a JSON body instead of the URL. Earlier Dashboards read neither format
 - Confirmation resolves to a usable boolean `confirm` when no pinned fields exist, or a single required usable boolean `confirm_*` pinned to true by `const: true` or `enum: [true]`. Other `confirm_*` fields are ordinary input. `user_confirmed` is no longer sent
 - The Safe Updates abilities that write to a run (`run-safe-update-v1`, `continue-safe-update-run-v1`, `cancel-safe-update-run-v1`, `retest-safe-update-site-v1` and `resolve-safe-update-site-v1`) are now always classified as destructive, so each needs `--dry-run` and then `--confirm`, whatever the Dashboard's annotations say. `rollback-safe-update-v1` was already covered by `rollback-*`. The Safe Updates reads are unchanged. See [Safety](docs/safety.md#safe-updates)
 
+### Fixed
+
+- `login` no longer exits at the application password prompt with "Detected unsettled top-level await" after asking for the Dashboard URL or username. The password prompt now resumes standard input that the earlier prompt left paused
+- Dry runs against Dashboard 6.4 and later show a readable plan instead of "Preview returned data in an unrecognized format". Update and Safe Updates previews list each site with its item changes, held-back items, backup result and checks, and single-entity previews name the site, tag or client. The Dashboard's errors, refusals and warnings lead the summary, and the full response is still shown below it
+- Commands no longer print "Discovery skipped an invalid ability entry" for the unversioned `core/*` abilities that WordPress 6.9 registers. Malformed entries still produce the warning
+
 ### Security
 
 - Both `abilities run` and chat refuse destructive abilities with ambiguous confirmation fields or no preview the CLI can run, including pinned `confirm_*` fields even when `dry_run` is declared. Only required usable boolean `confirm_*` fields pinned to true are stripped from caller and model input; other `confirm_*` fields pass through as ordinary input
 - Previews mask values that the ability's schema marks `writeOnly`, in both the echoed input and the Dashboard's response
+- undici is updated to 7.30.2, and the lockfile resolves brace-expansion 5.0.12 and fast-uri 3.1.9, clearing the high-severity advisories in the production dependency tree. The remaining moderate `minimatch` advisory comes through `@oclif/core` 4 and needs a major `@oclif/core` upgrade
 
 ## [1.1.1] - 2026-07-27
 
@@ -159,7 +168,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Unimplemented `cancelJob` and `listJobs` from BatchManager
 
-[Unreleased]: https://github.com/mainwp/mainwp-control/compare/v1.1.1...HEAD
+[Unreleased]: https://github.com/mainwp/mainwp-control/compare/v1.2.0...HEAD
+[1.2.0]: https://github.com/mainwp/mainwp-control/compare/v1.1.1...v1.2.0
 [1.1.1]: https://github.com/mainwp/mainwp-control/compare/v1.1.0...v1.1.1
 [1.1.0]: https://github.com/mainwp/mainwp-control/compare/v1.1.0-beta.1...v1.1.0
 [1.1.0-beta.1]: https://github.com/mainwp/mainwp-control/compare/v1.0.1...v1.1.0-beta.1
