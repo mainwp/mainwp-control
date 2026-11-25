@@ -221,6 +221,23 @@ describe('AbilitiesExecutor', () => {
       expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining('invalid ability'));
     });
 
+    it('skips unversioned WordPress core abilities without a warning', async () => {
+      const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+      mockGet.mockResolvedValueOnce({
+        data: [
+          { ...mockAbilities[0], name: 'core/get-site-info' },
+          { ...mockAbilities[0], name: 'core/get-user-info' },
+          { ...mockAbilities[0], name: 'core/get-environment-info' },
+          mockAbilities[0],
+        ],
+      });
+
+      const abilities = await executor.listAbilities();
+
+      expect(abilities).toEqual([mockAbilities[0]]);
+      expect(errorSpy).not.toHaveBeenCalled();
+    });
+
     it('keeps the first duplicate full name and warns', async () => {
       const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
       mockGet.mockResolvedValueOnce({
