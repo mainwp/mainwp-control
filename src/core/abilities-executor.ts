@@ -152,6 +152,11 @@ const MAX_DISCOVERY_PAGES = 20;
 // A case-variant like "Mainwp/Delete-Site-V1" is refused at discovery rather
 // than normalized, so it can never evade classification or alias a cache key.
 const ABILITY_NAME_PATTERN = /^[a-z0-9][a-z0-9._-]*\/[a-z0-9][a-z0-9._-]*-v[1-9]\d*$/;
+// WordPress 6.9+ registers its own core/* abilities without a -vN suffix. They
+// are well formed, just outside the CLI's versioned identity model, so they are
+// skipped without a warning. Anything else that fails ABILITY_NAME_PATTERN
+// still warns.
+const UNVERSIONED_ABILITY_NAME_PATTERN = /^[a-z0-9][a-z0-9._-]*\/[a-z0-9][a-z0-9._-]*$/;
 
 /**
  * Abilities Executor class
@@ -336,7 +341,11 @@ export class AbilitiesExecutor {
         if (!this.isPlainObject(entry) ||
           typeof entry['name'] !== 'string' ||
           !ABILITY_NAME_PATTERN.test(entry['name'])) {
-          console.error('Warning: Discovery skipped an invalid ability entry.');
+          const unversioned = this.isPlainObject(entry) && typeof entry['name'] === 'string' &&
+            UNVERSIONED_ABILITY_NAME_PATTERN.test(entry['name']);
+          if (!unversioned) {
+            console.error('Warning: Discovery skipped an invalid ability entry.');
+          }
           continue;
         }
 
