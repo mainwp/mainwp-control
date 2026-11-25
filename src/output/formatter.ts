@@ -245,7 +245,7 @@ export function formatPreview(
       : color('Preview: ', colors.yellow, colors.bold) +
         sanitizeSingleLine(Array.isArray(action) ? action[0] ?? '' : action),
     '',
-    color('Affected items:', colors.dim),
+    color('Full response:', colors.dim),
     JSON.stringify(sanitizedItems, null, 2),
     '',
     color('This is a preview. No changes have been made.', colors.yellow),

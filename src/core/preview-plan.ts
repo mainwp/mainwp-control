@@ -22,6 +22,57 @@ function count(value: unknown): value is number {
   return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0;
 }
 
+function entityLabel(entity: Record<string, unknown>): string {
+  return text(entity['site_name']) || text(record(entity['client'])?.['name']) ||
+    text(entity['name']) || text(entity['site_url']) || text(entity['url']) || text(entity['slug']);
+}
+
+function diagnostic(value: unknown): string {
+  const entry = record(value);
+  if (!entry) return text(value);
+  const label = entityLabel(entry) || (count(entry['site_id']) ? `Site ${entry['site_id']}` : '');
+  return [label, text(entry['code']), text(entry['message'])].filter(Boolean).join(': ');
+}
+
+function diagnostics(data: Record<string, unknown>): string[] {
+  const lines: string[] = [];
+  if (data['can_proceed'] === false) lines.push('Confirm would be refused.');
+  for (const [key, label] of [['errors', 'Error'], ['refusals', 'Refusal'], ['warnings', 'Warning']] as const) {
+    const entries = data[key];
+    if (!Array.isArray(entries)) continue;
+    for (const entry of entries) {
+      lines.push(`${label}: ${diagnostic(entry) || 'Unrecognized detail; review the full response.'}`);
+    }
+  }
+  return lines;
+}
+
+function boundedSummary(lines: string[], ending: string[] = []): string {
+  if (lines.length + ending.length <= MAX_LINES) return [...lines, ...ending].join('\n');
+  const visibleLines = MAX_LINES - ending.length - 1;
+  return [...lines.slice(0, visibleLines), ...ending, `+${lines.length - visibleLines} more lines left out`].join('\n');
+}
+
+export function unrecognizedPreviewSummary(data: Record<string, unknown>): string {
+  return boundedSummary(diagnostics(data), [
+    'Preview returned data in an unrecognized format — review the raw response below before approving.',
+  ]);
+}
+
+export function previewSummaryWithDiagnostics(data: Record<string, unknown>, summary: string): string {
+  return boundedSummary([...diagnostics(data), summary]);
+}
+
+function words(value: unknown): string {
+  const safe = text(value);
+  switch (safe) {
+    case 'pending_offsite': return 'latest backup not offsite yet';
+    case 'not_applicable': return 'not applicable';
+    case 'not_run': return 'not run';
+    default: return safe || 'unknown';
+  }
+}
+
 const SKIP_REASONS: Record<string, string> = {
   ignored_site: 'ignored on this site',
   ignored_global: 'ignored globally',
@@ -36,16 +87,15 @@ function itemChange(value: unknown): string | undefined {
   const name = text(item['name']) || text(item['slug']);
   const from = item['from'] ?? item['old_version'];
   const to = item['to'] ?? item['new_version'];
-  if (!name || typeof from !== 'string' || typeof to !== 'string') return undefined;
+  if (!name || typeof from !== 'string' || (to !== undefined && typeof to !== 'string')) return undefined;
   const label = item['type'] === 'translation' ? `${name} translation` : name;
-  return `${label}${text(from) ? ` ${text(from)}` : ''} → ${text(to)}`;
+  return `${label}${text(from) ? ` ${text(from)}` : ''} → ${text(to) || 'unknown version'}`;
 }
 
 function entityLine(value: unknown): string | undefined {
   const entity = record(value);
   if (!entity) return undefined;
-  const client = record(entity['client']);
-  const label = text(client?.['name']) || text(entity['name']) || text(entity['url']) || text(entity['slug']);
+  const label = entityLabel(entity);
   if (!label) return undefined;
   const counts: string[] = [];
   for (const [key, description] of [
@@ -63,32 +113,67 @@ function entityLine(value: unknown): string | undefined {
 export function previewPlanSummary(data: Record<string, unknown>, affected: unknown[]): string | undefined {
   const wouldAffect = data['would_affect'];
   if (!Array.isArray(wouldAffect) && !record(wouldAffect)) return undefined;
-  if (affected.length === 0) return undefined;
-
-  const lines: string[] = [];
-  let lineCount = 0;
-  const append = (line: string) => {
-    lineCount++;
-    if (lines.length < MAX_LINES) lines.push(line);
-  };
-  let updatePlan = false;
+  const lines = diagnostics(data);
+  const append = (line: string) => lines.push(line);
+  const plan = record(wouldAffect);
+  if (plan && Object.hasOwn(plan, 'sites') && !Array.isArray(plan['sites'])) return undefined;
+  const summary = record(plan?.['summary']);
+  let updatePlan = Array.isArray(plan?.['sites']);
+  let coreSites = 0;
+  let rollupCoreSites: number | undefined;
+  if (summary?.['truncated'] === true && Array.isArray(plan?.['by_item'])) {
+    rollupCoreSites = 0;
+    for (const value of plan['by_item']) {
+      const item = record(value);
+      const label = item && (text(item['name']) || text(item['slug']));
+      if (!item || !label || !count(item['site_count']) || !Array.isArray(item['to'])) return undefined;
+      const versions = item['to'].map(text).filter(Boolean);
+      const shownVersions = versions.slice(0, MAX_CHECKS_SHOWN);
+      const hidden = versions.length - shownVersions.length;
+      const flags = record(item['flags']);
+      append(`Across sites: ${label} → ${shownVersions.join(', ') || 'unknown version'}${hidden ? ` and ${hidden} more versions` : ''} on ${item['site_count']} sites${flags?.['major'] === true ? ' (major version change)' : ''}`);
+      if (flags?.['core'] === true) rollupCoreSites += item['site_count'];
+    }
+  }
+  if (affected.length === 0) append('No affected items reported.');
   for (const value of affected) {
     const site = record(value);
+    if (site && Object.hasOwn(site, 'items') && !Array.isArray(site['items'])) return undefined;
     if (!site || !Array.isArray(site['items'])) {
       const line = entityLine(value);
       if (!line) return undefined;
       append(line);
+      if (site && Object.hasOwn(site, 'holds')) {
+        if (!Array.isArray(site['holds'])) return undefined;
+        for (const value of site['holds']) {
+          const hold = record(value);
+          const label = hold && (text(hold['name']) || text(hold['slug']));
+          if (!hold || !label || typeof hold['held'] !== 'boolean') return undefined;
+          const remaining = text(hold['still_held_by']);
+          append(`  Hold: ${label} (${hold['held'] ? 'held' : 'not held'}${remaining ? `; still held by ${remaining}` : ''})`);
+        }
+      }
       continue;
     }
     updatePlan = true;
-    const label = text(site['site_name']) || text(site['name']) || text(site['site_url']);
+    const label = entityLabel(site);
     if (!label) return undefined;
+    const skipReason = text(site['skip_reason']);
+    if (skipReason) {
+      append(`Left out: ${label} (${skipReason})`);
+      continue;
+    }
     append(label);
+    let hasCore = false;
     for (const item of site['items']) {
       const change = itemChange(item);
       if (!change) return undefined;
-      append(`  ${change}`);
+      const flags = record(record(item)?.['flags']);
+      append(`  ${change}${flags?.['major'] === true ? ' (major version change)' : ''}`);
+      if (flags?.['core'] === true) hasCore = true;
     }
+    if (hasCore) coreSites++;
+    if (site['skipped'] !== undefined && !Array.isArray(site['skipped'])) return undefined;
     if (Array.isArray(site['skipped'])) {
       for (const value of site['skipped']) {
         const item = record(value);
@@ -102,26 +187,27 @@ export function previewPlanSummary(data: Record<string, unknown>, affected: unkn
     const verdict = text(gate?.['verdict']) || text(site['backup_verdict']);
     const backupLabel = text(site['backup_label']);
     if (verdict || backupLabel) {
-      append(`  Backup: ${verdict}${backupLabel ? ` (${backupLabel})` : ''}${gate?.['overridden'] === true ? ' (overridden)' : ''}`);
+      append(`  Backup: ${words(verdict)}${backupLabel ? ` (${backupLabel})` : ''}${gate?.['overridden'] === true ? ' (overridden)' : ''}`);
     }
+    if (site['checks'] !== undefined && !Array.isArray(site['checks'])) return undefined;
     if (Array.isArray(site['checks'])) {
       const checks = site['checks'];
       const shown: string[] = [];
-      for (const value of checks.slice(0, MAX_CHECKS_SHOWN)) {
+      for (const [index, value] of checks.entries()) {
         const check = record(value);
         const key = text(check?.['key']);
         if (!key) return undefined;
         const reason = text(check?.['reason']);
-        shown.push(`${key}: ${text(check?.['status'])}${reason ? ` (${reason})` : ''}`);
+        if (index < MAX_CHECKS_SHOWN) shown.push(`${key}: ${words(check?.['status'])}${reason ? ` (${reason})` : ''}`);
       }
       const hidden = checks.length - shown.length;
       append(`  Checks: ${shown.join(', ') || 'none'}${hidden > 0 ? ` and ${hidden} more` : ''}`);
     }
-    const skipReason = text(site['skip_reason']);
-    if (skipReason) append(`  Left out: ${skipReason}`);
   }
   const ending: string[] = [];
-  const summary = record(record(wouldAffect)?.['summary']);
+  if (Array.isArray(summary?.['requested_not_found'])) {
+    for (const item of summary['requested_not_found']) append(`Requested but not found: ${text(item) || 'unknown item'}`);
+  }
   if (summary?.['truncated'] === true) {
     const total = summary['site_count'];
     const shown = affected.filter(value => {
@@ -132,8 +218,12 @@ export function previewPlanSummary(data: Record<string, unknown>, affected: unkn
       ? `Partial site list: showing ${shown} of ${total} sites with updates (${Math.max(0, total - shown)} left out).`
       : 'Partial site list: the Dashboard omitted sites.');
   }
+  coreSites = rollupCoreSites ?? coreSites;
+  if (coreSites > 0 || summary?.['has_core'] === true) {
+    ending.push(coreSites > 0
+      ? `Core update on ${coreSites} ${coreSites === 1 ? 'site' : 'sites'}`
+      : 'Core update included; site count unknown.');
+  }
   if (updatePlan) ending.push(VERSION_CAVEAT);
-  if (lineCount + ending.length <= MAX_LINES) return [...lines, ...ending].join('\n');
-  const visibleLines = MAX_LINES - ending.length - 1;
-  return [...lines.slice(0, visibleLines), ...ending, `+${lineCount - visibleLines} more lines left out`].join('\n');
+  return boundedSummary(lines, ending);
 }

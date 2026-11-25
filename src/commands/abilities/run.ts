@@ -695,7 +695,8 @@ export default class AbilitiesRun extends BaseCommand {
     const lines = [
       formatHeading(`Preview: ${preview.abilityName}`),
       '',
-      formatPreview(preview.summary.split('\n'), preview.affected),
+      formatPreview(preview.summary.split('\n'),
+        Object.hasOwn(preview, 'rawResponse') ? preview.rawResponse : preview.affected),
     ];
 
     return lines.join('\n');

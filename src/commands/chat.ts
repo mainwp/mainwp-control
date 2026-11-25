@@ -38,20 +38,10 @@ function formatPreview(preview: PreviewResult): string {
   lines.push('');
   lines.push(stripControlChars(preview.summary));
 
-  if (preview.affected.length > 0) {
-    lines.push('');
-    lines.push('Affected items:');
-    for (const item of preview.affected.slice(0, 10)) {
-      const itemStr =
-        typeof item === 'object' && item !== null
-          ? JSON.stringify(sanitizeForTerminal(item), null, 2)
-          : stripControlChars(String(item));
-      lines.push(`  - ${itemStr}`);
-    }
-    if (preview.affected.length > 10) {
-      lines.push(`  ... and ${preview.affected.length - 10} more`);
-    }
-  }
+  lines.push('');
+  lines.push('Full response:');
+  const data = Object.hasOwn(preview, 'rawResponse') ? preview.rawResponse : preview.affected;
+  lines.push(JSON.stringify(sanitizeForTerminal(data), null, 2));
 
   lines.push('');
   lines.push(`${'='.repeat(60)}`);

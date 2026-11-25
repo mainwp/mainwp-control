@@ -11,12 +11,14 @@
 
 import type { Ability, AbilityAnnotations, ExecutionResult } from './abilities-executor.js';
 import { MutualExclusionError, ConfirmationRequiredError } from '../utils/errors.js';
-import { previewPlanSummary } from './preview-plan.js';
+import { previewPlanSummary, previewSummaryWithDiagnostics, unrecognizedPreviewSummary } from './preview-plan.js';
 
 /**
  * Preview result from dry_run execution
  */
 export interface PreviewResult {
+  /** Full masked response for human output; non-enumerable to preserve JSON envelopes. */
+  rawResponse?: unknown;
   /** Items that would be affected */
   affected: unknown[];
   /** Summary of changes */
@@ -288,31 +290,35 @@ export class SafetyController {
       ability.input_schema
     ) as Record<string, unknown>;
     const affected = this.extractAffectedItems(data);
+    const planSummary = data && previewPlanSummary(data, affected ?? []);
+    const hasWouldAffect = data && Object.hasOwn(data, 'would_affect');
+    const withResponse = (preview: PreviewResult): PreviewResult =>
+      Object.defineProperty(preview, 'rawResponse', { value: data });
 
     // Unrecognized response shape: never tell the operator "no items would
     // be affected" when we simply couldn't read the preview — show the raw
     // data and say so, since a falsely reassuring summary right before a
     // destructive confirm is worse than an honest "unknown".
-    if (affected === null) {
+    if (affected === null || (hasWouldAffect && planSummary === undefined)) {
       const noData = data === undefined || Object.keys(data).length === 0;
-      return {
-        affected: noData ? [] : [data],
+      return withResponse({
+        affected: affected ?? (noData ? [] : [data]),
         summary: noData
           ? 'Preview returned no data — the ability did not report what would be affected. Review the request carefully before approving.'
-          : 'Preview returned data in an unrecognized format — review the raw response below before approving.',
+          : unrecognizedPreviewSummary(data!),
         requiresApproval: true,
         abilityName: ability.name,
         input: maskedInput,
-      };
+      });
     }
 
-    return {
+    return withResponse({
       affected,
-      summary: (data && previewPlanSummary(data, affected)) ?? this.generatePreviewSummary(ability, affected),
+      summary: planSummary ?? previewSummaryWithDiagnostics(data ?? {}, this.generatePreviewSummary(ability, affected)),
       requiresApproval: true,
       abilityName: ability.name,
       input: maskedInput,
-    };
+    });
   }
 
   /**

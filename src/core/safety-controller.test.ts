@@ -13,11 +13,20 @@ import { describe, it, expect, vi } from 'vitest';
 import {
   SafetyController,
   isKnownDestructiveName,
+  type PreviewResult,
 } from './safety-controller.js';
 import { MutualExclusionError, ConfirmationRequiredError } from '../utils/errors.js';
 import type { Ability } from './abilities-executor.js';
 import { formatPreview } from '../output/formatter.js';
 import { formatResponse } from '../commands/chat.js';
+import AbilitiesRun from '../commands/abilities/run.js';
+import { sanitizeForTerminal } from '../utils/terminal-sanitizer.js';
+
+function humanPreview(preview: PreviewResult): string {
+  return (AbilitiesRun.prototype as unknown as {
+    formatPreviewOutput(preview: PreviewResult): string;
+  }).formatPreviewOutput(preview);
+}
 
 /**
  * Create a test ability with specified annotations
@@ -116,7 +125,7 @@ describe('Dashboard would_affect previews', () => {
       '  Backup: pass',
       'https://beta.example',
       '  Held back: Another Plugin 1.0 → 1.1 (latest backup not in offsite storage yet)',
-      '  Backup: pending_offsite',
+      '  Backup: latest backup not offsite yet',
       'Versions are the ones pending now. If a newer version syncs before you confirm, the newer one is applied.',
     ].join('\n'));
     expect(result.summary).not.toMatch(/[\x1b\r\t\u202e]/);
@@ -136,12 +145,8 @@ describe('Dashboard would_affect previews', () => {
       skip_reason: 'site suspended',
     }] } }, 'mainwp/run-safe-update-v1');
     expect(result.affected).toHaveLength(1);
-    expect(result.summary).toContain('Safe Store\n  example 2.0 → 2.1');
-    expect(result.summary).toContain('Backup: missing (Back up before updating)');
-    expect(result.summary).toContain('check-0: not_run (site suspended)');
-    expect(result.summary).toContain('and 2 more');
-    expect(result.summary).not.toContain('check-6');
-    expect(result.summary).toContain('Left out: site suspended');
+    expect(result.summary).toContain('Left out: Safe Store (site suspended)');
+    expect(result.summary).not.toMatch(/2\.0|Backup:|Checks:/);
   });
 
   it('summarizes a delete-site entity on one line', () => {
@@ -172,7 +177,7 @@ describe('Dashboard would_affect previews', () => {
     const result = preview({ dry_run: true, would_affect: items, count: 1, warnings: [] }, 'mainwp/activate-site-plugins-v1');
     expect(result.affected).toEqual(items);
     expect(result.summary).toBe('Example Plugin');
-    expect(preview({ would_affect: [] }).summary).toBe('No items would be updated.');
+    expect(preview({ would_affect: [] }).summary).toBe('No affected items reported.');
   });
 
   it('bounds plan fields and lines and reports client and server omissions', () => {
@@ -184,10 +189,10 @@ describe('Dashboard would_affect previews', () => {
     data.would_affect.summary.site_count = 5;
     const result = preview(data);
     expect(result.summary.split('\n')).toHaveLength(50);
-    expect(result.summary.split('\n')[0]).toBe(`${'x'.repeat(79)}…`);
+    expect(result.summary.split('\n')[1]).toBe(`${'x'.repeat(79)}…`);
     expect(result.summary).toContain('showing 1 of 5 sites with updates (4 left out)');
     expect(result.summary).toContain('Versions are the ones pending now.');
-    expect(result.summary).toMatch(/\+19 more lines left out$/);
+    expect(result.summary).toMatch(/\+20 more lines left out$/);
   });
 
   it('masks writeOnly fields before extracting and summarizing would_affect', () => {
@@ -212,6 +217,146 @@ describe('Dashboard would_affect previews', () => {
     expect(result.summary).not.toContain('No items');
     expect(result.affected).toEqual([data]);
     expect(result.requiresApproval).toBe(true);
+  });
+
+  it('adds errors, warnings and missing requests while dumping the full masked update response', () => {
+    const base = updatePreview();
+    const data = { ...base,
+      would_affect: { ...base.would_affect, summary: {
+        ...base.would_affect.summary, requested_not_found: ['missing-plugin'],
+      } },
+      errors: [{ site_id: 3, site_url: 'https://offline.example', site_name: 'Offline Store',
+        type: 'site', slug: '', code: 'mainwp_site_offline', message: '\x1b[31mSite is offline.\x1b[0m' }],
+      warnings: ['The plan includes WordPress core updates.', {
+        message: 'Review backup settings.', code: 'backup_warning', site_name: 'Beta Store',
+      }],
+      private_note: 'must-not-print',
+    };
+    const result = preview(data, 'mainwp/run-updates-v1', { properties: { private_note: { writeOnly: true } } });
+    expect(result.summary).toContain('Error: Offline Store: mainwp_site_offline: Site is offline.');
+    expect(result.summary.indexOf('Error:')).toBeLessThan(result.summary.indexOf('Alpha Store'));
+    expect(result.summary).toContain('Warning: The plan includes WordPress core updates.');
+    expect(result.summary).toContain('Warning: Beta Store: backup_warning: Review backup settings.');
+    expect(result.summary).toContain('Requested but not found: missing-plugin');
+    const dump = humanPreview(result);
+    expect(dump).toContain(JSON.stringify(sanitizeForTerminal({ ...data, private_note: '[REDACTED]' }), null, 2));
+    expect(dump).not.toContain('must-not-print');
+    expect(dump).not.toContain('\\u001b');
+    const chat = formatResponse({ type: 'preview', preview: result, requiresApproval: true });
+    expect(chat).toContain(JSON.stringify(sanitizeForTerminal({ ...data, private_note: '[REDACTED]' }), null, 2));
+    expect(chat).not.toContain('must-not-print');
+    expect(Object.keys(result).sort()).toEqual(['abilityName', 'affected', 'input', 'requiresApproval', 'summary']);
+    expect(JSON.parse(JSON.stringify(result))).not.toHaveProperty('rawResponse');
+  });
+
+  it('puts backup refusal evidence before the unrecognized entity fallback', () => {
+    const data = { dry_run: true, would_affect: {
+      site_id: 7, snapshot: { id: 12 }, restorable: false,
+      restore_reason: { code: 'mainwp_backup_snapshot_unrestorable_missing', message: 'Snapshot is unavailable.' },
+      restore_type: 'full', replaces_database: true, chain_ids: [12], site_has_woocommerce: false,
+      safety_backup: { will_take: true, type: 'full' },
+      preserve_orders: { requested: false, checked_at: 'confirm' },
+    }, can_proceed: false,
+    warnings: ['This restore replaces the database. Content changed since the snapshot will be lost.'],
+    refusals: [{ code: 'mainwp_backup_site_disconnected', message: 'The site is disconnected.' }] };
+    const result = preview(data, 'mainwp/restore-site-snapshot-v1');
+    expect(result.summary).toMatch(/^Confirm would be refused\./);
+    expect(result.summary).toContain('Refusal: mainwp_backup_site_disconnected: The site is disconnected.');
+    expect(result.summary).toContain('unrecognized format');
+    expect(humanPreview(result)).toContain(JSON.stringify(data, null, 2));
+  });
+
+  it('keeps top-level diagnostics on legacy affected previews too', () => {
+    const result = preview({ affected: [], warnings: ['Review selection.'], errors: ['Site is offline.'] });
+    expect(result.summary).toBe('Error: Site is offline.\nWarning: Review selection.\nNo items would be updated.');
+  });
+
+  it('includes delete-site warnings without describing an unknown action', () => {
+    const warning = 'This action is irreversible. The site record will be permanently deleted from the MainWP Dashboard.';
+    const result = preview({ dry_run: true,
+      would_affect: { id: 7, url: 'https://site.example', name: 'My Store' }, warnings: [warning],
+    }, 'mainwp/delete-site-v1');
+    expect(result.summary).toContain(`Warning: ${warning.slice(0, 79)}…`);
+    expect(result.summary).toContain('\nMy Store');
+    expect(humanPreview(result)).toContain(warning);
+  });
+
+  it('lists unignore-site-updates holds and remaining blockers by site label', () => {
+    const result = preview({ dry_run: true, would_affect: {
+      site_id: 7, site_url: 'https://store.example', site_name: 'Store',
+      holds: [
+        { type: 'plugin', slug: 'example/example.php', name: 'Example Plugin', held: true,
+          still_held_by: 'global', pending: { from: '1.0', to: '1.1' } },
+        { type: 'theme', slug: 'example', name: 'Example Theme', held: false, still_held_by: null, pending: null },
+      ],
+    }, count: 1, warnings: [], errors: [] }, 'mainwp/unignore-site-updates-v1');
+    expect(result.summary).toBe('Store\n  Hold: Example Plugin (held; still held by global)\n  Hold: Example Theme (not held)');
+    expect(result.summary).not.toContain('would be updated');
+  });
+
+  it.each([
+    { sites: [{ site_name: 'Store', items: [{ name: 'Plugin', from: 2, to: '3' }] }] },
+    { sites: [{ site_name: 'Store', items: [], skipped: [{ name: 'Plugin', from: '2', to: '3' }] }] },
+    { sites: [{ name: 'Store', items: [], checks: [{ status: 'pending', reason: '' }] }] },
+    { id: 7 },
+  ])('uses the raw-response fallback for malformed would_affect %j', (would_affect) => {
+    const result = preview({ dry_run: true, would_affect });
+    expect(result.summary).toBe('Preview returned data in an unrecognized format — review the raw response below before approving.');
+    expect(result.summary).not.toMatch(/items? would be/);
+  });
+
+  it('shows truncated by-item rollups and core counts before a capped site plan', () => {
+    const base = updatePreview();
+    const result = preview({ ...base, would_affect: {
+      ...base.would_affect,
+      sites: [{ ...base.would_affect.sites[0], items: Array.from({ length: 60 }, () => base.would_affect.sites[0]!.items[0]!) }],
+      by_item: [
+        { type: 'core', slug: 'wordpress', name: 'WordPress core', to: ['6.9'], site_count: 5, flags: { core: true, major: true } },
+        { type: 'plugin', slug: 'other', name: 'Omitted Plugin', to: ['3.0'], site_count: 4, flags: { core: false, major: false } },
+      ], summary: { ...base.would_affect.summary, truncated: true, has_core: true, site_count: 5 },
+    } });
+    expect(result.summary).toContain('Across sites: WordPress core → 6.9 on 5 sites (major version change)');
+    expect(result.summary).toContain('Across sites: Omitted Plugin → 3.0 on 4 sites');
+    expect(result.summary).toContain('Core update on 5 sites');
+    expect(result.summary.split('\n')).toHaveLength(50);
+    expect(result.summary).toContain('more lines left out');
+  });
+
+  it('marks a major-version item and names core sites', () => {
+    const result = preview({ dry_run: true, would_affect: { sites: [{
+      site_id: 1, site_name: 'Core Store', site_url: 'https://core.example', skipped: [],
+      items: [{ type: 'core', name: 'WordPress', slug: 'wordpress', from: '6.8', to: '6.9', requested: false,
+        flags: { major: true, core: true } }],
+    }] } });
+    expect(result.summary).toContain('WordPress 6.8 → 6.9 (major version change)');
+    expect(result.summary).toContain('Core update on 1 site');
+  });
+
+  it('shows running Safe Updates checks in words and unknown target versions', () => {
+    const result = preview({ dry_run: true, would_affect: { sites: [{
+      id: 3, name: 'Safe Store', skip_reason: '',
+      items: [{ type: 'theme', slug: 'example', name: '', old_version: '2.0', new_version: '' },
+        { type: 'plugin', slug: 'missing', name: '', old_version: '1' }],
+      backup_verdict: 'not_applicable', backup_label: '', override_available: false,
+      checks: Array.from({ length: 8 }, (_, i) => ({ key: `check-${i}`, name: 'Check', status: i ? 'not_run' : '', reason: '' })),
+    }] } }, 'mainwp/run-safe-update-v1');
+    expect(result.summary).toContain('example 2.0 → unknown version');
+    expect(result.summary).toContain('missing 1 → unknown version');
+    expect(result.summary).toContain('Backup: not applicable');
+    expect(result.summary).toContain('check-0: unknown, check-1: not run');
+    expect(result.summary).toContain('and 2 more');
+  });
+
+  it('dumps the complete chat response with more than ten sites and sibling diagnostics', () => {
+    const data = { dry_run: true, would_affect: { sites: Array.from({ length: 12 }, (_, i) => ({
+      site_id: i + 1, site_name: `Store ${i + 1}`, site_url: `https://store${i + 1}.example`, items: [], skipped: [],
+    })) }, warnings: ['Review all sites.'], errors: [], receipt: 'end-of-response' };
+    const result = preview(data);
+    const chat = formatResponse({ type: 'preview', preview: result, requiresApproval: true });
+    expect(chat).toContain(JSON.stringify(data, null, 2));
+    expect(chat).toContain('"site_id": 12');
+    expect(chat).toContain('"receipt": "end-of-response"');
+    expect(chat).not.toContain('... and 2 more');
   });
 });
 
