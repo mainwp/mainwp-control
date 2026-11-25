@@ -914,10 +914,38 @@ describe('ChatEngine', () => {
 
       expect(proposed[0]).toMatchObject({
         type: 'error',
-        error: expect.stringContaining('does not expose dry_run'),
+        error: expect.stringContaining('no preview the CLI can run'),
       });
       expect(engine.hasPendingPreview()).toBe(false);
       expect(mockExecutor.execute).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ['confirm beside pinned', { confirm: { type: 'boolean' }, confirm_first: { const: true } }, ['confirm_first']],
+      ['two pinned', { confirm_first: { const: true }, confirm_second: { enum: [true] } }, ['confirm_first', 'confirm_second']],
+      ['single pinned with dry_run', { confirm_first: { enum: [true] }, dry_run: { type: 'boolean' } }, ['confirm_first']],
+    ])('refuses %s in chat before schema validation or execution', async (label, properties, required) => {
+      const ability = createTestAbility('restricted-v1', { destructive: true }, {
+        type: 'object', properties, required, additionalProperties: false,
+      });
+      const { engine, mockExecutor } = createTestEngine({
+        provider: createMockProvider([createToolCallResponse(ability.name, {})]),
+        abilities: [ability],
+      });
+      const result = await engine.sendMessage('Run restricted ability');
+      expect(result[0]).toMatchObject({
+        type: 'error',
+        error: expect.stringContaining(label === 'single pinned with dry_run'
+          ? 'PREVIEW_UNAVAILABLE' : 'ambiguous confirmation'),
+      });
+      expect(mockExecutor.execute).not.toHaveBeenCalled();
+      expect(engine.hasPendingPreview()).toBe(false);
+      if (label === 'single pinned with dry_run') {
+        expect(logDestructiveActionSafe).toHaveBeenCalledWith(expect.objectContaining({
+          abilityName: ability.name, userDecision: 'declined',
+          execution: { success: false, error: 'No dry_run preview contract' },
+        }));
+      }
     });
 
     it('readonly+destructive requires safety flow (contradictory → treated as destructive)', async () => {

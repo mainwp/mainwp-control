@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { MockServer } from './fixtures/mock-server.js';
 import { runCLI } from './fixtures/cli-runner.js';
 import { ConfigDir } from './fixtures/config-dir.js';
-import { abilityDryRunResponse, abilityRunSuccess } from './fixtures/api-responses.js';
+import { abilityDryRunResponse, abilityRunSuccess, mockAbility } from './fixtures/api-responses.js';
 
 describe('safety / destructive action handling', () => {
   const server = new MockServer();
@@ -213,11 +213,72 @@ describe('safety / destructive action handling', () => {
     );
 
     expect(result.exitCode).toBe(4);
-    expect(result.stdout + result.stderr).toContain('does not expose dry_run');
+    expect(result.stdout + result.stderr).toContain('no preview the CLI can run');
     const runRequests = server
       .getRecordedRequests()
       .filter((request) => request.path.includes('set-dashboard-ip-restrictions-v1/run'));
     expect(runRequests).toHaveLength(0);
+  });
+
+  it.each([
+    ['confirm beside pinned', { confirm: { type: 'boolean' }, confirm_first: { const: true } }, ['confirm_first']],
+    ['two pinned', { confirm_first: { const: true }, confirm_second: { enum: [true] } }, ['confirm_first', 'confirm_second']],
+    ['single pinned with dry_run', { confirm_first: { enum: [true] }, dry_run: { type: 'boolean' } }, ['confirm_first']],
+  ])('refuses %s before validation for --dry-run and --confirm', async (label, properties, required) => {
+    await createConfig();
+    server.reset();
+    server.setAbilities([mockAbility({
+      name: 'restricted-v1', destructive: true,
+      input_schema: { type: 'object', properties, required, additionalProperties: false },
+    })]);
+    server.setRunResponse('restricted-v1', abilityRunSuccess({ changed: true }));
+    for (const flag of ['--dry-run', '--confirm']) {
+      const result = await runCLI(['abilities', 'run', 'restricted-v1', flag, '--force', '--json'], {
+        xdgConfigHome: config.xdgHome, env: { MAINWP_APP_PASSWORD: 'test-pass' },
+      });
+      const pinned = label === 'single pinned with dry_run';
+      expect(result.exitCode).toBe(pinned && flag === '--confirm' ? 4 : 1);
+      expect(result.json).toMatchObject({
+        success: false,
+        error: {
+          code: pinned && flag === '--confirm' ? 'PREVIEW_UNAVAILABLE' : 'INPUT_ERROR',
+          message: expect.stringContaining(pinned ? 'no preview the CLI can run' : 'ambiguous confirmation'),
+        },
+      });
+    }
+    expect(server.getRecordedRequests().filter((request) => request.path.includes('/run'))).toHaveLength(0);
+    if (label === 'single pinned with dry_run') {
+      const audit = await readFile(join(config.xdgHome, 'mainwpcontrol', 'audit.log'), 'utf8');
+      expect(audit).toContain('No dry_run preview contract');
+    }
+  });
+
+  it.each([
+    ['Cost Tracker', { enabled: true, confirm_disable: false }],
+    ['Code Snippets', { confirm_delete: true, confirm_remove_data: false, confirm_backup: true }],
+  ])('validates and forwards required %s domain flags through preview and confirm', async (_label, input) => {
+    await createConfig();
+    server.reset();
+    server.setAbilities([mockAbility({
+      name: 'domain-flags-v1', destructive: true,
+      input_schema: {
+        type: 'object', additionalProperties: false, required: Object.keys(input),
+        properties: {
+          ...Object.fromEntries(Object.keys(input).map((name) => [name, { type: 'boolean' }])),
+          confirm: { type: 'boolean' }, dry_run: { type: 'boolean' },
+        },
+      },
+    })]);
+    server.setRunResponse('domain-flags-v1', abilityDryRunResponse([]));
+    const result = await runCLI([
+      'abilities', 'run', 'domain-flags-v1', '--input', JSON.stringify(input), '--confirm', '--force', '--json',
+    ], { xdgConfigHome: config.xdgHome, env: { MAINWP_APP_PASSWORD: 'test-pass' } });
+    expect(result.exitCode).toBe(0);
+    const requests = server.getRecordedRequests().filter((request) => request.path.includes('/run'));
+    expect(requests.map((request) => request.body)).toEqual([
+      { input: { ...input, dry_run: true } },
+      { input: { ...input, dry_run: false, confirm: true } },
+    ]);
   });
 
   // -------------------------------------------------------------------------

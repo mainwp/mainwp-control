@@ -34,7 +34,8 @@ import {
   type AbilitiesExecutor,
   type Ability,
   type ExecutionResult,
-  abilitySupportsDryRun,
+  abilitySupportsPreview,
+  pinnedConfirmationInputProperties,
   resolveConfirmationInputProperty,
 } from '../core/abilities-executor.js';
 import {
@@ -696,6 +697,27 @@ export class ChatEngine {
     }
 
     input = getInputSanitizer().sanitize(input);
+    const confirmationProperty = resolveConfirmationInputProperty(ability);
+    if (pinnedConfirmationInputProperties(ability).length > 0 && !confirmationProperty) {
+      return {
+        type: 'error',
+        error: `Ability "${ability.name}" has ambiguous confirmation fields.`,
+        tool: ability.name,
+      };
+    }
+    if (this.safetyController.requiresSafetyFlow(ability) && !abilitySupportsPreview(ability)) {
+      await logDestructiveActionSafe({
+        abilityName: ability.name,
+        userDecision: 'declined',
+        execution: { success: false, error: 'No dry_run preview contract' },
+        input,
+      });
+      return {
+        type: 'error',
+        error: `PREVIEW_UNAVAILABLE: Ability "${ability.name}" has no preview the CLI can run. Destructive execution refused.`,
+        tool: ability.name,
+      };
+    }
     if (ability.input_schema) {
       try {
         const validated = getSchemaValidator().validateOrThrow(
@@ -774,15 +796,6 @@ export class ChatEngine {
     toolCallId: string,
     toolAlias: string
   ): Promise<ChatResponse> {
-    const confirmationProperty = resolveConfirmationInputProperty(ability);
-    if (confirmationProperty && !abilitySupportsDryRun(ability)) {
-      return {
-        type: 'error',
-        error: `Ability "${ability.name}" does not expose dry_run. Destructive execution refused.`,
-        tool: ability.name,
-      };
-    }
-
     try {
       // Execute with dry_run
       const previewResult = await executeAbilityWithPolicy(

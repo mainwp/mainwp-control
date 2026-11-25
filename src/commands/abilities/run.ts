@@ -27,7 +27,8 @@ import { logDestructiveActionSafe } from '../../utils/audit-logger.js';
 import type { WatchResult } from '../../core/batch-manager.js';
 import { APIError } from '../../utils/errors.js';
 import {
-  abilitySupportsDryRun,
+  abilitySupportsPreview,
+  pinnedConfirmationInputProperties,
   resolveConfirmationInputProperty,
   type Ability,
 } from '../../core/abilities-executor.js';
@@ -155,39 +156,38 @@ export default class AbilitiesRun extends BaseCommand {
     // Sanitize input
     input = inputSanitizer.sanitize(input);
 
-    // Validate input against schema if available
-    if (ability.input_schema) {
-      const confirmationProperty = resolveConfirmationInputProperty(ability);
-      let validationInput = input;
-
-      // Risk-specific confirmation fields are transport controls, not caller
-      // data. Validate a temporary trusted value supplied by --confirm, then
-      // remove it again so AbilitiesExecutor remains the single injection
-      // boundary for the actual request.
-      if (confirmationProperty && confirmationProperty !== 'confirm') {
-        validationInput = { ...input };
-        delete validationInput[confirmationProperty];
-        if (flags.confirm) {
-          validationInput[confirmationProperty] = true;
-        }
-      }
-
-      const validated = schemaValidator.validateOrThrow(
-        validationInput,
-        ability.input_schema,
-        ability.name
-      );
-      // Use coerced values (type coercion, defaults applied) from validated clone
-      input = validated.coerced ?? input;
-      if (confirmationProperty && confirmationProperty !== 'confirm') {
-        delete input[confirmationProperty];
-      }
-    }
-
-    // Safety validation BEFORE any network call
     const dryRun = flags['dry-run'];
     const confirm = flags.confirm;
     const requiresSafetyFlow = safetyController.requiresSafetyFlow(ability);
+    const confirmationProperty = resolveConfirmationInputProperty(ability);
+
+    if ((dryRun || confirm) && pinnedConfirmationInputProperties(ability).length > 0 &&
+      !confirmationProperty) {
+      throw new InputError(`Ability "${ability.name}" has ambiguous confirmation fields.`);
+    }
+    if (dryRun && !abilitySupportsPreview(ability)) {
+      throw new InputError(`Ability "${ability.name}" has no preview the CLI can run.`);
+    }
+    if (confirm && requiresSafetyFlow && !abilitySupportsPreview(ability)) {
+      await logDestructiveActionSafe({
+        abilityName: ability.name,
+        userDecision: 'declined',
+        execution: { success: false, error: 'No dry_run preview contract' },
+        input,
+      });
+      throw new APIError(
+        'PREVIEW_UNAVAILABLE',
+        `Ability "${ability.name}" has no preview the CLI can run. Destructive execution refused.`,
+        undefined,
+        { reason: 'No dry_run preview contract' }
+      );
+    }
+
+    // Domain confirm_* fields remain ordinary schema-validated input.
+    if (ability.input_schema) {
+      const validated = schemaValidator.validateOrThrow(input, ability.input_schema, ability.name);
+      input = validated.coerced ?? input;
+    }
 
     this.debugLog('Resolved ability execution', {
       abilityName: ability.name,
@@ -282,23 +282,6 @@ export default class AbilitiesRun extends BaseCommand {
     const abilityName = ability.name;
     const executor = await this.getExecutor();
     const safetyController = getSafetyController();
-    const namedConfirmation = resolveConfirmationInputProperty(ability);
-
-    if (namedConfirmation && !abilitySupportsDryRun(ability)) {
-      await logDestructiveActionSafe({
-        abilityName,
-        userDecision: 'declined',
-        execution: { success: false, error: 'No dry_run preview contract' },
-        input,
-      });
-      throw new APIError(
-        'PREVIEW_UNAVAILABLE',
-        `Ability "${abilityName}" does not expose dry_run. Destructive execution refused.`,
-        undefined,
-        { reason: 'No dry_run preview contract' }
-      );
-    }
-
     // A successful immediate preview is mandatory before approval.
     let preview: PreviewResult | undefined;
     let previewFailure: unknown;

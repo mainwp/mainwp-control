@@ -60,89 +60,77 @@ export interface ExecutionResult<T = unknown> {
   jobId?: string;
 }
 
-type TrueSchemaMatch = 'accept' | 'reject' | 'unknown';
-
-function trueSchemaMatch(value: unknown): TrueSchemaMatch {
-  if (value === true) return 'accept';
-  if (value === false || value === null || typeof value !== 'object' || Array.isArray(value)) {
-    return 'reject';
+/** Whether raw schema properties accept the requested boolean literal. */
+export function declaresUsableBooleanParam(
+  properties: unknown,
+  name: string,
+  value: boolean = true
+): boolean {
+  if (properties === null || typeof properties !== 'object' || Array.isArray(properties)) {
+    return false;
   }
-
-  const schema = value as Record<string, unknown>;
-  if (Object.hasOwn(schema, '$ref') || Object.hasOwn(schema, '$dynamicRef')) return 'unknown';
-
+  if (!Object.hasOwn(properties, name)) return false;
+  const sub = (properties as Record<string, unknown>)[name];
+  if (sub === true) return true;
+  if (sub === false) return false;
+  if (sub === null || typeof sub !== 'object' || Array.isArray(sub)) return false;
+  const schema = sub as Record<string, unknown>;
   const type = schema['type'];
-  if (typeof type === 'string' && type !== 'boolean') return 'reject';
-  if (Array.isArray(type) && !type.includes('boolean')) return 'reject';
-  if (Array.isArray(schema['enum']) && !schema['enum'].includes(true)) return 'reject';
-  if (Object.hasOwn(schema, 'const') && schema['const'] !== true) return 'reject';
-
-  const allOf = schema['allOf'];
-  if (Array.isArray(allOf)) {
-    const matches = allOf.map(trueSchemaMatch);
-    if (matches.includes('reject')) return 'reject';
-    if (matches.includes('unknown')) return 'unknown';
-  }
-
-  const anyOf = schema['anyOf'];
-  if (Array.isArray(anyOf)) {
-    const matches = anyOf.map(trueSchemaMatch);
-    if (!matches.includes('accept')) {
-      return matches.includes('unknown') ? 'unknown' : 'reject';
-    }
-  }
-
-  const oneOf = schema['oneOf'];
-  if (Array.isArray(oneOf)) {
-    const matches = oneOf.map(trueSchemaMatch);
-    if (matches.includes('unknown')) return 'unknown';
-    if (matches.filter((match) => match === 'accept').length !== 1) return 'reject';
-  }
-
-  if (Object.hasOwn(schema, 'not')) {
-    const match = trueSchemaMatch(schema['not']);
-    if (match === 'accept') return 'reject';
-    if (match === 'unknown') return 'unknown';
-  }
-
-  return 'accept';
+  if (typeof type === 'string' && type !== 'boolean') return false;
+  if (Array.isArray(type) && !type.includes('boolean')) return false;
+  if (Array.isArray(schema['enum']) && !schema['enum'].includes(value)) return false;
+  if (Object.hasOwn(schema, 'const') && schema['const'] !== value) return false;
+  return true;
 }
 
-function schemaAcceptsTrue(value: unknown): boolean {
-  return trueSchemaMatch(value) === 'accept';
+/** Send false only for required fields whose schema accepts it. */
+export function requiresUsableFalseParam(schema: unknown, name: string): boolean {
+  if (schema === null || typeof schema !== 'object' || Array.isArray(schema)) return false;
+  if (!Object.hasOwn(schema, 'required')) return false;
+  const record = schema as Record<string, unknown>;
+  return Array.isArray(record['required']) && record['required'].includes(name) &&
+    declaresUsableBooleanParam(record['properties'], name, false);
 }
 
-/** Resolve the one schema-declared field trusted confirmation may set. */
+/** Required usable confirm_* fields pinned to true are execution controls. */
+export function pinnedConfirmationInputProperties(ability: Ability | undefined): string[] {
+  const schema = ability?.input_schema;
+  if (schema === null || typeof schema !== 'object' || Array.isArray(schema)) return [];
+  const properties = schema['properties'];
+  if (properties === null || typeof properties !== 'object' || Array.isArray(properties)) return [];
+  const required = Array.isArray(schema['required']) ? schema['required'] : [];
+  return required.filter((name): name is string => {
+    if (typeof name !== 'string' || !/^confirm_[a-z0-9_]+$/.test(name) ||
+      !declaresUsableBooleanParam(properties, name)) return false;
+    const property = (properties as Record<string, Record<string, unknown>>)[name]!;
+    return property['const'] === true ||
+      (Array.isArray(property['enum']) && property['enum'].length === 1 && property['enum'][0] === true);
+  });
+}
+
+/** Resolve one trusted confirmation field; ambiguous channels fail closed. */
 export function resolveConfirmationInputProperty(ability: Ability | undefined): string | undefined {
   const schema = ability?.input_schema;
   if (schema === null || typeof schema !== 'object' || Array.isArray(schema)) return undefined;
-  const properties = schema['properties'];
-  if (properties === null || typeof properties !== 'object' || Array.isArray(properties)) {
-    return undefined;
+  const pinned = pinnedConfirmationInputProperties(ability);
+  if (declaresUsableBooleanParam(schema['properties'], 'confirm')) {
+    return pinned.length === 0 ? 'confirm' : undefined;
   }
-  const propertyMap = properties as Record<string, unknown>;
-  if (Object.hasOwn(propertyMap, 'confirm') && schemaAcceptsTrue(propertyMap['confirm'])) {
-    return 'confirm';
-  }
-  const required = Array.isArray(schema['required']) ? schema['required'] : [];
-  const candidates = required.filter(
-    (name): name is string =>
-      typeof name === 'string' &&
-      /^confirm_[a-z0-9_]+$/.test(name) &&
-      Object.hasOwn(propertyMap, name) &&
-      schemaAcceptsTrue(propertyMap[name])
-  );
-  return candidates.length === 1 ? candidates[0] : undefined;
+  return pinned.length === 1 ? pinned[0] : undefined;
 }
 
-/** Whether the discovered closed schema can accept a true dry_run control. */
+/** Whether discovery declares a usable dry_run boolean. */
 export function abilitySupportsDryRun(ability: Ability | undefined): boolean {
-  const schema = ability?.input_schema;
-  if (schema === null || typeof schema !== 'object' || Array.isArray(schema)) return false;
-  const properties = schema['properties'];
-  return properties !== null && typeof properties === 'object' && !Array.isArray(properties) &&
-    Object.hasOwn(properties, 'dry_run') &&
-    schemaAcceptsTrue((properties as Record<string, unknown>)['dry_run']);
+  return declaresUsableBooleanParam(ability?.input_schema?.['properties'], 'dry_run');
+}
+
+/** Conventional controls can preview; schemas without confirmation controls retain legacy support. */
+export function abilitySupportsPreview(ability: Ability | undefined): boolean {
+  if (resolveConfirmationInputProperty(ability) === 'confirm') return abilitySupportsDryRun(ability);
+  const properties = ability?.input_schema?.['properties'];
+  const declaresConfirm = properties !== null && typeof properties === 'object' &&
+    !Array.isArray(properties) && Object.hasOwn(properties, 'confirm');
+  return !declaresConfirm && pinnedConfirmationInputProperties(ability).length === 0;
 }
 
 /**
@@ -440,27 +428,21 @@ export class AbilitiesExecutor {
     delete merged['dry_run'];
     delete merged['confirm'];
     delete merged['user_confirmed'];
-    for (const key of Object.keys(merged)) {
-      if (/^confirm_[a-z0-9_]+$/.test(key)) {
-        delete merged[key];
-      }
+    const pinned = pinnedConfirmationInputProperties(ability);
+    for (const key of pinned) {
+      delete merged[key];
     }
-    if (confirmationProperty) {
-      delete merged[confirmationProperty];
+
+    if ((options?.dryRun || options?.confirm) && pinned.length > 0 && !confirmationProperty) {
+      throw new InputError(`Ability "${ability?.name ?? 'unknown'}" has ambiguous confirmation fields.`);
     }
 
     if (options?.dryRun) {
-      if (confirmationProperty && !abilitySupportsDryRun(ability)) {
-        throw new InputError(
-          `Ability "${ability?.name ?? 'unknown'}" does not declare dry_run`,
-          undefined,
-          'Use the explicit confirmation flow; no upstream preview is available.'
-        );
+      if (!abilitySupportsPreview(ability)) {
+        throw new InputError(`Ability "${ability?.name ?? 'unknown'}" has no preview the CLI can run.`);
       }
-      if (abilitySupportsDryRun(ability) || confirmationProperty === undefined) {
-        merged['dry_run'] = true;
-      }
-      if (this.abilityRequiresInputProperty(ability, 'confirm')) {
+      merged['dry_run'] = true;
+      if (requiresUsableFalseParam(ability?.input_schema, 'confirm')) {
         merged['confirm'] = false;
       }
     }
@@ -480,16 +462,6 @@ export class AbilitiesExecutor {
     }
 
     return merged;
-  }
-
-  /** Whether the closed discovered input schema requires one named property. */
-  private abilityRequiresInputProperty(ability: Ability | undefined, property: string): boolean {
-    const schema = ability?.input_schema;
-    if (!this.isPlainObject(schema) || !Array.isArray(schema['required'])) {
-      return false;
-    }
-
-    return schema['required'].some((item) => item === property);
   }
 
   /**

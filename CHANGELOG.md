@@ -10,11 +10,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - **Breaking:** requires MainWP Dashboard 6.4.2 or later. GET ability requests send their input as one JSON value in `input_json`, so nulls and nested values keep their types, and DELETE requests send input in a JSON body instead of the URL. Earlier Dashboards read neither format
-- Confirmation sets the field the ability's input schema declares: `confirm`, or a single required `confirm_*` field such as `confirm_destructive`. `user_confirmed` is no longer sent
+- Confirmation resolves to a usable boolean `confirm` when no pinned fields exist, or a single required usable boolean `confirm_*` pinned to true by `const: true` or `enum: [true]`. Other `confirm_*` fields are ordinary input. `user_confirmed` is no longer sent
 
 ### Security
 
-- A destructive ability that takes a confirmation field but does not declare `dry_run` is refused by both `abilities run` and chat, since it cannot be previewed. Caller and model input can no longer set any `confirm_*` field
+- Both `abilities run` and chat refuse destructive abilities with ambiguous confirmation fields or no preview the CLI can run, including pinned `confirm_*` fields even when `dry_run` is declared. Only required usable boolean `confirm_*` fields pinned to true are stripped from caller and model input; other `confirm_*` fields pass through as ordinary input
 - Previews mask values that the ability's schema marks `writeOnly`, in both the echoed input and the Dashboard's response
 
 ## [1.1.1] - 2026-07-27
