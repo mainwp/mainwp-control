@@ -11,6 +11,7 @@
 
 import type { Ability, AbilityAnnotations, ExecutionResult } from './abilities-executor.js';
 import { MutualExclusionError, ConfirmationRequiredError } from '../utils/errors.js';
+import { previewPlanSummary } from './preview-plan.js';
 
 /**
  * Preview result from dry_run execution
@@ -307,7 +308,7 @@ export class SafetyController {
 
     return {
       affected,
-      summary: this.generatePreviewSummary(ability, affected),
+      summary: (data && previewPlanSummary(data, affected)) ?? this.generatePreviewSummary(ability, affected),
       requiresApproval: true,
       abilityName: ability.name,
       input: maskedInput,
@@ -381,6 +382,11 @@ export class SafetyController {
     if (!data) {
       return null;
     }
+
+    const wouldAffect = data['would_affect'];
+    if (Array.isArray(wouldAffect)) return wouldAffect;
+    const entity = this.schemaRecord(wouldAffect);
+    if (entity) return Array.isArray(entity['sites']) ? entity['sites'] : [entity];
 
     // Common patterns for affected items
     if (Array.isArray(data['affected'])) {

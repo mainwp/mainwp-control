@@ -231,14 +231,19 @@ export function formatList(items: string[], bullet = '•'): string {
  * Format a preview/dry-run result
  */
 export function formatPreview(
-  action: string,
+  action: string | string[],
   affectedItems: unknown
 ): string {
   // Sanitize preview data (may contain untrusted API data)
   const sanitizedItems = sanitizeForTerminal(affectedItems);
 
   const lines = [
-    color('Preview: ', colors.yellow, colors.bold) + sanitizeSingleLine(action),
+    // A multi-line plan starts below the label so its first site name doesn't
+    // read as the title of the whole preview.
+    Array.isArray(action) && action.length > 1
+      ? color('Preview:', colors.yellow, colors.bold) + '\n' + action.map(sanitizeSingleLine).join('\n')
+      : color('Preview: ', colors.yellow, colors.bold) +
+        sanitizeSingleLine(Array.isArray(action) ? action[0] ?? '' : action),
     '',
     color('Affected items:', colors.dim),
     JSON.stringify(sanitizedItems, null, 2),

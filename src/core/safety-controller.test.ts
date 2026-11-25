@@ -16,6 +16,8 @@ import {
 } from './safety-controller.js';
 import { MutualExclusionError, ConfirmationRequiredError } from '../utils/errors.js';
 import type { Ability } from './abilities-executor.js';
+import { formatPreview } from '../output/formatter.js';
+import { formatResponse } from '../commands/chat.js';
 
 /**
  * Create a test ability with specified annotations
@@ -61,6 +63,157 @@ const NESTED_WRITE_ONLY_SCHEMA: Record<string, unknown> = {
     },
   },
 };
+
+function updatePreview() {
+  const item = {
+    type: 'plugin', slug: 'example/example.php', name: 'Example Plugin',
+    from: '1.0', to: '1.1', requested: false, flags: { core: false, major: false },
+  };
+  return {
+    dry_run: true,
+    would_affect: {
+      sites: [
+        {
+          site_id: 1, site_url: 'https://alpha.example',
+          site_name: '\x1b[31mAlpha\x1b[0m\r\nStore\t\u202e',
+          items: [item],
+          skipped: [{ ...item, name: 'Held Plugin', reason: 'ignored_site' }],
+          backup_gate: { applies: true, verdict: 'pass', overridden: false },
+        },
+        {
+          site_id: 2, site_url: 'https://beta.example', site_name: '', items: [],
+          skipped: [{ ...item, name: 'Another Plugin', reason: 'backup_pending_offsite' }],
+          backup_gate: { applies: true, verdict: 'pending_offsite', overridden: false },
+        },
+      ],
+      by_item: [{ type: 'plugin', slug: item.slug, name: item.name, to: ['1.1'], site_count: 1, flags: item.flags }],
+      summary: {
+        site_count: 1, item_count: 1, skipped_count: 2, all_sites: false, queued: false,
+        truncated: false, has_core: false, has_major: false, has_unknown_version: false,
+        backup_gate_blocked_sites: 1, backup_gate_overridden_sites: 0, requested_not_found: [],
+      },
+    },
+    count: 1, warnings: [], errors: [],
+  };
+}
+
+describe('Dashboard would_affect previews', () => {
+  const controller = new SafetyController();
+  const preview = (data: unknown, name = 'mainwp/run-updates-v1', outputSchema?: Record<string, unknown>) => {
+    const ability = createTestAbility(name, { destructive: true });
+    if (outputSchema) ability.output_schema = outputSchema;
+    return controller.formatPreviewResult(ability, {}, { success: true, data });
+  };
+
+  it('summarizes two update sites, version changes, held items and backup gates safely', () => {
+    const data = updatePreview();
+    const result = preview(data);
+    expect(result.affected).toEqual(data.would_affect.sites);
+    expect(result.summary).toBe([
+      'Alpha Store',
+      '  Example Plugin 1.0 → 1.1',
+      '  Held back: Held Plugin 1.0 → 1.1 (ignored on this site)',
+      '  Backup: pass',
+      'https://beta.example',
+      '  Held back: Another Plugin 1.0 → 1.1 (latest backup not in offsite storage yet)',
+      '  Backup: pending_offsite',
+      'Versions are the ones pending now. If a newer version syncs before you confirm, the newer one is applied.',
+    ].join('\n'));
+    expect(result.summary).not.toMatch(/[\x1b\r\t\u202e]/);
+    expect(formatPreview(result.summary.split('\n'), result.affected)).toContain('Alpha Store\n  Example Plugin');
+    const chat = formatResponse({ type: 'preview', preview: result, requiresApproval: true });
+    expect(chat).toContain(result.summary);
+    expect(chat).not.toContain('\\u001b');
+    expect(result.requiresApproval).toBe(true);
+  });
+
+  it('summarizes Safe Updates versions, backup verdicts, checks and site skip reasons', () => {
+    const result = preview({ dry_run: true, would_affect: { sites: [{
+      id: 3, name: 'Safe Store',
+      items: [{ type: 'theme', slug: 'example', name: '', old_version: '2.0', new_version: '2.1' }],
+      backup_verdict: 'missing', backup_label: 'Back up before updating', override_available: true,
+      checks: Array.from({ length: 8 }, (_, i) => ({ key: `check-${i}`, name: 'Check', status: 'not_run', reason: 'site suspended' })),
+      skip_reason: 'site suspended',
+    }] } }, 'mainwp/run-safe-update-v1');
+    expect(result.affected).toHaveLength(1);
+    expect(result.summary).toContain('Safe Store\n  example 2.0 → 2.1');
+    expect(result.summary).toContain('Backup: missing (Back up before updating)');
+    expect(result.summary).toContain('check-0: not_run (site suspended)');
+    expect(result.summary).toContain('and 2 more');
+    expect(result.summary).not.toContain('check-6');
+    expect(result.summary).toContain('Left out: site suspended');
+  });
+
+  it('summarizes a delete-site entity on one line', () => {
+    const site = { id: 7, url: 'https://site.example', name: 'My Store' };
+    const result = preview({ dry_run: true, would_affect: site, warnings: [] }, 'mainwp/delete-site-v1');
+    expect(result.affected).toEqual([site]);
+    expect(result.summary).toBe('My Store');
+  });
+
+  it('summarizes a delete-client entity with its associated site count', () => {
+    const result = preview({ dry_run: true, would_affect: {
+      client: { id: 8, name: 'Example Client', email: '', phone: '', suspended: 0, created: null },
+      associated_sites_count: 4,
+    }, count: 1, warnings: [] }, 'mainwp/delete-client-v1');
+    expect(result.summary).toBe('Example Client (4 associated sites)');
+    expect(result.affected).toHaveLength(1);
+  });
+
+  it('summarizes a delete-tag entity with site and client counts', () => {
+    const result = preview({ dry_run: true, would_affect: {
+      id: 9, name: 'Stores', sites_count: 3, clients_count: 2,
+    }, warnings: [] }, 'mainwp/delete-tag-v1');
+    expect(result.summary).toBe('Stores (3 sites, 2 clients)');
+  });
+
+  it('extracts array previews including activation entries and empty lists', () => {
+    const items = [{ slug: 'example/example.php', name: 'Example Plugin', active: false, will_change: true }];
+    const result = preview({ dry_run: true, would_affect: items, count: 1, warnings: [] }, 'mainwp/activate-site-plugins-v1');
+    expect(result.affected).toEqual(items);
+    expect(result.summary).toBe('Example Plugin');
+    expect(preview({ would_affect: [] }).summary).toBe('No items would be updated.');
+  });
+
+  it('bounds plan fields and lines and reports client and server omissions', () => {
+    const data = updatePreview();
+    const site = data.would_affect.sites[0]!;
+    site.site_name = 'x'.repeat(100);
+    site.items = Array.from({ length: 60 }, () => site.items[0]!);
+    data.would_affect.summary.truncated = true;
+    data.would_affect.summary.site_count = 5;
+    const result = preview(data);
+    expect(result.summary.split('\n')).toHaveLength(50);
+    expect(result.summary.split('\n')[0]).toBe(`${'x'.repeat(79)}…`);
+    expect(result.summary).toContain('showing 1 of 5 sites with updates (4 left out)');
+    expect(result.summary).toContain('Versions are the ones pending now.');
+    expect(result.summary).toMatch(/\+19 more lines left out$/);
+  });
+
+  it('masks writeOnly fields before extracting and summarizing would_affect', () => {
+    const data = updatePreview();
+    const result = preview(data, 'mainwp/run-updates-v1', { properties: {
+      would_affect: { properties: { sites: { items: { properties: {
+        site_name: { writeOnly: true },
+        items: { items: { properties: { name: { writeOnly: true } } } },
+      } } } } },
+    } });
+    expect(result.summary).toContain('[REDACTED]');
+    expect(result.summary).not.toContain('Example Plugin');
+    expect(JSON.stringify(result.affected)).not.toContain('Example Plugin');
+    expect(data.would_affect.sites[0]!.items[0]!.name).toBe('Example Plugin');
+  });
+
+  it('distinguishes recognized would_affect from unknown response shapes', () => {
+    expect(preview({ would_affect: { id: 1, name: 'Known' } }).summary).toBe('Known');
+    const data = { unexpected: { sites: [{ name: 'Unknown' }] } };
+    const result = preview(data);
+    expect(result.summary).toContain('unrecognized format');
+    expect(result.summary).not.toContain('No items');
+    expect(result.affected).toEqual([data]);
+    expect(result.requiresApproval).toBe(true);
+  });
+});
 
 describe('Golden Test: Mutual Exclusion (dry_run XOR confirm)', () => {
   let controller: SafetyController;
