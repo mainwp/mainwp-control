@@ -72,7 +72,10 @@
     "ci-cd",
     "devops",
     "scripting",
-    "mainwp-control"
+    "mainwp-control",
+    "wordpress-management",
+    "wordpress-maintenance",
+    "cron"
   ],
   "publishConfig": {
     "access": "public"
